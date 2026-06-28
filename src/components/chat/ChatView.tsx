@@ -1,6 +1,8 @@
-import { useRef, useEffect, useState } from "react";
-import { Bot, Mic, Brain, ChevronDown, Settings } from "lucide-react";
-import type { ChatMessage, ToolCall, AIConfig, ThinkingLevel } from "../../lib/types";
+import { useRef, useEffect, useState, memo } from "react";
+import { Bot, Mic, Brain, ChevronDown, Settings, ChevronRight, Lightbulb, Copy, Check } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import type { ChatMessage, AIConfig, ThinkingLevel } from "../../lib/types";
 import { getActiveConfig } from "../../lib/types";
 
 interface ChatViewProps {
@@ -20,71 +22,126 @@ const THINKING_OPTIONS: { key: ThinkingLevel; label: string }[] = [
   { key: "high", label: "高" },
 ];
 
-// ─── 简易 Markdown ─────────────────────────────────────────
+// ─── 复制按钮 ───────────────────────────────────────────────
 
-function renderInline(text: string): React.ReactNode[] {
-  const parts: React.ReactNode[] = [];
-  const regex = /(\*\*(.+?)\*\*)|\[([^\]]+)\]\(([^)]+)\)/g;
-  let lastIndex = 0;
-  let match: RegExpExecArray | null;
-  let key = 0;
-  while ((match = regex.exec(text)) !== null) {
-    if (match.index > lastIndex) parts.push(text.slice(lastIndex, match.index));
-    if (match[1]) parts.push(<strong key={key++}>{match[2]}</strong>);
-    else if (match[3])
-      parts.push(
-        <a key={key++} href={match[4]} target="_blank" rel="noopener noreferrer"
-          className="text-primary underline underline-offset-2 hover:text-primary/80">{match[3]}</a>
-      );
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < text.length) parts.push(text.slice(lastIndex));
-  return parts;
-}
-
-function renderContent(text: string): React.ReactNode {
-  if (!text) return null;
-  const parts: React.ReactNode[] = [];
-  let key = 0;
-  let lastIndex = 0;
-  const codeBlockRegex = /```(\w*)\n?([\s\S]*?)```/g;
-  let match: RegExpExecArray | null;
-  while ((match = codeBlockRegex.exec(text)) !== null) {
-    if (match.index > lastIndex) parts.push(<span key={key++} className="whitespace-pre-wrap">{renderInline(text.slice(lastIndex, match.index))}</span>);
-    parts.push(<pre key={key++} className="bg-background/50 border border-border rounded-lg p-3 overflow-x-auto text-sm font-mono leading-relaxed my-2"><code>{match[2]}</code></pre>);
-    lastIndex = match.index + match[0].length;
-  }
-  if (lastIndex < text.length) parts.push(<span key={key++} className="whitespace-pre-wrap">{renderInline(text.slice(lastIndex))}</span>);
-  return parts.length > 0 ? <>{parts}</> : null;
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      onClick={() => { navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+      className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+      title="复制"
+    >
+      {copied ? <Check size={12} /> : <Copy size={12} />}
+    </button>
+  );
 }
 
 // ─── 思考块 ────────────────────────────────────────────────
 
-function ThinkingBlock({ content }: { content: string }) {
-  return (
-    <details className="border border-border rounded-lg bg-muted/30">
-      <summary className="px-3 py-2 cursor-pointer text-xs text-muted-foreground hover:text-foreground select-none">🤔 已搜索 ... 条信息</summary>
-      <div className="px-3 pb-3 text-xs text-muted-foreground/80 italic leading-relaxed whitespace-pre-wrap">{content}</div>
-    </details>
-  );
-}
+function ThinkingBlock({ content, isLive }: { content: string; isLive?: boolean }) {
+  const [open, setOpen] = useState(isLive ?? false);
+  useEffect(() => {
+    if (isLive) setOpen(true);
+  }, [isLive]);
 
-// ─── 工具调用卡片 ──────────────────────────────────────────
+  if (!content) return null;
 
-function ToolCard({ tool }: { tool: ToolCall }) {
-  let args = tool.function.arguments;
-  try { args = JSON.stringify(JSON.parse(tool.function.arguments), null, 2); } catch { /* keep raw */ }
   return (
-    <div className="border border-primary/20 bg-primary/5 rounded-lg p-3 my-2">
-      <div className="flex items-center gap-2 mb-1.5">
-        <span className="text-xs font-medium text-primary">🔧 调用工具: {tool.function.name}</span>
+    <div className="border border-border rounded-lg overflow-hidden mb-2">
+      <button
+        onClick={() => setOpen(!open)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors select-none"
+      >
+        <ChevronRight size={12} className={`transition-transform ${open ? "rotate-90" : ""}`} />
+        <Lightbulb size={12} />
+        <span>{isLive ? "思考中..." : "思考过程"}</span>
+      </button>
+      <div className={`grid transition-[grid-template-rows] duration-300 ${open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+        <div className="overflow-hidden">
+          <div className="px-3 pb-2 text-xs text-muted-foreground/80 italic leading-relaxed whitespace-pre-wrap">
+            {content}
+          </div>
+        </div>
       </div>
-      <pre className="text-xs text-muted-foreground bg-background/50 rounded p-2 overflow-x-auto">{args}</pre>
     </div>
   );
 }
 
-// ─── 模型选择器（下拉面板）─────────────────────────────────
+// ─── Markdown 渲染 ─────────────────────────────────────────
+
+const MarkdownRenderer = memo(function MarkdownRenderer({ content }: { content: string }) {
+  return (
+    <div className="max-w-none wrap-break-word text-sm leading-relaxed space-y-3">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          pre: ({ children }) => (
+            <pre className="bg-background/50 border border-border rounded-lg p-3 overflow-x-auto text-sm font-mono leading-relaxed my-2">
+              {children}
+            </pre>
+          ),
+          code: ({ className, children, ...props }) => {
+            const isBlock = className?.startsWith("language-");
+            if (isBlock) {
+              return <code className={className} {...props}>{children}</code>;
+            }
+            return (
+              <code className="bg-accent/50 text-accent-foreground px-1.5 py-0.5 rounded text-sm font-mono" {...props}>
+                {children}
+              </code>
+            );
+          },
+          a: ({ href, children }) => (
+            <a href={href} target="_blank" rel="noopener noreferrer"
+              className="text-primary underline underline-offset-2 hover:text-primary/80">
+              {children}
+            </a>
+          ),
+          table: ({ children }) => (
+            <div className="overflow-x-auto my-2">
+              <table className="border-collapse border border-border rounded-lg text-sm">{children}</table>
+            </div>
+          ),
+          th: ({ children }) => <th className="border border-border px-3 py-1.5 bg-muted/50 text-left font-medium">{children}</th>,
+          td: ({ children }) => <td className="border border-border px-3 py-1.5">{children}</td>,
+          blockquote: ({ children }) => (
+            <blockquote className="border-l-2 border-primary/30 pl-4 italic text-muted-foreground my-2">{children}</blockquote>
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+});
+
+// ─── AI 消息组件 ───────────────────────────────────────────
+
+function AgentMessageBlock({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: boolean }) {
+  return (
+    <div className="self-start w-full">
+      <div className="flex items-center gap-2 mb-1.5">
+        <Bot size={14} className="text-primary shrink-0" />
+        <span className="font-medium text-xs text-muted-foreground">Cebian Agent</span>
+      </div>
+      {msg.reasoning_content && <ThinkingBlock content={msg.reasoning_content} />}
+      <div className="text-sm leading-relaxed">
+        <MarkdownRenderer content={msg.content || ""} />
+        {isStreaming && (
+          <span className="inline-block w-1.5 h-4 bg-primary rounded-sm animate-pulse ml-0.5 align-text-bottom" />
+        )}
+      </div>
+      {!isStreaming && msg.content && (
+        <div className="flex items-center gap-1 mt-1">
+          <CopyButton text={msg.content} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── 模型选择器 ────────────────────────────────────────────
 
 function ModelSelector({ aiConfig, onNavigate, onModelSelect }: { aiConfig: AIConfig; onNavigate: () => void; onModelSelect: (providerId: string, model: string) => void }) {
   const [open, setOpen] = useState(false);
@@ -186,13 +243,9 @@ function ChatInput({
           rows={1}
           className="w-full bg-transparent resize-none px-4 py-3 text-sm outline-none placeholder:text-muted-foreground"
         />
-        {/* 底部工具栏 */}
         <div className="flex items-center justify-between px-3 pb-3">
           <div className="flex items-center gap-2">
-            {/* 模型选择 */}
             <ModelSelector aiConfig={aiConfig} onNavigate={onNavigateSettings} onModelSelect={handleModelSelect} />
-
-            {/* 思考模式选择 */}
             <div className="flex items-center gap-0.5 border-l border-border pl-2 ml-1">
               <Brain size={12} className="text-muted-foreground" />
               {THINKING_OPTIONS.map(({ key, label }) => (
@@ -207,7 +260,6 @@ function ChatInput({
               ))}
             </div>
           </div>
-
           <div className="flex items-center gap-2">
             <button className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-30" disabled title="语音输入">
               <Mic size={15} />
@@ -220,7 +272,7 @@ function ChatInput({
         </div>
       </div>
       <div className="text-[10px] text-muted-foreground/50 text-center mt-1">
-        Enter 发送 · Shift+Enter 换行 · 模型选择器可切换 AI 模型
+        Enter 发送 · Shift+Enter 换行
       </div>
     </footer>
   );
@@ -229,12 +281,18 @@ function ChatInput({
 // ─── 主组件 ────────────────────────────────────────────────
 
 export default function ChatView({
-  messages, onSend, loading, aiConfig, onConfigChange, onNavigateSettings
+  messages, onSend, loading, streamingContent, streamingThinking, aiConfig, onConfigChange, onNavigateSettings
 }: ChatViewProps) {
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  // 自动滚动到底部
+  useEffect(() => {
+    if (containerRef.current) {
+      containerRef.current.scrollTop = containerRef.current.scrollHeight;
+    }
+  }, [messages, streamingContent, streamingThinking, loading]);
 
   const send = () => {
     const text = inputValue.trim();
@@ -262,7 +320,7 @@ export default function ChatView({
 
   return (
     <div className="flex-1 w-full min-w-0 flex flex-col">
-      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+      <div ref={containerRef} className="flex-1 overflow-y-auto overflow-x-hidden">
         <div className="flex flex-col gap-4 py-4 px-5">
           {messages.map((msg, i) =>
             msg.role === "user" ? (
@@ -272,33 +330,20 @@ export default function ChatView({
                 </div>
               </div>
             ) : (
-              <div key={i} className="self-start w-full">
-                <div className="flex items-center gap-2 mb-2">
-                  <Bot size={14} className="text-primary" />
-                  <span className="font-medium text-xs text-muted-foreground">Cebian Agent</span>
-                </div>
-                {msg.reasoning_content && <ThinkingBlock content={msg.reasoning_content} />}
-                <div className="text-sm leading-relaxed space-y-3 whitespace-pre-wrap break-words">
-                  {renderContent(msg.content || "")}
-                </div>
-                {msg.tool_calls && msg.tool_calls.length > 0 && (
-                  <div className="space-y-2 mt-2">
-                    {msg.tool_calls.map((tc) => <ToolCard key={tc.id} tool={tc} />)}
-                  </div>
-                )}
-                {loading && i === messages.length - 1 && (
-                  <span className="inline-block w-2 h-4 bg-primary rounded-sm animate-pulse-cursor ml-0.5" />
-                )}
-              </div>
+              <AgentMessageBlock
+                key={i}
+                msg={msg}
+                isStreaming={loading && i === messages.length - 1}
+              />
             )
           )}
           {loading && messages[messages.length - 1]?.role !== "assistant" && (
             <div className="self-start w-full">
-              <div className="flex items-center gap-2 mb-2">
+              <div className="flex items-center gap-2 mb-1.5">
                 <Bot size={14} className="text-primary" />
                 <span className="font-medium text-xs text-muted-foreground">Cebian Agent</span>
               </div>
-              <span className="inline-block w-2 h-4 bg-primary rounded-sm animate-pulse-cursor" />
+              <span className="inline-block w-1.5 h-4 bg-primary rounded-sm animate-pulse align-text-bottom" />
             </div>
           )}
           <div ref={messagesEndRef} />

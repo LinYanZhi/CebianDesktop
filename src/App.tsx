@@ -2,9 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Settings, MessageSquarePlus, Bot, History, Server, X, Trash2, Sun, Moon } from "lucide-react";
 import ChatView from "./components/chat/ChatView";
 import SettingsView from "./components/settings/SettingsView";
-import { callAI, startMcpServer, stopMcpServer } from "./lib/commands";
+import { startMcpServer, stopMcpServer } from "./lib/commands";
 import { loadAIConfig, saveAIConfig, loadConversationsFromStorage, saveConversationsToStorage, loadTheme, saveTheme } from "./lib/db";
-import { listen } from "@tauri-apps/api/event";
 import type { Conversation, ChatMessage, AIConfig } from "./lib/types";
 import { DEFAULT_PROVIDERS, getActiveConfig } from "./lib/types";
 
@@ -159,40 +158,6 @@ export default function App() {
       setLoading(true);
 
       try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        cleanupListeners();
-
-        const unlistenToken = await listen<any>("ai:token", (e) => {
-          const token = typeof e.payload === "string" ? e.payload : (e.payload as any)?.token || "";
-          setStreamingContent((prev) => prev + token);
-        });
-        const unlistenThinking = await listen<any>("ai:thinking", (e) => {
-          const token = typeof e.payload === "string" ? e.payload : (e.payload as any)?.token || "";
-          setStreamingThinking((prev) => prev + token);
-        });
-        const unlistenToolCall = await listen<any>("ai:tool_call", () => {});
-        const unlistenToolResult = await listen<any>("ai:tool_result", () => {});
-        const unlistenDone = await listen<any>("ai:done", () => {
-          cleanupListeners();
-          setLoading(false);
-        });
-        const unlistenError = await listen<any>("ai:error", (e) => {
-          const errMsg = typeof e.payload === "string" ? e.payload : (e.payload as any)?.error || "未知错误";
-          console.error("[ai:error] received:", errMsg);
-          setMessages((prev) => {
-            const updated = [...prev];
-            const last = updated[updated.length - 1];
-            if (last?.role === "assistant") {
-              updated[updated.length - 1] = { ...last, content: `**错误**: ${errMsg}` };
-            }
-            return updated;
-          });
-          cleanupListeners();
-          setLoading(false);
-        });
-
-        unlistenRef.current = [unlistenToken, unlistenThinking, unlistenToolCall, unlistenToolResult, unlistenDone, unlistenError];
-
         const active = getActiveConfig(aiConfig);
         console.log("[handleSend] calling streaming with:", {
           endpoint: active.endpoint,
@@ -207,23 +172,101 @@ export default function App() {
           content: aiConfig.system_prompt || "你是一个有用的 AI 助手，可以通过 MCP 工具与外部系统交互。",
         };
         const apiMessages = [systemMsg, ...updated];
-        await invoke("call_ai_streaming", { config: active, messages: apiMessages });
-      } catch (err) {
-        console.error("[handleSend] invoke error:", err);
-        cleanupListeners();
-        try {
-          const response = await callAI(getActiveConfig(aiConfig), []);
-          const assistantMsg: ChatMessage = {
-            role: "assistant",
-            content: typeof response === "string" ? response : response?.content || "",
-          };
-          setMessages((prev) => [...prev.slice(0, -1), assistantMsg]);
-        } catch (err2) {
-          console.error("[handleSend] fallback error:", err2);
-          const errMsg: ChatMessage = { role: "assistant", content: "**错误**: 请求失败，请检查配置" };
-          setMessages((prev) => [...prev.slice(0, -1), errMsg]);
+
+        // 直接在前端用 fetch 发起流式请求（参考 CeBian 的方式）
+        const controller = new AbortController();
+        // 保存 controller 用于可能的取消操作
+        (window as any).__streamController = controller;
+
+        const resp = await fetch(`${active.endpoint}/chat/completions`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${active.api_key}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: active.model,
+            messages: apiMessages.map(m => ({ role: m.role, content: m.content })),
+            max_tokens: active.max_tokens,
+            temperature: active.temperature,
+            stream: true,
+          }),
+          signal: controller.signal,
+        });
+
+        if (!resp.ok) {
+          const body = await resp.text().catch(() => "");
+          throw new Error(`HTTP ${resp.status} - ${body}`);
         }
+
+        const reader = resp.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        // 本地累加器，确保流结束后能正确写入 messages
+        let fullContent = "";
+        let fullThinking = "";
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          const lines = buffer.split("\n");
+          buffer = lines.pop() || "";
+
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6).trim();
+            if (data === "[DONE]") continue;
+
+            try {
+              const chunk = JSON.parse(data);
+              const choices = chunk.choices;
+              if (!choices || choices.length === 0) continue;
+              const delta = choices[0].delta || {};
+
+              if (delta.content) {
+                fullContent += delta.content;
+                setStreamingContent((prev) => prev + delta.content);
+              }
+              if (delta.reasoning_content) {
+                fullThinking += delta.reasoning_content || "";
+                setStreamingThinking((prev) => prev + (delta.reasoning_content || ""));
+              }
+            } catch {
+              // 跳过无法解析的行
+            }
+          }
+        }
+
+        // 流式完成 — 最终写入 messages
+        setMessages((prev) => {
+          if (prev.length === 0) return prev;
+          const updated = [...prev];
+          const last = updated[updated.length - 1];
+          if (last?.role === "assistant") {
+            updated[updated.length - 1] = {
+              ...last,
+              content: fullContent,
+              reasoning_content: fullThinking || undefined,
+            };
+          }
+          return updated;
+        });
+        cleanupListeners();
         setLoading(false);
+      } catch (err: any) {
+        console.error("[handleSend] 流式请求错误:", err);
+        cleanupListeners();
+        const errMsg: ChatMessage = {
+          role: "assistant",
+          content: `**错误**: ${err.message || "请求失败，请检查配置"}`,
+        };
+        setMessages((prev) => [...prev.slice(0, -1), errMsg]);
+        setLoading(false);
+      } finally {
+        delete (window as any).__streamController;
       }
     },
     [messages, aiConfig, loading, updateCurrentConversation, cleanupListeners]
