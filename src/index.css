@@ -17,14 +17,15 @@ html, body, #root {
 
 /* ===== 暗色主题 (默认) ===== */
 :root {
+  --primary-hue: 200;
   --background: 220 12% 5%;
   --foreground: 220 8% 92%;
   --card: 220 15% 10%;
   --card-foreground: 220 8% 92%;
   --popover: 220 15% 14%;
   --popover-foreground: 220 8% 92%;
-  --primary: 24 95% 53%;
-  --primary-foreground: 24 100% 5%;
+  --primary: var(--primary-hue) 95% 53%;
+  --primary-foreground: var(--primary-hue) 100% 5%;
   --secondary: 220 15% 16%;
   --secondary-foreground: 220 8% 92%;
   --muted: 220 20% 8%;
@@ -35,7 +36,7 @@ html, body, #root {
   --destructive-foreground: 220 8% 92%;
   --border: 220 15% 25%;
   --input: 220 15% 25%;
-  --ring: 32 97% 72%;
+  --ring: calc(var(--primary-hue) + 8) 97% 72%;
   --radius: 0.625rem;
   --success: 160 64% 52%;
   --info: 215 94% 68%;
@@ -49,7 +50,7 @@ html, body, #root {
   --card-foreground: 24 10% 10%;
   --popover: 0 0% 100%;
   --popover-foreground: 24 10% 10%;
-  --primary: 24 95% 53%;
+  --primary: var(--primary-hue) 95% 53%;
   --primary-foreground: 60 9% 98%;
   --secondary: 60 6% 94%;
   --secondary-foreground: 24 10% 10%;
@@ -61,7 +62,7 @@ html, body, #root {
   --destructive-foreground: 60 9% 98%;
   --border: 20 6% 82%;
   --input: 20 6% 82%;
-  --ring: 24 95% 53%;
+  --ring: var(--primary-hue) 95% 53%;
   --success: 160 84% 39%;
   --info: 215 94% 68%;
 }

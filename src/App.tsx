@@ -17,6 +17,7 @@ const DEFAULT_AI_CONFIG: AIConfig = {
   max_tokens: 4096,
   temperature: 0.7,
   thinking_level: "medium",
+  primary_hue: 200,
 };
 
 function createNewConversation(): Conversation {
@@ -29,6 +30,17 @@ function createNewConversation(): Conversation {
   };
 }
 
+// ─── 单流状态（每个进行中的流一个实例） ──────────────────────────
+interface StreamState {
+  controller: AbortController;
+  persistTimer: ReturnType<typeof setTimeout> | null;
+  sessionId: string;
+  /** 流开始前的消息（含刚发出的用户消息），用于重建完整数组 */
+  prevMessages: ChatMessage[];
+  fullContent: string;
+  fullThinking: string;
+}
+
 export default function App() {
   const [currentView, setCurrentView] = useState<"chat" | "settings">("chat");
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -37,7 +49,6 @@ export default function App() {
   const [aiConfig, setAiConfig] = useState<AIConfig>(DEFAULT_AI_CONFIG);
   const [serverRunning, setServerRunning] = useState(false);
   const [serverPort, setServerPort] = useState(8080);
-  const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [darkMode, setDarkMode] = useState(true);
   const [historyWidth, setHistoryWidth] = useState(280);
@@ -45,6 +56,12 @@ export default function App() {
   const [editingTitle, setEditingTitle] = useState("");
   const unlistenRef = useRef<(() => void)[]>([]);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const messagesRef = useRef<ChatMessage[]>([]);
+  /** 渲染触发器：activeStreamsRef 变化时触发重渲染 */
+  const [, forceRender] = useState(0);
+  /** 所有进行中的流，key = 会话 ID */
+  const activeStreamsRef = useRef<Map<string, StreamState>>(new Map());
 
   // 切换主题
   useEffect(() => {
@@ -52,26 +69,24 @@ export default function App() {
     saveTheme(darkMode).catch(e => console.error("保存主题失败:", e));
   }, [darkMode]);
 
+  // 应用主题色
+  useEffect(() => {
+    const hue = aiConfig.primary_hue ?? 200;
+    document.documentElement.style.setProperty("--primary-hue", String(hue));
+  }, [aiConfig.primary_hue]);
+
   // 初始化 - 从数据库加载所有数据
   useEffect(() => {
     (async () => {
       try {
-        // 加载主题
         const savedDark = await loadTheme();
         setDarkMode(savedDark);
 
-        // 加载 AI 配置
         const savedConfig = await loadAIConfig();
-        console.log("[App] loadAIConfig result:", savedConfig ? {
-          activeProviderId: savedConfig.activeProviderId,
-          providerCount: savedConfig.providers.length,
-          deepseekKeyLen: savedConfig.providers.find(p => p.id === "deepseek")?.api_key?.length,
-        } : "null");
         if (savedConfig) {
           setAiConfig(savedConfig);
         }
 
-        // 加载对话记录
         const loaded = await loadConversationsFromStorage();
         if (loaded && loaded.length > 0) {
           setConversations(loaded);
@@ -97,6 +112,44 @@ export default function App() {
     saveConversationsToStorage(convs).catch(e => console.error("保存对话失败:", e));
   }, []);
 
+  // 保持 sessionIdRef 与 state 同步
+  useEffect(() => {
+    sessionIdRef.current = currentSessionId;
+  }, [currentSessionId]);
+
+  // 保持 messagesRef 与 state 同步
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
+
+  // visibilitychange：用户切换页面时，保存所有进行中的流
+  useEffect(() => {
+    const handler = () => {
+      if (document.visibilityState !== "hidden") return;
+      // 收集所有活跃流的数据并持久化
+      const streams = activeStreamsRef.current;
+      if (streams.size === 0) return;
+      setConversations((prev) => {
+        let updated = [...prev];
+        for (const [, state] of streams) {
+          const partial: ChatMessage = {
+            role: "assistant",
+            content: state.fullContent,
+            reasoning_content: state.fullThinking || undefined,
+          };
+          const msgs = [...state.prevMessages, partial];
+          updated = updated.map((c) =>
+            c.id === state.sessionId ? { ...c, messages: msgs, updatedAt: Date.now() } : c
+          );
+        }
+        persistConversations(updated);
+        return updated;
+      });
+    };
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, [persistConversations]);
+
   // AI 配置变化时自动保存（防抖）
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -108,6 +161,33 @@ export default function App() {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     };
   }, [aiConfig]);
+
+  /** 持久化指定会话的消息（不修改 currentSessionId 相关逻辑） */
+  const persistSessionMessages = useCallback(
+    (sessionId: string, msgs: ChatMessage[], title?: string) => {
+      setConversations((prev) => {
+        const existing = prev.find((c) => c.id === sessionId);
+        if (!existing) return prev;
+        const updated = prev.map((c) =>
+          c.id === sessionId
+            ? {
+                ...c,
+                messages: msgs,
+                updatedAt: Date.now(),
+                title:
+                  title ??
+                  (c.title === "新对话" && msgs.length > 0 && msgs[0].role === "user"
+                    ? msgs[0].content.slice(0, 30) + (msgs[0].content.length > 30 ? "..." : "")
+                    : c.title),
+              }
+            : c
+        );
+        persistConversations(updated);
+        return updated;
+      });
+    },
+    [persistConversations]
+  );
 
   const updateCurrentConversation = useCallback(
     (msgs: ChatMessage[]) => {
@@ -140,31 +220,82 @@ export default function App() {
     unlistenRef.current = [];
   }, []);
 
-  // 发送消息（流式）
+  /** 启动一个流的定期持久化（每 800ms） */
+  const startStreamPersist = (streamState: StreamState) => {
+    if (streamState.persistTimer) clearTimeout(streamState.persistTimer);
+    const doPersist = () => {
+      // 如果流已被移除，不再续 timer
+      if (!activeStreamsRef.current.has(streamState.sessionId)) return;
+      const partial: ChatMessage = {
+        role: "assistant",
+        content: streamState.fullContent,
+        reasoning_content: streamState.fullThinking || undefined,
+      };
+      const msgs = [...streamState.prevMessages, partial];
+      persistSessionMessages(streamState.sessionId, msgs);
+      streamState.persistTimer = setTimeout(doPersist, 800);
+    };
+    streamState.persistTimer = setTimeout(doPersist, 800);
+  };
+
+  /** 停止一个流的定时器 */
+  const stopStreamPersist = (streamState: StreamState) => {
+    if (streamState.persistTimer) {
+      clearTimeout(streamState.persistTimer);
+      streamState.persistTimer = null;
+    }
+  };
+
+  /** 清理一个流的所有资源 */
+  const cleanupStream = (sessionId: string) => {
+    const state = activeStreamsRef.current.get(sessionId);
+    if (!state) return;
+    stopStreamPersist(state);
+    activeStreamsRef.current.delete(sessionId);
+    forceRender((n) => n + 1);
+  };
+
+  // 发送消息（流式）— 支持多会话并发
   const handleSend = useCallback(
     async (content: string, attachments?: SendAttachment[]) => {
-      if (!content.trim() || loading) return;
+      if (!content.trim()) return;
+
+      const streamSessionId = currentSessionId;
+      if (!streamSessionId) return;
+
+      // 如果这个会话已经在流式，不允许重复发送
+      if (activeStreamsRef.current.has(streamSessionId)) return;
+
       const userMsg: ChatMessage = { role: "user", content };
       const updated = [...messages, userMsg];
       updateCurrentConversation(updated);
 
       const placeholder: ChatMessage = { role: "assistant", content: "" };
-      const withPlaceholder = [...updated, placeholder];
-      setMessages(withPlaceholder);
-      setLoading(true);
+      setMessages([...updated, placeholder]);
+      forceRender((n) => n + 1); // 触发重渲染，UI 显示 loading 状态
+
+      // 注册流状态
+      const controller = new AbortController();
+      (window as any).__streamController = controller;
+      const streamState: StreamState = {
+        controller,
+        persistTimer: null,
+        sessionId: streamSessionId,
+        prevMessages: updated,
+        fullContent: "",
+        fullThinking: "",
+      };
+      activeStreamsRef.current.set(streamSessionId, streamState);
 
       try {
         const active = getActiveConfig(aiConfig);
-        console.log("[handleSend] calling streaming with:", {
+        console.log("[handleSend] calling streaming:", {
           endpoint: active.endpoint,
           model: active.model,
-          apiKeyPrefix: active.api_key.slice(0, 8),
-          apiKeyLen: active.api_key.length,
+          session: streamSessionId,
           msgCount: updated.length,
-          attachments: attachments?.length || 0,
         });
 
-        // 构建 system message
         let systemPrompt = aiConfig.system_prompt || "你是一个有用的 AI 助手，可以通过 MCP 工具与外部系统交互。";
         const webSearch = (window as any).__webSearch;
         if (webSearch) {
@@ -172,26 +303,17 @@ export default function App() {
         }
         const systemMsg: ChatMessage = { role: "system", content: systemPrompt };
 
-        // 构建 API messages —— 支持多模态内容
         const apiMessages: any[] = [systemMsg];
-
         for (let i = 0; i < updated.length; i++) {
           const msg = updated[i];
           if (msg.role === "user") {
-            // 最后一条用户消息且有附件 -> 多内容格式
             if (i === updated.length - 1 && attachments && attachments.length > 0) {
               const multiContent: any[] = [{ type: "text", text: msg.content }];
               for (const att of attachments) {
                 if (att.type === "image" && att.data.startsWith("data:")) {
-                  multiContent.push({
-                    type: "image_url",
-                    image_url: { url: att.data },
-                  });
+                  multiContent.push({ type: "image_url", image_url: { url: att.data } });
                 } else if (att.type === "file") {
-                  multiContent.push({
-                    type: "text",
-                    text: `[附件: ${att.name}]\n${att.data}`,
-                  });
+                  multiContent.push({ type: "text", text: `[附件: ${att.name}]\n${att.data}` });
                 }
               }
               apiMessages.push({ role: "user", content: multiContent });
@@ -203,9 +325,8 @@ export default function App() {
           }
         }
 
-        // 直接在前端用 fetch 发起流式请求
-        const controller = new AbortController();
-        (window as any).__streamController = controller;
+        // 启动定期持久化
+        startStreamPersist(streamState);
 
         const resp = await fetch(`${active.endpoint}/chat/completions`, {
           method: "POST",
@@ -238,8 +359,8 @@ export default function App() {
         while (true) {
           const { done, value } = await reader.read();
           if (done) break;
-          buffer += decoder.decode(value, { stream: true });
 
+          buffer += decoder.decode(value, { stream: true });
           const lines = buffer.split("\n");
           buffer = lines.pop() || "";
 
@@ -256,35 +377,42 @@ export default function App() {
 
               if (delta.content) {
                 fullContent += delta.content;
-                setMessages((prev) => {
-                  if (prev.length === 0) return prev;
-                  const updated = [...prev];
-                  const last = updated[updated.length - 1];
-                  if (last?.role === "assistant") {
-                    updated[updated.length - 1] = {
-                      ...last,
-                      content: fullContent,
-                      reasoning_content: fullThinking || undefined,
-                    };
-                  }
-                  return updated;
-                });
+                streamState.fullContent = fullContent;
+                // 仅在当前显示的会话是此流时才更新 UI
+                if (sessionIdRef.current === streamSessionId) {
+                  setMessages((prev) => {
+                    if (prev.length === 0) return prev;
+                    const updatedMsgs = [...prev];
+                    const last = updatedMsgs[updatedMsgs.length - 1];
+                    if (last?.role === "assistant") {
+                      updatedMsgs[updatedMsgs.length - 1] = {
+                        ...last,
+                        content: fullContent,
+                        reasoning_content: fullThinking || undefined,
+                      };
+                    }
+                    return updatedMsgs;
+                  });
+                }
               }
               if (delta.reasoning_content) {
                 fullThinking += delta.reasoning_content || "";
-                setMessages((prev) => {
-                  if (prev.length === 0) return prev;
-                  const updated = [...prev];
-                  const last = updated[updated.length - 1];
-                  if (last?.role === "assistant") {
-                    updated[updated.length - 1] = {
-                      ...last,
-                      content: fullContent,
-                      reasoning_content: fullThinking || undefined,
-                    };
-                  }
-                  return updated;
-                });
+                streamState.fullThinking = fullThinking;
+                if (sessionIdRef.current === streamSessionId) {
+                  setMessages((prev) => {
+                    if (prev.length === 0) return prev;
+                    const updatedMsgs = [...prev];
+                    const last = updatedMsgs[updatedMsgs.length - 1];
+                    if (last?.role === "assistant") {
+                      updatedMsgs[updatedMsgs.length - 1] = {
+                        ...last,
+                        content: fullContent,
+                        reasoning_content: fullThinking || undefined,
+                      };
+                    }
+                    return updatedMsgs;
+                  });
+                }
               }
             } catch {
               // 跳过无法解析的行
@@ -292,39 +420,48 @@ export default function App() {
           }
         }
 
-        // 流式完成 — 最终写入 messages
-        setMessages((prev) => {
-          if (prev.length === 0) return prev;
-          const updated = [...prev];
-          const last = updated[updated.length - 1];
-          if (last?.role === "assistant") {
-            updated[updated.length - 1] = {
-              ...last,
-              content: fullContent,
-              reasoning_content: fullThinking || undefined,
-            };
-          }
-          return updated;
-        });
-        cleanupListeners();
-        setLoading(false);
-      } catch (err: any) {
-        console.error("[handleSend] 流式请求错误:", err);
-        cleanupListeners();
-        const errMsg: ChatMessage = {
+        // 流式完成 — 保存完整结果
+        stopStreamPersist(streamState);
+        const finalAssistantMsg: ChatMessage = {
           role: "assistant",
-          content: `**错误**: ${err.message || "请求失败，请检查配置"}`,
+          content: fullContent,
+          reasoning_content: fullThinking || undefined,
         };
-        setMessages((prev) => [...prev.slice(0, -1), errMsg]);
-        setLoading(false);
+        const finalMsgs = [...updated, finalAssistantMsg];
+        persistSessionMessages(streamSessionId, finalMsgs);
+        // 如果当前正好在看这个会话，同时更新本地 state
+        if (sessionIdRef.current === streamSessionId) {
+          setMessages(finalMsgs);
+        }
+        cleanupStream(streamSessionId);
+        cleanupListeners();
+      } catch (err: any) {
+        if (err?.name === "AbortError") {
+          cleanupStream(streamSessionId);
+          cleanupListeners();
+          return;
+        }
+        console.error("[handleSend] 流式请求错误:", err);
+        stopStreamPersist(streamState);
+        const errMsg = `**错误**: ${err.message || "请求失败，请检查配置"}`;
+        const errMsgs = [...updated, { role: "assistant", content: errMsg } as ChatMessage];
+        persistSessionMessages(streamSessionId, errMsgs);
+        if (sessionIdRef.current === streamSessionId) {
+          setMessages(errMsgs);
+        }
+        cleanupStream(streamSessionId);
+        cleanupListeners();
       } finally {
         delete (window as any).__streamController;
       }
     },
-    [messages, aiConfig, loading, updateCurrentConversation, cleanupListeners]
+    [
+      messages, aiConfig, currentSessionId,
+      updateCurrentConversation, persistSessionMessages, cleanupListeners,
+    ]
   );
 
-  // 选择对话
+  // 选择对话 — 不再 abort 其他会话的流，只是切换视图
   const handleSelectSession = useCallback(
     (id: string) => {
       const conv = conversations.find((c) => c.id === id);
@@ -350,11 +487,18 @@ export default function App() {
   const handleDeleteSession = useCallback(
     (e: React.MouseEvent, id: string) => {
       e.stopPropagation();
+      // 如果这个会话正在流式，中止它
+      const streamState = activeStreamsRef.current.get(id);
+      if (streamState) {
+        streamState.controller.abort();
+        cleanupStream(id);
+      }
       setConversations((prev) => {
         const updated = prev.filter((c) => c.id !== id);
         persistConversations(updated);
         if (id === currentSessionId) {
           if (updated.length > 0) {
+            // 找到第一个不是当前会话的活跃流会话，显示它
             setCurrentSessionId(updated[updated.length - 1].id);
             setMessages(updated[updated.length - 1].messages);
           } else {
@@ -380,6 +524,7 @@ export default function App() {
   }, []);
 
   const currentConv = conversations.find((c) => c.id === currentSessionId);
+  const isCurrentStreaming = currentSessionId ? activeStreamsRef.current.has(currentSessionId) : false;
 
   // 拖拽调整宽度
   const handleDragStart = useCallback((e: React.MouseEvent) => {
@@ -427,6 +572,9 @@ export default function App() {
     if (diff < 86400000) return `${Math.floor(diff / 3600000)} 小时前`;
     return d.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
   };
+
+  // 在历史列表中显示某个会话是否正在流式
+  const isSessionStreaming = (id: string) => activeStreamsRef.current.has(id);
 
   return (
     <div className={`h-screen flex flex-col overflow-hidden ${darkMode ? "" : "light"}`}
@@ -501,9 +649,16 @@ export default function App() {
                 <div key={conv.id}
                   onClick={() => handleSelectSession(conv.id)}
                   className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer text-sm transition-colors ${
-                    conv.id === currentSessionId ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                    conv.id === currentSessionId
+                      ? "bg-accent text-foreground"
+                      : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
                   }`}>
-                  <Bot size={14} className="shrink-0 text-primary" />
+                  <div className="relative shrink-0">
+                    <Bot size={14} className="text-primary" />
+                    {isSessionStreaming(conv.id) && (
+                      <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-primary animate-pulse" />
+                    )}
+                  </div>
                   <div className="flex-1 min-w-0"
                     onDoubleClick={(e) => { e.stopPropagation(); handleRenameStart(conv.id, conv.title); }}>
                     {renamingId === conv.id ? (
@@ -517,7 +672,12 @@ export default function App() {
                         className="w-full bg-background border border-ring rounded px-1 py-0.5 text-xs outline-none"
                       />
                     ) : (
-                      <p className="truncate">{conv.title}</p>
+                      <p className="truncate flex items-center gap-1.5">
+                        {conv.title}
+                        {isSessionStreaming(conv.id) && (
+                          <span className="text-[0.55rem] text-primary font-medium">· 响应中</span>
+                        )}
+                      </p>
                     )}
                     <p className="text-xs text-muted-foreground">{formatTime(conv.updatedAt)}</p>
                   </div>
@@ -546,7 +706,7 @@ export default function App() {
             <ChatView
               messages={messages}
               onSend={handleSend}
-              loading={loading}
+              loading={isCurrentStreaming}
               aiConfig={aiConfig}
               onConfigChange={setAiConfig}
               onNavigateSettings={() => setCurrentView("settings")}

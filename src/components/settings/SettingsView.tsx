@@ -24,6 +24,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: "providers", label: "AI 提供商", icon: Key },
+  { id: "appearance", label: "外观", icon: Bot },
   { id: "instructions", label: "指引", icon: MessageSquare },
   { id: "prompts", label: "提示词", icon: FileText },
   { id: "skills", label: "技能", icon: Puzzle },
@@ -220,19 +221,135 @@ function AdvancedSection() {
   );
 }
 
+// ─── 外观（主题色自定义） ───────────────────────────────
+
+const PRESET_COLORS = [
+  { hue: 24,  label: "橙色", class: "bg-[hsl(24,95%,53%)]" },
+  { hue: 210, label: "蓝色", class: "bg-[hsl(210,95%,53%)]" },
+  { hue: 160, label: "绿色", class: "bg-[hsl(160,64%,52%)]" },
+  { hue: 270, label: "紫色", class: "bg-[hsl(270,70%,60%)]" },
+  { hue: 330, label: "粉色", class: "bg-[hsl(330,80%,60%)]" },
+  { hue: 0,   label: "红色", class: "bg-[hsl(0,88%,60%)]" },
+  { hue: 180, label: "青色", class: "bg-[hsl(180,70%,50%)]" },
+  { hue: 45,  label: "黄色", class: "bg-[hsl(45,90%,55%)]" },
+];
+
+function AppearanceSection({ config, onChange }: { config: AIConfig; onChange: (c: AIConfig) => void }) {
+  const currentHue = config.primary_hue ?? 24;
+
+  return (
+    <section>
+      <h2 className="text-base font-semibold mb-4">外观</h2>
+
+      {/* 预设颜色 */}
+      <div className="mb-5">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">预设主题色</p>
+        <div className="flex flex-wrap gap-2.5">
+          {PRESET_COLORS.map(({ hue, label, class: bgClass }) => (
+            <button key={hue} onClick={() => onChange({ ...config, primary_hue: hue })}
+              className="flex flex-col items-center gap-1.5 group"
+              title={label}>
+              <div className={`w-8 h-8 rounded-full border-2 transition-all ${currentHue === hue ? 'border-foreground scale-110' : 'border-transparent group-hover:border-muted-foreground/50'} ${bgClass}`} />
+              <span className="text-[0.6rem] text-muted-foreground">{label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* 色相滑块 */}
+      <div className="mb-5">
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">自定义色相</p>
+        <div className="flex items-center gap-3">
+          <input type="range" min="0" max="360" value={currentHue}
+            onChange={(e) => onChange({ ...config, primary_hue: parseInt(e.target.value) })}
+            className="flex-1 h-2 rounded-full appearance-none cursor-pointer"
+            style={{
+              background: `linear-gradient(to right, 
+                hsl(0,95%,53%), hsl(30,95%,53%), hsl(60,95%,53%), 
+                hsl(120,95%,53%), hsl(180,95%,53%), hsl(240,95%,53%), 
+                hsl(300,95%,53%), hsl(360,95%,53%))`,
+            }} />
+          <span className="text-xs font-mono tabular-nums text-muted-foreground w-10 text-right">{currentHue}°</span>
+        </div>
+      </div>
+
+      {/* 实时预览 */}
+      <div>
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">预览</p>
+        <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg shrink-0" style={{ background: `hsl(${currentHue}, 95%, 53%)` }} />
+            <div>
+              <p className="text-sm font-medium" style={{ color: `hsl(${currentHue}, 95%, 40%)` }}>
+                主色调 {currentHue}°
+              </p>
+              <p className="text-xs text-muted-foreground">按钮、链接、图标等元素将使用此颜色</p>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button style={{ background: `hsl(${currentHue}, 95%, 53%)`, color: currentHue > 60 && currentHue < 200 ? '#000' : '#fff' }}
+              className="px-4 py-1.5 rounded-lg text-xs font-medium">
+              主要按钮
+            </button>
+            <button style={{ borderColor: `hsl(${currentHue}, 95%, 53%)`, color: `hsl(${currentHue}, 95%, 53%)` }}
+              className="px-4 py-1.5 rounded-lg text-xs font-medium border">
+              次要按钮
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function AboutSection() {
   return (
     <section>
       <h2 className="text-base font-semibold mb-4">关于</h2>
-      <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+      <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+        {/* 应用信息 */}
         <div className="flex items-center gap-3">
-          <Bot size={24} className="text-primary" />
+          <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center shrink-0">
+            <Bot size={22} className="text-primary" />
+          </div>
           <div>
-            <p className="text-sm font-medium">CeBianBridge Rust</p>
+            <p className="text-sm font-semibold">CebianDesktop</p>
             <p className="text-xs text-muted-foreground">版本 0.1.0</p>
           </div>
         </div>
-        <p className="text-sm text-muted-foreground">CeBian 生态系统的本地桥接工具，提供文件操作、命令执行、剪贴板管理等能力。</p>
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          CebianDesktop 是 CeBian 浏览器扩展的桌面伴侣应用，提供原生的 AI 对话体验、文件操作、MCP 工具集成等能力。
+        </p>
+
+        {/* 分隔线 */}
+        <div className="border-t border-border" />
+
+        {/* 作者信息 */}
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">作者</p>
+          <a href="https://github.com/LinYanZhi" target="_blank" rel="noopener noreferrer"
+            className="inline-flex items-center gap-2.5 text-sm text-primary hover:underline group">
+            <img src="https://github.com/LinYanZhi.png" alt="LinYanZhi"
+              className="w-8 h-8 rounded-full ring-2 ring-border group-hover:ring-primary/50 transition-all" />
+            <div>
+              <span className="block font-medium">LinYanZhi</span>
+              <span className="block text-xs text-muted-foreground">@LinYanZhi</span>
+            </div>
+          </a>
+        </div>
+
+        {/* 技术栈 */}
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">技术栈</p>
+          <div className="flex flex-wrap gap-1.5">
+            {["Tauri v2", "React", "TypeScript", "Tailwind CSS", "Rust"].map((tech) => (
+              <span key={tech}
+                className="px-2 py-0.5 rounded-md bg-accent/50 border border-border text-[0.65rem] text-muted-foreground">
+                {tech}
+              </span>
+            ))}
+          </div>
+        </div>
       </div>
     </section>
   );
@@ -296,6 +413,7 @@ export default function SettingsView(props: SettingsViewProps) {
   const renderSection = () => {
     switch (active) {
       case "providers": return <ProvidersSection config={props.config} onChange={props.onConfigChange} />;
+      case "appearance": return <AppearanceSection config={props.config} onChange={props.onConfigChange} />;
       case "instructions": return <InstructionsSection />;
       case "prompts": return <PromptsSection config={props.config} onChange={props.onConfigChange} />;
       case "skills": return <SkillsSection />;

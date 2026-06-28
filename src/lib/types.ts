@@ -58,6 +58,8 @@ export interface AIConfig {
   temperature: number;
   thinking_level: ThinkingLevel;
   system_prompt?: string;
+  /** 主色调色相 (0-360) */
+  primary_hue?: number;
 }
 
 /** 从多 Provider 配置中提取当前激活的扁平配置（向后兼容后端） */

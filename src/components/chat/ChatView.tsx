@@ -290,6 +290,59 @@ function ModelSelector({
 }
 
 // ═══════════════════════════════════════════════════════════
+//  思考级别选择器（Popover 下拉，仿 CeBian）
+// ═══════════════════════════════════════════════════════════
+
+function ThinkingLevelSelector({
+  level, onSelect
+}: {
+  level: ThinkingLevel; onSelect: (v: ThinkingLevel) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const current = THINKING_OPTIONS.find(o => o.key === level);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+      >
+        <Brain size={12} className="shrink-0" />
+        <span>{current?.label ?? level}</span>
+        <ChevronDown size={12} className="shrink-0" />
+      </button>
+
+      {open && (
+        <div className="absolute bottom-full left-0 mb-1 w-36 bg-popover border border-border rounded-xl shadow-xl z-50 overflow-hidden p-1">
+          {THINKING_OPTIONS.map(({ key, label }) => (
+            <button
+              key={key}
+              onClick={() => { onSelect(key); setOpen(false); }}
+              className={`w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-xs transition-colors ${
+                level === key
+                  ? "bg-accent/50 text-foreground font-medium"
+                  : "text-muted-foreground hover:bg-accent hover:text-foreground"
+              }`}
+            >
+              <span className="flex-1 text-left">{label}</span>
+              <Check size={12} className={`shrink-0 text-primary transition-opacity ${level === key ? "opacity-100" : "opacity-0"}`} />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 //  附件 Chips
 // ═══════════════════════════════════════════════════════════
 
@@ -466,21 +519,13 @@ function ChatInput({
               {/* 模型选择 */}
               <ModelSelector aiConfig={aiConfig} onNavigate={onNavigateSettings} onModelSelect={handleModelSelect} />
 
-              {/* 思考级别 — 推理模型才显示 */}
+              {/* 思考级别 — 下拉选择（仿 CeBian Popover） */}
               {(isReasoningModel || aiConfig.thinking_level !== "off") && (
-                <div className="flex items-center gap-0.5 border-l border-border pl-2">
-                  <Brain size={12} className="text-muted-foreground shrink-0" />
-                  {THINKING_OPTIONS.map(({ key, label }) => (
-                    <button key={key} onClick={() => onConfigChange({ ...aiConfig, thinking_level: key })}
-                      className={`px-1.5 py-0.5 rounded text-[11px] font-medium transition-colors ${
-                        aiConfig.thinking_level === key
-                          ? "bg-primary/20 text-primary"
-                          : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
+                <div className="border-l border-border pl-2">
+                  <ThinkingLevelSelector
+                    level={aiConfig.thinking_level}
+                    onSelect={(level) => onConfigChange({ ...aiConfig, thinking_level: level })}
+                  />
                 </div>
               )}
             </div>
