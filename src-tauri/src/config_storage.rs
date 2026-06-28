@@ -20,6 +20,9 @@ pub struct AppConfig {
     pub system_prompt: String,
     /// 主题: "dark" / "light"
     pub theme: String,
+    /// 主色调色相 (0-360)，默认 24（橙色）
+    #[serde(default)]
+    pub primary_hue: f64,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -43,6 +46,7 @@ impl Default for AppConfig {
             thinking_level: "medium".into(),
             system_prompt: String::new(),
             theme: "dark".into(),
+            primary_hue: 200.0,
         }
     }
 }
