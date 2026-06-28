@@ -178,6 +178,7 @@ export default function App() {
         });
         const unlistenError = await listen<any>("ai:error", (e) => {
           const errMsg = typeof e.payload === "string" ? e.payload : (e.payload as any)?.error || "未知错误";
+          console.error("[ai:error] received:", errMsg);
           setMessages((prev) => {
             const updated = [...prev];
             const last = updated[updated.length - 1];
@@ -192,13 +193,23 @@ export default function App() {
 
         unlistenRef.current = [unlistenToken, unlistenThinking, unlistenToolCall, unlistenToolResult, unlistenDone, unlistenError];
 
+        const active = getActiveConfig(aiConfig);
+        console.log("[handleSend] calling streaming with:", {
+          endpoint: active.endpoint,
+          model: active.model,
+          apiKeyPrefix: active.api_key.slice(0, 8),
+          apiKeyLen: active.api_key.length,
+          msgCount: updated.length,
+        });
+
         const systemMsg: ChatMessage = {
           role: "system",
           content: aiConfig.system_prompt || "你是一个有用的 AI 助手，可以通过 MCP 工具与外部系统交互。",
         };
         const apiMessages = [systemMsg, ...updated];
-        await invoke("call_ai_streaming", { config: getActiveConfig(aiConfig), messages: apiMessages });
-      } catch {
+        await invoke("call_ai_streaming", { config: active, messages: apiMessages });
+      } catch (err) {
+        console.error("[handleSend] invoke error:", err);
         cleanupListeners();
         try {
           const response = await callAI(getActiveConfig(aiConfig), []);
@@ -207,7 +218,8 @@ export default function App() {
             content: typeof response === "string" ? response : response?.content || "",
           };
           setMessages((prev) => [...prev.slice(0, -1), assistantMsg]);
-        } catch {
+        } catch (err2) {
+          console.error("[handleSend] fallback error:", err2);
           const errMsg: ChatMessage = { role: "assistant", content: "**错误**: 请求失败，请检查配置" };
           setMessages((prev) => [...prev.slice(0, -1), errMsg]);
         }

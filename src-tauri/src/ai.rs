@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -411,17 +412,29 @@ pub fn call_llm_streaming(
         return Err("api_key 未设置".to_string());
     }
 
+    let key_prefix = if api_key.len() > 8 {
+        &api_key[..8]
+    } else {
+        api_key
+    };
     eprintln!(
-        "[ai::call_llm_streaming] url={}, model={}, api_key=sk-...{}",
+        "[ai::call_llm_streaming] url={}, model={}, api_key_prefix={}, key_len={}",
         config.base_url.trim_end_matches('/'),
         config.model,
-        &api_key[api_key.len().saturating_sub(4)..]
+        key_prefix,
+        api_key.len()
     );
 
     let url = format!(
         "{}/chat/completions",
         config.base_url.trim_end_matches('/')
     );
+
+    // 创建带超时的 Agent
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(10))
+        .timeout_read(Duration::from_secs(30))
+        .build();
 
     let max_depth = 10u32;
     let mut current_messages: Vec<ChatMessage> = messages.to_vec();
@@ -446,8 +459,9 @@ pub fn call_llm_streaming(
             request_body["tools"] = Value::Array(openai_tools);
         }
 
-        // 发送流式请求
-        let response = ureq::post(&url)
+        // 发送流式请求（带超时）
+        let response = agent
+            .post(&url)
             .set("Authorization", &format!("Bearer {}", api_key))
             .set("Content-Type", "application/json")
             .send_json(&request_body)

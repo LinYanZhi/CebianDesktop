@@ -91,8 +91,25 @@ pub async fn call_ai_streaming(
     // 在后台线程中运行流式处理，避免阻塞 Tauri 的异步运行时
     let handle = app_handle.clone();
     std::thread::spawn(move || {
-        if let Err(e) = crate::ai::call_llm_streaming(&config, &messages, &handle) {
-            let _ = handle.emit("ai:error", serde_json::json!({"error": e}));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            crate::ai::call_llm_streaming(&config, &messages, &handle)
+        }));
+        match result {
+            Ok(Err(e)) => {
+                let _ = handle.emit("ai:error", serde_json::json!({"error": e}));
+            }
+            Err(panic_err) => {
+                let msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
+                    s.to_string()
+                } else if let Some(s) = panic_err.downcast_ref::<String>() {
+                    s.clone()
+                } else {
+                    "未知线程错误".to_string()
+                };
+                eprintln!("[call_ai_streaming] thread panicked: {}", msg);
+                let _ = handle.emit("ai:error", serde_json::json!({"error": format!("线程错误: {}", msg)}));
+            }
+            _ => {}
         }
     });
     Ok(())

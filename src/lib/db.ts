@@ -39,6 +39,8 @@ export async function loadAIConfig(): Promise<AIConfig | null> {
     if (!raw.providers || raw.providers.length === 0) {
       return null; // 无配置，使用默认
     }
+    const ds = raw.providers.find(p => p.id === "deepseek");
+    console.log("[loadAIConfig] deepseek key loaded:", ds ? { keyPrefix: (ds.api_key || "").slice(0, 8), keyLen: (ds.api_key || "").length } : "not found");
     return {
       providers: raw.providers.map(p => ({
         id: p.id,
@@ -83,6 +85,8 @@ export async function saveAIConfig(config: AIConfig): Promise<void> {
       system_prompt: config.system_prompt || "",
       theme: document.documentElement.classList.contains("light") ? "light" : "dark",
     };
+    const ds = json.providers.find(p => p.id === "deepseek");
+    console.log("[saveAIConfig] deepseek key save:", ds ? { keyPrefix: ds.api_key.slice(0, 8), keyLen: ds.api_key.length } : "not found");
     await invoke("save_app_config", { config: json });
   } catch (e) {
     console.error("saveAIConfig 失败:", e);
