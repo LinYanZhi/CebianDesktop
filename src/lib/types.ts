@@ -1,4 +1,13 @@
-export type ThinkingLevel = 'low' | 'medium' | 'high';
+export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high';
+
+export interface SendAttachment {
+  id: string;
+  type: 'image' | 'file';
+  name: string;
+  mimeType: string;
+  data: string; // base64
+  size?: number;
+}
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';

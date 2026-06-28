@@ -4,7 +4,7 @@ import ChatView from "./components/chat/ChatView";
 import SettingsView from "./components/settings/SettingsView";
 import { startMcpServer, stopMcpServer } from "./lib/commands";
 import { loadAIConfig, saveAIConfig, loadConversationsFromStorage, saveConversationsToStorage, loadTheme, saveTheme } from "./lib/db";
-import type { Conversation, ChatMessage, AIConfig } from "./lib/types";
+import type { Conversation, ChatMessage, AIConfig, SendAttachment } from "./lib/types";
 import { DEFAULT_PROVIDERS, getActiveConfig } from "./lib/types";
 
 function generateId(): string {
@@ -40,8 +40,6 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [darkMode, setDarkMode] = useState(true);
-  const [streamingContent, setStreamingContent] = useState("");
-  const [streamingThinking, setStreamingThinking] = useState("");
   const [historyWidth, setHistoryWidth] = useState(280);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -144,7 +142,7 @@ export default function App() {
 
   // 发送消息（流式）
   const handleSend = useCallback(
-    async (content: string) => {
+    async (content: string, attachments?: SendAttachment[]) => {
       if (!content.trim() || loading) return;
       const userMsg: ChatMessage = { role: "user", content };
       const updated = [...messages, userMsg];
@@ -153,8 +151,6 @@ export default function App() {
       const placeholder: ChatMessage = { role: "assistant", content: "" };
       const withPlaceholder = [...updated, placeholder];
       setMessages(withPlaceholder);
-      setStreamingContent("");
-      setStreamingThinking("");
       setLoading(true);
 
       try {
@@ -165,17 +161,50 @@ export default function App() {
           apiKeyPrefix: active.api_key.slice(0, 8),
           apiKeyLen: active.api_key.length,
           msgCount: updated.length,
+          attachments: attachments?.length || 0,
         });
 
-        const systemMsg: ChatMessage = {
-          role: "system",
-          content: aiConfig.system_prompt || "你是一个有用的 AI 助手，可以通过 MCP 工具与外部系统交互。",
-        };
-        const apiMessages = [systemMsg, ...updated];
+        // 构建 system message
+        let systemPrompt = aiConfig.system_prompt || "你是一个有用的 AI 助手，可以通过 MCP 工具与外部系统交互。";
+        const webSearch = (window as any).__webSearch;
+        if (webSearch) {
+          systemPrompt += "\n\n注意：联网搜索已开启。如果需要获取最新信息，你可以告知用户你将进行网络搜索。";
+        }
+        const systemMsg: ChatMessage = { role: "system", content: systemPrompt };
 
-        // 直接在前端用 fetch 发起流式请求（参考 CeBian 的方式）
+        // 构建 API messages —— 支持多模态内容
+        const apiMessages: any[] = [systemMsg];
+
+        for (let i = 0; i < updated.length; i++) {
+          const msg = updated[i];
+          if (msg.role === "user") {
+            // 最后一条用户消息且有附件 -> 多内容格式
+            if (i === updated.length - 1 && attachments && attachments.length > 0) {
+              const multiContent: any[] = [{ type: "text", text: msg.content }];
+              for (const att of attachments) {
+                if (att.type === "image" && att.data.startsWith("data:")) {
+                  multiContent.push({
+                    type: "image_url",
+                    image_url: { url: att.data },
+                  });
+                } else if (att.type === "file") {
+                  multiContent.push({
+                    type: "text",
+                    text: `[附件: ${att.name}]\n${att.data}`,
+                  });
+                }
+              }
+              apiMessages.push({ role: "user", content: multiContent });
+            } else {
+              apiMessages.push({ role: "user", content: msg.content });
+            }
+          } else {
+            apiMessages.push({ role: msg.role, content: msg.content });
+          }
+        }
+
+        // 直接在前端用 fetch 发起流式请求
         const controller = new AbortController();
-        // 保存 controller 用于可能的取消操作
         (window as any).__streamController = controller;
 
         const resp = await fetch(`${active.endpoint}/chat/completions`, {
@@ -186,7 +215,7 @@ export default function App() {
           },
           body: JSON.stringify({
             model: active.model,
-            messages: apiMessages.map(m => ({ role: m.role, content: m.content })),
+            messages: apiMessages,
             max_tokens: active.max_tokens,
             temperature: active.temperature,
             stream: true,
@@ -203,7 +232,6 @@ export default function App() {
         const decoder = new TextDecoder();
         let buffer = "";
 
-        // 本地累加器，确保流结束后能正确写入 messages
         let fullContent = "";
         let fullThinking = "";
 
@@ -228,11 +256,35 @@ export default function App() {
 
               if (delta.content) {
                 fullContent += delta.content;
-                setStreamingContent((prev) => prev + delta.content);
+                setMessages((prev) => {
+                  if (prev.length === 0) return prev;
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last?.role === "assistant") {
+                    updated[updated.length - 1] = {
+                      ...last,
+                      content: fullContent,
+                      reasoning_content: fullThinking || undefined,
+                    };
+                  }
+                  return updated;
+                });
               }
               if (delta.reasoning_content) {
                 fullThinking += delta.reasoning_content || "";
-                setStreamingThinking((prev) => prev + (delta.reasoning_content || ""));
+                setMessages((prev) => {
+                  if (prev.length === 0) return prev;
+                  const updated = [...prev];
+                  const last = updated[updated.length - 1];
+                  if (last?.role === "assistant") {
+                    updated[updated.length - 1] = {
+                      ...last,
+                      content: fullContent,
+                      reasoning_content: fullThinking || undefined,
+                    };
+                  }
+                  return updated;
+                });
               }
             } catch {
               // 跳过无法解析的行
@@ -271,27 +323,6 @@ export default function App() {
     },
     [messages, aiConfig, loading, updateCurrentConversation, cleanupListeners]
   );
-
-  // 定期保存流式内容到消息
-  useEffect(() => {
-    if (!loading) return;
-    const timer = setTimeout(() => {
-      setMessages((prev) => {
-        if (prev.length === 0) return prev;
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        if (last?.role === "assistant") {
-          updated[updated.length - 1] = {
-            ...last,
-            content: streamingContent,
-            reasoning_content: streamingThinking || undefined,
-          };
-        }
-        return updated;
-      });
-    }, 200);
-    return () => clearTimeout(timer);
-  }, [streamingContent, streamingThinking, loading]);
 
   // 选择对话
   const handleSelectSession = useCallback(
@@ -516,8 +547,6 @@ export default function App() {
               messages={messages}
               onSend={handleSend}
               loading={loading}
-              streamingContent={streamingContent}
-              streamingThinking={streamingThinking}
               aiConfig={aiConfig}
               onConfigChange={setAiConfig}
               onNavigateSettings={() => setCurrentView("settings")}
