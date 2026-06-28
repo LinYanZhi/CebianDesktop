@@ -1,0 +1,99 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ===== 全局 ===== */
+html, body, #root {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+  padding: 0;
+}
+
+* {
+  min-width: 0;
+}
+
+/* ===== 暗色主题 (默认) ===== */
+:root {
+  --background: 220 12% 5%;
+  --foreground: 220 8% 92%;
+  --card: 220 15% 10%;
+  --card-foreground: 220 8% 92%;
+  --popover: 220 15% 14%;
+  --popover-foreground: 220 8% 92%;
+  --primary: 24 95% 53%;
+  --primary-foreground: 24 100% 5%;
+  --secondary: 220 15% 16%;
+  --secondary-foreground: 220 8% 92%;
+  --muted: 220 20% 8%;
+  --muted-foreground: 220 10% 58%;
+  --accent: 220 15% 21%;
+  --accent-foreground: 220 8% 92%;
+  --destructive: 0 88% 71%;
+  --destructive-foreground: 220 8% 92%;
+  --border: 220 15% 25%;
+  --input: 220 15% 25%;
+  --ring: 32 97% 72%;
+  --radius: 0.625rem;
+  --success: 160 64% 52%;
+  --info: 215 94% 68%;
+}
+
+/* ===== 浅色主题 ===== */
+.light {
+  --background: 60 9% 98%;
+  --foreground: 24 10% 10%;
+  --card: 0 0% 100%;
+  --card-foreground: 24 10% 10%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 24 10% 10%;
+  --primary: 24 95% 53%;
+  --primary-foreground: 60 9% 98%;
+  --secondary: 60 6% 94%;
+  --secondary-foreground: 24 10% 10%;
+  --muted: 60 6% 94%;
+  --muted-foreground: 24 5% 45%;
+  --accent: 60 6% 88%;
+  --accent-foreground: 24 10% 10%;
+  --destructive: 0 72% 51%;
+  --destructive-foreground: 60 9% 98%;
+  --border: 20 6% 82%;
+  --input: 20 6% 82%;
+  --ring: 24 95% 53%;
+  --success: 160 84% 39%;
+  --info: 215 94% 68%;
+}
+
+/* ===== 滚动条 ===== */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: hsl(var(--border)); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: hsl(var(--muted-foreground)); }
+
+/* ===== 动画 ===== */
+@keyframes pulse-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+.animate-pulse-cursor { animation: pulse-cursor 1s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+
+@keyframes slide-in-right {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes slide-out-right {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+.animate-slide-in { animation: slide-in-right 0.25s ease-out; }
+.animate-slide-out { animation: slide-out-right 0.25s ease-out; }
+
+/* Fade in */
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.animate-fade-in { animation: fade-in 0.2s ease-out; }
+
+/* 隐藏滚动条（WebKit） */
+.scrollbar-hidden::-webkit-scrollbar { display: none; }
+.scrollbar-hidden { -ms-overflow-style: none; scrollbar-width: none; }
