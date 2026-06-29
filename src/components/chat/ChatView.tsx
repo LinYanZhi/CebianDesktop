@@ -87,27 +87,27 @@ function CopyButton({ text }: { text: string }) {
 //  工具调用卡片
 // ═══════════════════════════════════════════════════════════
 
-const TOOL_LABELS: Record<string, { label: string; color: string }> = {
-  read_local_file: { label: "读取文件", color: "text-blue-400" },
-  write_new_file: { label: "写入文件", color: "text-emerald-400" },
-  edit_file: { label: "编辑文件", color: "text-amber-400" },
-  list_directory: { label: "浏览目录", color: "text-cyan-400" },
-  create_directory: { label: "创建目录", color: "text-teal-400" },
-  rename_path: { label: "重命名", color: "text-violet-400" },
-  delete_path: { label: "删除", color: "text-red-400" },
-  search_files: { label: "搜索文件", color: "text-sky-400" },
-  download_file: { label: "下载文件", color: "text-indigo-400" },
-  open_path: { label: "打开路径", color: "text-yellow-400" },
-  run_command: { label: "执行命令", color: "text-orange-400" },
-  system_info: { label: "系统信息", color: "text-pink-400" },
-  system_notify: { label: "系统通知", color: "text-rose-400" },
-  list_processes: { label: "进程列表", color: "text-fuchsia-400" },
-  list_windows: { label: "窗口列表", color: "text-purple-400" },
-  capture_screen: { label: "截取屏幕", color: "text-gray-400" },
-  fetch_url: { label: "网络请求", color: "text-lime-400" },
-  clipboard_read: { label: "读取剪贴板", color: "text-stone-400" },
-  clipboard_write: { label: "写入剪贴板", color: "text-neutral-400" },
-  ask_user: { label: "询问用户", color: "text-sky-400" },
+const TOOL_LABELS: Record<string, { label: string; color: string; desc: string }> = {
+  read_local_file: { label: "读取文件", color: "text-blue-400", desc: "读取本地文件内容" },
+  write_new_file: { label: "写入文件", color: "text-emerald-400", desc: "创建新文件并写入内容" },
+  edit_file: { label: "编辑文件", color: "text-amber-400", desc: "修改已有文件内容" },
+  list_directory: { label: "浏览目录", color: "text-cyan-400", desc: "列出目录中的文件和子目录" },
+  create_directory: { label: "创建目录", color: "text-teal-400", desc: "新建文件夹" },
+  rename_path: { label: "重命名", color: "text-violet-400", desc: "重命名文件或文件夹" },
+  delete_path: { label: "删除", color: "text-red-400", desc: "删除文件或文件夹" },
+  search_files: { label: "搜索文件", color: "text-sky-400", desc: "按名称或内容搜索文件" },
+  download_file: { label: "下载文件", color: "text-indigo-400", desc: "从 URL 下载文件到本地" },
+  open_path: { label: "打开路径", color: "text-yellow-400", desc: "用系统默认程序打开文件或目录" },
+  run_command: { label: "执行命令", color: "text-orange-400", desc: "在终端中执行系统命令" },
+  system_info: { label: "系统信息", color: "text-pink-400", desc: "获取操作系统、CPU、内存、磁盘等信息" },
+  system_notify: { label: "系统通知", color: "text-rose-400", desc: "发送桌面通知消息" },
+  list_processes: { label: "进程列表", color: "text-fuchsia-400", desc: "列出当前运行的进程" },
+  list_windows: { label: "窗口列表", color: "text-purple-400", desc: "列出当前打开的窗口" },
+  capture_screen: { label: "截取屏幕", color: "text-gray-400", desc: "截取屏幕截图" },
+  fetch_url: { label: "网络请求", color: "text-lime-400", desc: "发送 HTTP 请求获取网页或 API 数据" },
+  clipboard_read: { label: "读取剪贴板", color: "text-stone-400", desc: "读取系统剪贴板内容" },
+  clipboard_write: { label: "写入剪贴板", color: "text-neutral-400", desc: "写入内容到系统剪贴板" },
+  ask_user: { label: "询问用户", color: "text-sky-400", desc: "向用户提问并等待回复" },
 };
 
 function getToolLabel(name: string): string {
@@ -116,6 +116,10 @@ function getToolLabel(name: string): string {
 
 function getToolColor(name: string): string {
   return TOOL_LABELS[name]?.color || "text-muted-foreground";
+}
+
+function getToolDesc(name: string): string {
+  return TOOL_LABELS[name]?.desc || "";
 }
 
 /** 工具调用卡片：仿 Cebian ToolCard，每个工具独立可折叠，显示参数+结果 */
@@ -133,17 +137,19 @@ function ToolCallCards({ tool_calls, results }: {
             return JSON.stringify(JSON.parse(tc.function.arguments), null, 2);
           } catch { return tc.function.arguments; }
         })();
-        return <ToolCardItem key={tc.id || i} label={getToolLabel(tc.function.name)} color={getToolColor(tc.function.name)} status={status} args={argsStr} result={resultContent} />;
+        return <ToolCardItem key={tc.id || i} label={getToolLabel(tc.function.name)} toolName={tc.function.name} color={getToolColor(tc.function.name)} status={status} args={argsStr} result={resultContent} />;
       })}
     </div>
   );
 }
 
 /** 单个工具卡片（可折叠） */
-function ToolCardItem({ label, color, status, args, result }: {
-  label: string; color: string; status: 'running' | 'done'; args: string; result?: string;
+function ToolCardItem({ label, color, toolName, status, args, result }: {
+  label: string; color: string; toolName: string; status: 'running' | 'done'; args: string; result?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const desc = getToolDesc(toolName);
+  const hasArgs = args !== "{}" && args !== "{\n}";
   return (
     <div className="border border-border rounded-lg overflow-hidden text-[0.8rem] min-w-0">
       {/* Header */}
@@ -162,20 +168,32 @@ function ToolCardItem({ label, color, status, args, result }: {
             <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
         )}
-        <span className={`flex-1 truncate ${color}`}>{label}</span>
+        <div className="flex-1 min-w-0">
+          <span className={`truncate block ${color}`}>{label}</span>
+          {!hasArgs && desc && (
+            <span className="text-[0.6rem] text-muted-foreground/60 truncate block">{desc}</span>
+          )}
+        </div>
         <ChevronRight size={14} className={`shrink-0 text-muted-foreground/50 transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
       </button>
       {/* Expandable body */}
       {open && (
         <div className="border-t border-border">
-          <div className="px-3.5 py-2.5 bg-background">
-            <div className="text-[0.65rem] text-muted-foreground/60 mb-1.5 font-medium">参数</div>
-            <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono">
-              <code>{args}</code>
-            </pre>
-          </div>
+          {desc && hasArgs && (
+            <div className="px-3.5 py-2 bg-background border-b border-border/30">
+              <span className="text-[0.6rem] text-muted-foreground/60">{desc}</span>
+            </div>
+          )}
+          {hasArgs && (
+            <div className="px-3.5 py-2.5 bg-background">
+              <div className="text-[0.65rem] text-muted-foreground/60 mb-1.5 font-medium">参数</div>
+              <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono">
+                <code>{args}</code>
+              </pre>
+            </div>
+          )}
           {result !== undefined && (
-            <div className="px-3.5 py-2.5 bg-background border-t border-border/50">
+            <div className={`px-3.5 py-2.5 bg-background ${hasArgs ? "border-t border-border/50" : ""}`}>
               <div className="text-[0.65rem] text-muted-foreground/60 mb-1.5 font-medium">结果</div>
               <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono max-h-48 overflow-y-auto">
                 <code>{result}</code>
