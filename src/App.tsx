@@ -40,6 +40,7 @@ interface StreamState {
   prevMessages: ChatMessage[];
   fullContent: string;
   fullThinking: string;
+  usage?: { input: number; output: number };
 }
 
 export default function App() {
@@ -348,6 +349,7 @@ export default function App() {
             max_tokens: active.max_tokens,
             temperature: active.temperature,
             stream: true,
+            stream_options: { include_usage: true },
           }),
           signal: controller.signal,
         });
@@ -376,6 +378,13 @@ export default function App() {
 
             try {
               const chunk = JSON.parse(data);
+              // 捕获 token 用量（流末尾 chunk 携带）
+              if (chunk.usage) {
+                streamState.usage = {
+                  input: chunk.usage.prompt_tokens || 0,
+                  output: chunk.usage.completion_tokens || 0,
+                };
+              }
               const choices = chunk.choices;
               if (!choices || choices.length === 0) continue;
               const delta = choices[0].delta || {};
@@ -431,6 +440,7 @@ export default function App() {
           role: "assistant",
           content: fullContent,
           reasoning_content: fullThinking || undefined,
+          usage: streamState.usage,
         };
         const finalMsgs = [...updated, finalAssistantMsg];
         persistSessionMessages(streamSessionId, finalMsgs);
@@ -449,6 +459,7 @@ export default function App() {
             content: fullContent,
             reasoning_content: fullThinking || undefined,
             cancelled: true,
+            usage: streamState.usage,
           };
           const cancelledMsgs = [...updated, cancelledMsg];
           persistSessionMessages(streamSessionId, cancelledMsgs);

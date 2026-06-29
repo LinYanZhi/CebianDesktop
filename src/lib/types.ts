@@ -20,6 +20,11 @@ export interface ChatMessage {
   reasoning_content?: string;
   /** 此消息是否被用户中止生成 */
   cancelled?: boolean;
+  /** 模型返回的 token 用量 */
+  usage?: {
+    input: number;
+    output: number;
+  };
 }
 
 export interface ToolCall {

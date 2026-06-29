@@ -158,8 +158,13 @@ function AgentMessageBlock({ msg, isStreaming, isLast, onRetry }: {
         <div className="text-xs text-muted-foreground/80 italic mt-1">已取消</div>
       )}
       {!isStreaming && msg.content && (
-        <div className="flex items-center gap-1 mt-1">
+        <div className="flex items-center gap-2 mt-1">
           <CopyButton text={msg.content} />
+          {msg.usage && (
+            <span className="text-[0.65rem] text-muted-foreground/60 tabular-nums">
+              {msg.usage.input}↑{msg.usage.output}↓
+            </span>
+          )}
           {isLast && onRetry && (
             <button onClick={onRetry}
               className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
