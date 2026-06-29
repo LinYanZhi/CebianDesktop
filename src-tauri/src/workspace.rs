@@ -94,7 +94,7 @@ fn parse_md_file(content: &str) -> Option<(WorkspaceFileMeta, String)> {
 
     let end = content[3..].find("\n---")?;
     let fm_str = &content[3..3 + end];
-    let body = content[3 + end + 5..].trim().to_string();
+    let body = content.get(3 + end + 5..).map(|s| s.trim().to_string()).unwrap_or_default();
 
     // 简易 frontmatter 解析（不使用额外依赖）
     let mut name = String::new();
