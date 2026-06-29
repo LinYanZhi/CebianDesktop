@@ -7,6 +7,8 @@ import { loadAIConfig, saveAIConfig, loadConversationsFromStorage, saveConversat
 import type { Conversation, ChatMessage, AIConfig, SendAttachment, ToolCall } from "./lib/types";
 import { DEFAULT_PROVIDERS, getActiveConfig } from "./lib/types";
 import { toast } from "sonner";
+import { save } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
@@ -1191,7 +1193,7 @@ export default function App() {
   }, [handleRenameSave]);
 
   // 导出对话为 Markdown 文件
-  const handleExportConversation = useCallback((id: string) => {
+  const handleExportConversation = useCallback(async (id: string) => {
     const conv = conversations.find(c => c.id === id);
     if (!conv) return;
     let md = `# ${conv.title || "对话导出"}\n\n`;
@@ -1212,15 +1214,18 @@ export default function App() {
         md += `### 工具结果（${msg.name || "tool"}）\n\n\`\`\`\n${msg.content}\n\`\`\`\n\n`;
       }
     }
-    const blob = new Blob([md], { type: "text/markdown" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${conv.title || "对话"}.md`;
-    a.click();
-    URL.revokeObjectURL(url);
-    setCtxConv(null);
-    toast.success("对话已导出");
+    try {
+      const filePath = await save({
+        defaultPath: `${conv.title || "对话"}.md`,
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      if (!filePath) return; // 用户取消
+      await invoke("write_file_to_path", { path: filePath, content: md });
+      setCtxConv(null);
+      toast.success("对话已导出");
+    } catch (e: any) {
+      toast.error(`导出失败: ${e}`);
+    }
   }, [conversations]);
 
   // 关闭右键菜单

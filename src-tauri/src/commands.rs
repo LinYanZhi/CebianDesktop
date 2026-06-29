@@ -709,3 +709,10 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
     }
     Ok(output)
 }
+
+/// 将内容写入指定文件路径（用于对话导出）
+#[tauri::command]
+pub fn write_file_to_path(path: String, content: String) -> Result<(), String> {
+    std::fs::write(&path, &content)
+        .map_err(|e| format!("写入文件失败: {}", e))
+}

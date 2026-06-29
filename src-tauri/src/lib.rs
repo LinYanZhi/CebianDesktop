@@ -17,6 +17,7 @@ use mcp_client::McpClientManager;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             // 窗口状态插件：记住窗口大小和位置
             #[cfg(desktop)]
@@ -69,6 +70,7 @@ pub fn run() {
             commands::open_workspace_dir,
             commands::export_backup,
             commands::import_backup,
+            commands::write_file_to_path,
         ])
         .run(tauri::generate_context!())
         .expect("启动应用时出错");
