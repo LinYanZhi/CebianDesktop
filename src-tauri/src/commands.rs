@@ -48,10 +48,18 @@ pub fn get_tools() -> Vec<Value> {
 /// # 返回
 /// 工具执行结果（JSON 格式）
 #[tauri::command]
-pub fn execute_tool(name: String, args: Value) -> Value {
-    match tools::execute_tool(&name, &args) {
-        Ok(result) => result,
-        Err(e) => json!({"error": e}),
+pub async fn execute_tool(name: String, args: Value) -> Value {
+    // 使用 spawn_blocking 避免长时间运行的工具阻塞 IPC 线程
+    let name_clone = name.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        tools::execute_tool(&name_clone, &args)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(val)) => val,
+        Ok(Err(e)) => json!({"error": e}),
+        Err(e) => json!({"error": format!("工具执行线程崩溃: {}", e)}),
     }
 }
 

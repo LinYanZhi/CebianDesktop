@@ -22,61 +22,176 @@ macro_rules! td {
 /// 获取所有工具定义列表
 pub fn get_tool_definitions() -> Vec<Value> {
     vec![
-        // ─── 文件读取 ───
-        td!("read_local_file", "读取本地文件内容",
-            &[("path", "string", "要读取的文件路径（绝对路径）")], ["path"]),
-        // ─── 文件写入 ───
-        td!("write_new_file", "写入内容到文件（若文件已存在则覆盖）",
-            &[("path", "string", "文件路径（绝对路径）"), ("content", "string", "文件内容")], ["path", "content"]),
-        // ─── 文件编辑 ───
-        td!("edit_file", "编辑文件：精确查找替换指定字符串",
-            &[("path", "string", "文件路径"), ("old_text", "string", "要被替换的文本"), ("new_text", "string", "替换后的文本")], ["path", "old_text", "new_text"]),
-        // ─── 目录操作 ───
-        td!("create_directory", "创建目录（递归创建父目录）",
-            &[("path", "string", "目录路径（绝对路径）")], ["path"]),
-        td!("list_directory", "列出目录中的文件和子目录",
-            &[("path", "string", "要列出的目录路径（绝对路径）")], ["path"]),
-        // ─── 重命名/移动 ───
-        td!("rename_path", "重命名或移动文件/目录",
-            &[("old_path", "string", "原路径"), ("new_path", "string", "新路径")], ["old_path", "new_path"]),
-        // ─── 删除 ───
-        td!("delete_path", "删除文件或目录（目录递归删除）",
-            &[("path", "string", "要删除的路径")], ["path"]),
-        // ─── 文件搜索 ───
-        td!("search_files", "按名称或内容搜索文件",
-            &[("directory", "string", "搜索起始目录"), ("pattern", "string", "搜索关键词"), ("mode", "string", "搜索模式: 'name'(按文件名) 或 'content'(按内容)")], ["directory", "pattern"]),
-        // ─── 下载 ───
-        td!("download_file", "从 URL 下载文件到本地",
-            &[("url", "string", "文件下载 URL"), ("destination", "string", "保存路径（绝对路径）")], ["url", "destination"]),
-        // ─── 打开文件/目录 ───
-        td!("open_path", "使用系统默认程序打开文件或目录",
-            &[("path", "string", "要打开的文件或目录路径")], ["path"]),
-        // ─── 执行命令 ───
-        td!("run_command", "在终端中执行命令并返回输出",
-            &[("command", "string", "要执行的命令"), ("cwd", "string", "工作目录（可选）")], ["command"]),
-        // ─── 网络请求 ───
-        td!("fetch_url", "发起 HTTP 请求获取 URL 内容",
-            &[("url", "string", "请求 URL"), ("method", "string", "HTTP 方法 (GET/POST)，默认 GET"), ("body", "string", "请求体（POST 时使用）")], ["url"]),
-        // ─── 剪贴板 ───
-        td!("clipboard_read", "读取系统剪贴板文本内容",
+        // ═══════════════════════════════════════════════════════════
+        //  文件操作
+        // ═══════════════════════════════════════════════════════════
+        td!("read_local_file",
+            "读取本地文本文件的内容。返回文件全部文本。适用于读取源代码、配置文件、文档、日志等文本文件。\
+             \n\n注意：路径必须是绝对路径（如 C:\\Users\\用户名\\Desktop\\test.txt）。不支持读取二进制文件（如图片、视频）。\
+             \n\n适合场景：查看用户提到的文件内容、阅读代码、检查配置文件、查看日志等。",
+            &[("path", "string", "要读取的文件绝对路径，例如 C:\\Users\\用户名\\Desktop\\note.txt")], ["path"]),
+
+        td!("write_new_file",
+            "写入内容到文件。如果文件已存在，会被覆盖；如果目录不存在，会自动创建。\
+             \n\n注意：路径必须是绝对路径。写入文本内容，适合创建新文件或完全替换文件内容。如需部分修改请使用 edit_file 工具。\
+             \n\n适合场景：创建新文件、保存 AI 生成的内容、写入代码文件等。",
+            &[("path", "string", "文件绝对路径，例如 C:\\Users\\用户名\\Documents\\report.md"), ("content", "string", "要写入的文件内容")], ["path", "content"]),
+
+        td!("edit_file",
+            "精确查找并替换文件中的指定文本。这是部分修改文件内容的工具，不会影响文件的其他部分。\
+             \n\n注意：old_text 必须完全匹配文件中的内容（区分大小写）。如果有多处匹配，会全部替换。\
+             \n\n适合场景：修改配置文件中的某个值、替换代码中的变量名、更新版本号等局部修改。如需整体重写请使用 write_new_file。",
+            &[("path", "string", "文件绝对路径"), ("old_text", "string", "要被替换的现有文本（区分大小写，需完全匹配）"), ("new_text", "string", "替换后的新文本")], ["path", "old_text", "new_text"]),
+
+        // ═══════════════════════════════════════════════════════════
+        //  目录操作
+        // ═══════════════════════════════════════════════════════════
+        td!("list_directory",
+            "列出指定目录下的文件和子目录。返回每个条目的名称、类型（文件/目录），按目录优先、名称排序。\
+             \n\n注意：不会递归列出子目录的内容。如需递归搜索请使用 search_files 工具。路径必须是绝对目录路径。\
+             \n\n适合场景：查看文件夹内容、浏览目录结构、确认文件是否存在等。",
+            &[("path", "string", "要列出的目录绝对路径，例如 C:\\Users\\用户名\\Desktop")], ["path"]),
+
+        td!("create_directory",
+            "创建一个或多个目录。会递归创建所有不存在的父目录。\
+             \n\n注意：如果目录已存在，不会报错（幂等操作）。路径必须是绝对路径。\
+             \n\n适合场景：为项目创建目录结构、创建输出文件夹等。",
+            &[("path", "string", "要创建的目录绝对路径，例如 D:\\Projects\\my-app\\src")], ["path"]),
+
+        td!("rename_path",
+            "重命名或移动文件/目录。可以用于重命名文件，或将文件/目录移动到新位置。\
+             \n\n注意：如果目标位置的父目录不存在，会自动创建。如果目标已存在，行为取决于操作系统（可能覆盖或报错）。\
+             \n\n适合场景：重命名文件、整理文件夹、移动项目文件到新位置。",
+            &[("old_path", "string", "原路径（文件或目录的当前绝对路径）"), ("new_path", "string", "新路径（目标绝对路径）")], ["old_path", "new_path"]),
+
+        td!("delete_path",
+            "删除文件或目录。如果是目录，会递归删除其所有内容。\
+             \n\n警告：此操作不可撤销！删除目录会一并删除其所有子文件和子目录。\
+             \n\n适合场景：清理不需要的文件、删除临时目录、移除旧项目等。",
+            &[("path", "string", "要删除的文件或目录的绝对路径")], ["path"]),
+
+        td!("search_files",
+            "按文件名或文件内容搜索文件。支持递归搜索子目录，最大深度 10 层，最多返回 50 条结果。\
+             \n\n搜索模式 (mode 参数)：\
+             \n- \"name\"：按文件名匹配（不区分大小写）\
+             \n- \"content\"：按文件内容关键词匹配（不区分大小写，会返回匹配的行）\
+             \n\n适合场景：查找特定文件、在代码中搜索关键词、找配置文件等。",
+            &[("directory", "string", "搜索起始目录绝对路径"), ("pattern", "string", "搜索关键词（不区分大小写）"), ("mode", "string", "搜索模式：\"name\" 按文件名 或 \"content\" 按文件内容")], ["directory", "pattern"]),
+
+        // ═══════════════════════════════════════════════════════════
+        //  文件网络操作
+        // ═══════════════════════════════════════════════════════════
+        td!("download_file",
+            "从 URL 下载文件到本地磁盘。支持任何可通过 HTTP/HTTPS 访问的文件。\
+             \n\n适合场景：下载网络上的图片、安装包、文档等文件到本地保存。",
+            &[("url", "string", "文件下载 URL"), ("destination", "string", "保存的本地绝对路径，例如 C:\\Users\\用户名\\Downloads\\file.pdf")], ["url", "destination"]),
+
+        td!("open_path",
+            "使用系统默认程序打开文件或目录。相当于在文件资源管理器中双击文件或文件夹。\
+             \n\n适合场景：打开文件夹让用户浏览、用默认应用打开文档/图片、在资源管理器中定位文件等。",
+            &[("path", "string", "要打开的文件或目录绝对路径")], ["path"]),
+
+        // ═══════════════════════════════════════════════════════════
+        //  系统操作
+        // ═══════════════════════════════════════════════════════════
+        td!("run_command",
+            "在终端中执行系统命令并返回输出结果。\
+             \n\n在 Windows 上使用 cmd.exe，在 macOS/Linux 上使用 sh。可以指定工作目录。\
+             \n\n注意：\
+             \n- 命令在用户系统上实际执行，请谨慎操作（尤其是删除、格式化等危险命令）\
+             \n- 交互式命令（如需要用户输入）会挂起，应避免使用\
+             \n- 返回 stdout 和 stderr 的输出\
+             \n\n适合场景：运行 git 命令、执行构建脚本、查询系统状态、启动程序等。",
+            &[("command", "string", "要执行的命令，例如 dir 或 git status"), ("cwd", "string", "工作目录（可选，不指定则使用应用默认目录）")], ["command"]),
+
+        td!("system_notify",
+            "发送系统桌面通知。会在用户的操作系统通知区域显示一条通知消息。\
+             \n\n适合场景：通知用户任务完成、提醒重要事件、后台任务结束时提醒等。",
+            &[("title", "string", "通知标题（简短，如「下载完成」）"), ("message", "string", "通知正文内容")], ["title", "message"]),
+
+        td!("system_info",
+            "获取计算机的完整系统信息。包括：\
+             \n- 操作系统类型和架构\
+             \n- 主机名和用户名\
+             \n- CPU 型号和核心数\
+             \n- 内存总量和已用量\
+             \n- 所有磁盘（硬盘）的容量和可用空间\
+             \n\n适合场景：了解用户电脑配置、检查磁盘空间、确认操作系统类型等。",
             &[], []),
-        td!("clipboard_write", "写入文本内容到系统剪贴板",
-            &[("text", "string", "要写入的文本")], ["text"]),
-        // ─── 系统信息 ───
-        td!("system_info", "获取系统信息（操作系统、主机名、CPU、内存、磁盘等）",
+
+        // ═══════════════════════════════════════════════════════════
+        //  进程与窗口
+        // ═══════════════════════════════════════════════════════════
+        td!("list_processes",
+            "列出正在运行的进程（按内存占用从高到低排序，最多 40 个）。\
+             \n可以通过 name_filter 参数按进程名过滤，例如只查看 chrome 相关的进程。\
+             \n\n返回每个进程的 PID、名称、内存占用 (MB) 和 CPU 使用率。\
+             \n\n适合场景：查看哪些程序在运行、查找特定进程、诊断系统资源占用等。",
+            &[("name_filter", "string", "进程名过滤关键词（可选），例如 \"chrome\" 或 \"python\""),], []),
+
+        td!("list_windows",
+            "列出当前系统中所有打开的窗口（有标题的窗口）。返回每个窗口的标题和句柄。\
+             \n\n适合场景：查看用户当前打开了哪些应用程序窗口、了解用户的桌面工作环境等。",
             &[], []),
-        // ─── 进程列表 ───
-        td!("list_processes", "列出正在运行的进程（可按名称过滤）",
-            &[("name_filter", "string", "进程名过滤关键词（可选）")], []),
-        // ─── 窗口列表 ───
-        td!("list_windows", "列出当前打开的窗口",
+
+        td!("capture_screen",
+            "截取当前屏幕（主显示器全屏）并保存为 PNG 图片。\
+             \n\n注意：路径必须以 .png 结尾。如果保存目录不存在，会自动创建。\
+             \n\n适合场景：让 AI 看到用户当前的屏幕内容、帮助用户分析界面布局、记录桌面状态等。",
+            &[("save_path", "string", "截图保存的绝对路径，必须以 .png 结尾，例如 C:\\Users\\用户名\\Desktop\\screenshot.png")], ["save_path"]),
+
+        // ═══════════════════════════════════════════════════════════
+        //  网络
+        // ═══════════════════════════════════════════════════════════
+        td!("fetch_url",
+            "发起 HTTP 请求获取 URL 内容。支持 GET 和 POST 方法。\
+             \n\n注意：返回的是响应体的原始文本内容。对于 JSON API，会返回 JSON 字符串。\
+             \n\n适合场景：查询 API 接口、获取网页内容、检查服务状态等网络请求。",
+            &[("url", "string", "请求的 URL 地址"), ("method", "string", "HTTP 方法：\"GET\" 或 \"POST\"（默认 GET）"), ("body", "string", "请求体（仅在 POST 时需要）")], ["url"]),
+
+        // ═══════════════════════════════════════════════════════════
+        //  剪贴板
+        // ═══════════════════════════════════════════════════════════
+        td!("clipboard_read",
+            "读取系统剪贴板中的文本内容。\
+             \n\n适合场景：获取用户复制的文本、读取 AI 需要处理的剪贴板数据等。",
             &[], []),
-        // ─── 截屏 ───
-        td!("capture_screen", "截取屏幕并保存为图片",
-            &[("save_path", "string", "截图保存路径（PNG 格式）")], ["save_path"]),
-        // ─── 系统通知 ───
-        td!("system_notify", "发送系统通知",
-            &[("title", "string", "通知标题"), ("message", "string", "通知内容")], ["title", "message"]),
+
+        td!("clipboard_write",
+            "将文本写入系统剪贴板。写入后用户可以在任何应用中粘贴（Ctrl+V）。\
+             \n\n适合场景：将 AI 生成的内容复制给用户使用、方便用户粘贴代码/文本到其他应用。",
+            &[("text", "string", "要写入剪贴板的文本内容")], ["text"]),
+
+        // ═══════════════════════════════════════════════════════════
+        //  交互式工具
+        // ═══════════════════════════════════════════════════════════
+        td!("ask_user",
+            "向用户展示一个动态表单或提问，等待用户填写并回复。\
+             \n\n这是你与用户交互的首选方式。当你需要用户提供信息、做决定、确认操作时，\
+             使用此工具而非在回复中直接提问。\
+             \n\n支持丰富的表单控件：\
+             \n- text: 单行文本输入\
+             \n- textarea: 多行文本输入\
+             \n- confirm: 是/否确认按钮\
+             \n- single_select: 单选（radio 按钮）\
+             \n- multi_select: 多选（checkbox）\
+             \n- dropdown: 下拉选择\
+             \n\n你可以：\
+             \n- 一次展示多个字段（questions 数组），构成完整表单\
+             \n- 为表单添加 title 和 description\
+             \n- 为每个字段设置 required、placeholder、message 辅助文字\
+             \n- 为选择字段设置 options（每个含 label、value、description、recommended）\
+             \n\nquestion 是旧版单字段模式的参数，新用法请使用 questions 数组。\
+             \n每个 question 对象需要 id（唯一键名）和 question（显示文本）。",
+            &[
+                ("title", "string", "（可选）表单标题，多字段时建议提供"),
+                ("description", "string", "（可选）表单说明文字"),
+                ("submit_label", "string", "（可选）提交按钮文字，默认「提交」"),
+                ("questions", "string", "（推荐）JSON 字符串，字段数组。每个元素包含 id（唯一键名）、question（问题文本）、type（可选，text/textarea/confirm/single_select/multi_select/dropdown）、options（可选，选择类型的选项数组）、required（可选，是否必填）、placeholder（可选）、message（可选，辅助说明）、allow_free_text（可选）、min_select（可选）、max_select（可选）"),
+                ("question", "string", "（旧版，单字段时使用）向用户提出的问题"),
+                ("type", "string", "（旧版，仅配合 question 使用）问题类型：text / confirm / select"),
+                ("options", "string", "（旧版，仅配合 question+select 使用）JSON 选项数组"),
+            ], []),
     ]
 }
 
@@ -211,6 +326,21 @@ pub fn execute_tool(name: &str, args: &Value) -> Result<Value, String> {
             let message = arg_str(args, "message")?;
             system_notify(title, message)?;
             Ok(json!({"message": "通知已发送"}))
+        }
+        "ask_user" => {
+            // ask_user 是一个交互式工具，前端负责显示表单并收集用户输入。
+            // Rust 端只需返回一个信号，前端会拦截此工具调用并展示 UI。
+            let question = arg_str(args, "question")?;
+            let q_type = args.get("type").and_then(|v| v.as_str()).unwrap_or("text");
+            let options = args.get("options").and_then(|v| v.as_str()).unwrap_or("");
+            let default_val = args.get("default").and_then(|v| v.as_str()).unwrap_or("");
+            Ok(json!({
+                "interactive": true,
+                "question": question,
+                "type": q_type,
+                "options": options,
+                "default": default_val,
+            }))
         }
         _ => Err(format!("未知工具: {}", name)),
     }

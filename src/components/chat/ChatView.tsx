@@ -1,11 +1,11 @@
 import { useRef, useEffect, useState, memo, useCallback } from "react";
 import {
   Bot, Mic, Brain, ChevronDown, Settings, ChevronRight, Lightbulb,
-  Copy, Check, Paperclip, Globe, Search, X, Image, FileText, Square, RefreshCw,
+  Copy, Check, Paperclip, Globe, Search, X, Image, FileText, Square, RefreshCw, Undo2, ArrowUp,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { ChatMessage, AIConfig, ThinkingLevel, SendAttachment } from "../../lib/types";
+import type { ChatMessage, AIConfig, ThinkingLevel, SendAttachment, ToolCall } from "../../lib/types";
 import { getActiveConfig, hasUsableModel } from "../../lib/types";
 import { toast } from "sonner";
 
@@ -18,6 +18,29 @@ interface ChatViewProps {
   aiConfig: AIConfig;
   onConfigChange: (c: AIConfig) => void;
   onNavigateSettings: () => void;
+  /** 回滚到指定用户消息：删除该消息及之后所有消息，并把该消息内容填入输入框 */
+  onRollback?: (index: number, content: string) => void;
+  /** 待响应的交互式表单（ask_user） */
+  pendingInteractive?: {
+    toolCallId: string;
+    title?: string;
+    description?: string;
+    submit_label?: string;
+    questions: Array<{
+      id: string;
+      type: string;
+      question: string;
+      message?: string;
+      placeholder?: string;
+      options?: { label: string; value: string; description?: string; recommended?: boolean }[];
+      required?: boolean;
+      allow_free_text?: boolean;
+      min_select?: number;
+      max_select?: number;
+    }>;
+  } | null;
+  /** 用户对交互式工具的响应（传入 JSON 字符串或 null 取消） */
+  onInteractiveResolve?: (value: string | null) => void;
 }
 
 const THINKING_OPTIONS: { key: ThinkingLevel; label: string }[] = [
@@ -46,6 +69,438 @@ function CopyButton({ text }: { text: string }) {
     >
       {copied ? <Check size={13} /> : <Copy size={13} />}
     </button>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  工具调用卡片
+// ═══════════════════════════════════════════════════════════
+
+const TOOL_LABELS: Record<string, { label: string; color: string }> = {
+  read_local_file: { label: "读取文件", color: "text-blue-400" },
+  write_new_file: { label: "写入文件", color: "text-emerald-400" },
+  edit_file: { label: "编辑文件", color: "text-amber-400" },
+  list_directory: { label: "浏览目录", color: "text-cyan-400" },
+  create_directory: { label: "创建目录", color: "text-teal-400" },
+  rename_path: { label: "重命名", color: "text-violet-400" },
+  delete_path: { label: "删除", color: "text-red-400" },
+  search_files: { label: "搜索文件", color: "text-sky-400" },
+  download_file: { label: "下载文件", color: "text-indigo-400" },
+  open_path: { label: "打开路径", color: "text-yellow-400" },
+  run_command: { label: "执行命令", color: "text-orange-400" },
+  system_info: { label: "系统信息", color: "text-pink-400" },
+  system_notify: { label: "系统通知", color: "text-rose-400" },
+  list_processes: { label: "进程列表", color: "text-fuchsia-400" },
+  list_windows: { label: "窗口列表", color: "text-purple-400" },
+  capture_screen: { label: "截取屏幕", color: "text-gray-400" },
+  fetch_url: { label: "网络请求", color: "text-lime-400" },
+  clipboard_read: { label: "读取剪贴板", color: "text-stone-400" },
+  clipboard_write: { label: "写入剪贴板", color: "text-neutral-400" },
+  ask_user: { label: "询问用户", color: "text-sky-400" },
+};
+
+function getToolLabel(name: string): string {
+  return TOOL_LABELS[name]?.label || name;
+}
+
+function getToolColor(name: string): string {
+  return TOOL_LABELS[name]?.color || "text-muted-foreground";
+}
+
+/** 工具调用卡片：展示 AI 正在执行什么工具 */
+function ToolCallCards({ tool_calls, results }: {
+  tool_calls: ToolCall[];
+  results?: Map<string, string>;
+}) {
+  return (
+    <div className="space-y-1.5 my-2">
+      {tool_calls.map((tc, i) => {
+        const resultContent = results?.get(tc.id);
+        const isDone = resultContent !== undefined;
+        return (
+          <div key={tc.id || i}
+            className={`flex items-start gap-2 px-3 py-2 rounded-lg border text-xs transition-colors ${
+              isDone
+                ? "bg-accent/30 border-border/50 text-muted-foreground"
+                : "bg-accent/50 border-border text-foreground animate-pulse"
+            }`}
+          >
+            <div className={`shrink-0 mt-0.5 ${getToolColor(tc.function.name)}`}>
+              {isDone ? "✓" : "⟳"}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className={`font-medium ${getToolColor(tc.function.name)}`}>
+                  {getToolLabel(tc.function.name)}
+                </span>
+                {!isDone && (
+                  <span className="text-muted-foreground/60">执行中...</span>
+                )}
+              </div>
+              {isDone && resultContent && (
+                <div className="mt-1 text-muted-foreground/70 line-clamp-2 font-mono text-[10px]">
+                  {resultContent.length > 120
+                    ? resultContent.slice(0, 120) + "..."
+                    : resultContent}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
+//  交互式 AskUser 表单（对话区域内嵌，由 AI 动态控制）
+// ═══════════════════════════════════════════════════════════
+
+/** 单个字段的渲染组件 */
+function FormField({
+  field, value, onChange, error
+}: {
+  field: NonNullable<ChatViewProps['pendingInteractive']>['questions'][0];
+  value: string | string[];
+  onChange: (v: string | string[]) => void;
+  error?: string;
+}) {
+  const type = field.type || "text";
+  const hasError = !!error;
+
+  // ── textarea ──
+  if (type === "textarea") {
+    return (
+      <div>
+        <textarea
+          value={value as string}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={field.placeholder || ""}
+          rows={3}
+          className={`w-full px-3 py-2 rounded-lg border text-sm bg-background text-foreground placeholder:text-muted-foreground/40 outline-none transition-colors resize-y ${
+            hasError ? "border-red-400" : "border-border focus:border-primary/50"
+          }`}
+          autoFocus
+        />
+        {hasError && <p className="text-xs text-red-400 mt-1">{error}</p>}
+      </div>
+    );
+  }
+
+  // ── confirm ──
+  if (type === "confirm") {
+    return (
+      <div className="flex gap-2 mt-2">
+        <button onClick={() => onChange("yes")}
+          className={`px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            value === "yes"
+              ? "bg-primary text-primary-foreground"
+              : "bg-primary/10 text-primary hover:bg-primary/20 border border-primary/30"
+          }`}>
+          确认
+        </button>
+        <button onClick={() => onChange("no")}
+          className={`px-4 py-1.5 rounded-lg text-sm transition-colors ${
+            value === "no"
+              ? "bg-destructive/10 text-destructive border border-destructive/30"
+              : "border border-border text-foreground hover:bg-accent"
+          }`}>
+          取消
+        </button>
+      </div>
+    );
+  }
+
+  // ── dropdown ──
+  if (type === "dropdown") {
+    return (
+      <div>
+        <select
+          value={value as string}
+          onChange={(e) => onChange(e.target.value)}
+          className={`w-full px-3 py-2 rounded-lg border text-sm bg-background text-foreground outline-none transition-colors ${
+            hasError ? "border-red-400" : "border-border focus:border-primary/50"
+          }`}
+        >
+          <option value="" disabled>请选择...</option>
+          {field.options?.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label} {opt.recommended ? "★" : ""}
+            </option>
+          ))}
+        </select>
+        {hasError && <p className="text-xs text-red-400 mt-1">{error}</p>}
+      </div>
+    );
+  }
+
+  // ── single_select ──
+  if (type === "single_select") {
+    return (
+      <div>
+        <div className="flex flex-wrap gap-2">
+          {field.options?.map((opt) => (
+            <button key={opt.value} onClick={() => onChange(opt.value)}
+              className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
+                value === opt.value
+                  ? "border-primary bg-primary/10 text-primary font-medium"
+                  : "border-border hover:bg-accent text-foreground"
+              }`}
+              title={opt.description}
+            >
+              {opt.label}
+              {opt.recommended && <span className="ml-1 text-[10px] opacity-60">★</span>}
+            </button>
+          ))}
+        </div>
+        {field.allow_free_text && (
+          <input type="text" value={value as string}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder="自定义输入..."
+            className={`mt-2 w-full px-3 py-2 rounded-lg border text-sm bg-background text-foreground placeholder:text-muted-foreground/40 outline-none transition-colors ${
+              hasError ? "border-red-400" : "border-border focus:border-primary/50"
+            }`}
+          />
+        )}
+        {hasError && <p className="text-xs text-red-400 mt-1">{error}</p>}
+      </div>
+    );
+  }
+
+  // ── multi_select ──
+  if (type === "multi_select") {
+    const selected = (value as string[]) || [];
+    return (
+      <div>
+        <div className="flex flex-wrap gap-2">
+          {field.options?.map((opt) => {
+            const isSelected = selected.includes(opt.value);
+            return (
+              <button key={opt.value} onClick={() => {
+                if (isSelected) {
+                  onChange(selected.filter((v) => v !== opt.value));
+                } else {
+                  if (field.max_select && selected.length >= field.max_select) return;
+                  onChange([...selected, opt.value]);
+                }
+              }}
+                className={`px-3 py-1.5 rounded-lg text-sm border transition-colors ${
+                  isSelected
+                    ? "border-primary bg-primary/10 text-primary font-medium"
+                    : "border-border hover:bg-accent text-foreground"
+                }`}
+                title={opt.description}
+              >
+                {isSelected ? "✓ " : ""}{opt.label}
+              </button>
+            );
+          })}
+        </div>
+        {selected.length > 0 && field.min_select !== undefined && selected.length < field.min_select && (
+          <p className="text-xs text-amber-400 mt-1">至少选择 {field.min_select} 项</p>
+        )}
+        {field.allow_free_text && (
+          <input type="text"
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
+                const val = (e.target as HTMLInputElement).value.trim();
+                if (!selected.includes(val)) {
+                  onChange([...selected, val]);
+                }
+                (e.target as HTMLInputElement).value = "";
+              }
+            }}
+            placeholder="输入自定义项后按 Enter..."
+            className="mt-2 w-full px-3 py-2 rounded-lg border border-border text-sm bg-background text-foreground placeholder:text-muted-foreground/40 outline-none focus:border-primary/50 transition-colors"
+          />
+        )}
+      </div>
+    );
+  }
+
+  // ── text（默认） ──
+  return (
+    <div>
+      <input type="text" value={value as string}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={field.placeholder || "输入..."}
+        className={`w-full px-3 py-2 rounded-lg border text-sm bg-background text-foreground placeholder:text-muted-foreground/40 outline-none transition-colors ${
+          hasError ? "border-red-400" : "border-border focus:border-primary/50"
+        }`}
+        autoFocus
+      />
+      {hasError && <p className="text-xs text-red-400 mt-1">{error}</p>}
+    </div>
+  );
+}
+
+/** 主表单组件：根据 AI 传来的 questions 定义动态渲染 */
+function AskUserBlock({
+  title, description, submit_label, questions, onResolve
+}: {
+  title?: string;
+  description?: string;
+  submit_label?: string;
+  questions: Array<{
+    id: string;
+    type: string;
+    question: string;
+    message?: string;
+    placeholder?: string;
+    options?: { label: string; value: string; description?: string; recommended?: boolean }[];
+    required?: boolean;
+    allow_free_text?: boolean;
+    min_select?: number;
+    max_select?: number;
+  }>;
+  onResolve: (value: string | null) => void;
+}) {
+  // 每个字段的当前值
+  const [values, setValues] = useState<Record<string, string | string[]>>(() => {
+    const init: Record<string, string | string[]> = {};
+    for (const q of questions) {
+      if (q.type === "multi_select") init[q.id] = [];
+      else init[q.id] = "";
+    }
+    return init;
+  });
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [submitting, setSubmitting] = useState(false);
+
+  // 单字段 confirm + 仅一个问题 → 简化按钮模式（无提交按钮）
+  const isSimpleConfirm =
+    questions.length === 1 && questions[0].type === "confirm";
+
+  // 更新某个字段的值
+  const updateField = (id: string, v: string | string[]) => {
+    setValues((prev) => ({ ...prev, [id]: v }));
+    setErrors((prev) => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  };
+
+  // 校验
+  const validate = (): boolean => {
+    const errs: Record<string, string> = {};
+    for (const q of questions) {
+      if (q.required) {
+        const v = values[q.id];
+        if (q.type === "multi_select") {
+          if (!Array.isArray(v) || v.length === 0) errs[q.id] = "此项为必填";
+          else if (q.min_select && v.length < q.min_select)
+            errs[q.id] = `至少选择 ${q.min_select} 项`;
+        } else if (!v || (typeof v === "string" && !v.trim())) {
+          errs[q.id] = "此项为必填";
+        }
+      }
+    }
+    setErrors(errs);
+    return Object.keys(errs).length === 0;
+  };
+
+  // 提交
+  const handleSubmit = () => {
+    if (submitting) return;
+    if (!validate()) return;
+    setSubmitting(true);
+
+    // 单字段 confirm → 直接返回 "yes"/"no"
+    if (isSimpleConfirm) {
+      onResolve(values[questions[0].id] === "yes" ? "yes" : "no");
+      return;
+    }
+
+    // 多字段 → 返回 JSON
+    const result: Record<string, any> = {};
+    for (const q of questions) {
+      const v = values[q.id];
+      if (q.type === "multi_select") {
+        result[q.id] = Array.isArray(v) ? v : [];
+      } else {
+        result[q.id] = typeof v === "string" ? v : "";
+      }
+    }
+    onResolve(JSON.stringify(result));
+  };
+
+  // 取消
+  const handleCancel = () => {
+    if (submitting) return;
+    setSubmitting(true);
+    onResolve(null);
+  };
+
+  // 简明 confirm（单字段、无 title）
+  if (isSimpleConfirm && !title) {
+    return (
+      <div className="my-3 p-4 rounded-xl border bg-card shadow-sm animate-form-enter">
+        <div className="text-sm whitespace-pre-wrap text-foreground mb-3">{questions[0].question}</div>
+        <FormField
+          field={questions[0]}
+          value={values[questions[0].id]}
+          onChange={(v) => updateField(questions[0].id, v)}
+        />
+        <div className="flex gap-2 mt-3">
+          <button onClick={() => onResolve("yes")}
+            className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+            确认
+          </button>
+          <button onClick={() => onResolve("no")}
+            className="px-4 py-1.5 rounded-lg border border-border text-foreground text-sm hover:bg-accent transition-colors">
+            取消
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="my-3 rounded-xl border bg-card shadow-sm overflow-hidden animate-form-enter">
+      {/* 表单头 */}
+      {title && (
+        <div className="px-4 pt-4 pb-1">
+          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          {description && (
+            <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{description}</p>
+          )}
+        </div>
+      )}
+
+      {/* 字段列表 */}
+      <div className="px-4 py-3 space-y-4">
+        {questions.map((q) => (
+          <div key={q.id}>
+            <label className="block text-sm font-medium text-foreground mb-1.5">
+              {q.question}
+              {q.required && <span className="text-red-400 ml-0.5">*</span>}
+            </label>
+            {q.message && (
+              <p className="text-xs text-muted-foreground mb-2">{q.message}</p>
+            )}
+            <FormField
+              field={q}
+              value={values[q.id] ?? ""}
+              onChange={(v) => updateField(q.id, v)}
+              error={errors[q.id]}
+            />
+          </div>
+        ))}
+      </div>
+
+      {/* 操作按钮 */}
+      <div className="px-4 pb-4 flex gap-2">
+        <button onClick={handleSubmit} disabled={submitting}
+          className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          {submit_label || "提交"}
+        </button>
+        <button onClick={handleCancel} disabled={submitting}
+          className="px-4 py-1.5 rounded-lg border border-border text-muted-foreground text-sm hover:bg-accent transition-colors disabled:opacity-40 disabled:cursor-not-allowed">
+          取消
+        </button>
+      </div>
+    </div>
   );
 }
 
@@ -148,6 +603,10 @@ function AgentMessageBlock({ msg, isStreaming, isLast, onRetry }: {
         <span className="font-medium text-xs text-muted-foreground">Cebian Agent</span>
       </div>
       {msg.reasoning_content && <ThinkingBlock content={msg.reasoning_content} isLive={isStreaming} />}
+      {/* 工具调用卡片 */}
+      {msg.tool_calls && msg.tool_calls.length > 0 && (
+        <ToolCallCards tool_calls={msg.tool_calls} />
+      )}
       <div className="text-sm leading-relaxed">
         <MarkdownRenderer content={msg.content || ""} />
         {isStreaming && (
@@ -558,15 +1017,17 @@ function ChatInput({
               </button>
               {loading ? (
                 <button onClick={onStop}
-                  className="px-4 py-1.5 bg-destructive text-destructive-foreground rounded-lg text-xs font-medium hover:bg-destructive/90 transition-colors"
+                  className="p-2 bg-destructive text-destructive-foreground rounded-lg hover:bg-destructive/90 transition-colors flex items-center justify-center"
+                  title="终止回答"
                 >
                   <Square size={12} fill="currentColor" />
                 </button>
               ) : (
                 <button onClick={handleSend} disabled={!inputValue.trim()}
-                  className="px-4 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="p-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center justify-center"
+                  title="发送"
                 >
-                  发送
+                  <ArrowUp size={16} />
                 </button>
               )}
             </div>
@@ -585,11 +1046,39 @@ function ChatInput({
 }
 
 // ═══════════════════════════════════════════════════════════
+//  用户消息（含悬浮回滚按钮）
+// ═══════════════════════════════════════════════════════════
+
+function UserMessageBlock({ msg, index, onRollback }: {
+  msg: ChatMessage; index: number; onRollback?: (index: number, content: string) => void;
+}) {
+  return (
+    <div className="flex justify-end group">
+      <div className="flex items-start gap-1.5 max-w-[85%]">
+        {onRollback && (
+          <button
+            onClick={() => onRollback(index, msg.content)}
+            className="mt-3 p-1 rounded-md text-muted-foreground/30 hover:text-foreground hover:bg-accent transition-all opacity-0 group-hover:opacity-100 shrink-0"
+            title="回滚到此处：删除本条及之后消息，内容保留到输入框"
+          >
+            <Undo2 size={14} />
+          </button>
+        )}
+        <div className="bg-card border border-border px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap break-words">
+          {msg.content}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════
 //  主组件
 // ═══════════════════════════════════════════════════════════
 
 export default function ChatView({
-  messages, onSend, onStop, onRetry, loading, aiConfig, onConfigChange, onNavigateSettings
+  messages, onSend, onStop, onRetry, loading, aiConfig, onConfigChange, onNavigateSettings, onRollback,
+  pendingInteractive, onInteractiveResolve,
 }: ChatViewProps) {
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -600,7 +1089,7 @@ export default function ChatView({
     if (containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;
     }
-  }, [messages, loading]);
+  }, [messages, loading, pendingInteractive]);
 
   const send = (attachments?: SendAttachment[]) => {
     if (!inputValue.trim() || loading) return;
@@ -613,6 +1102,12 @@ export default function ChatView({
     onSend(inputValue, attachments);
     setInputValue("");
   };
+
+  // 本地回滚处理：通知父组件截断消息，同时本地设置输入内容
+  const handleRollback = useCallback((index: number, content: string) => {
+    onRollback?.(index, content);
+    setInputValue(content);
+  }, [onRollback]);
 
   // ── 欢迎页 ──
   if (messages.length === 0 && !loading) {
@@ -658,17 +1153,23 @@ export default function ChatView({
         <div className="flex flex-col gap-4 py-4 px-5">
           {messages.map((msg, i) =>
             msg.role === "user" ? (
-              <div key={i} className="self-end max-w-[85%]">
-                <div className="ml-auto w-fit max-w-full bg-card border border-border px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap break-words">
-                  {msg.content}
-                </div>
-              </div>
+              <UserMessageBlock key={i} msg={msg} index={i} onRollback={handleRollback} />
             ) : (
               <AgentMessageBlock key={i} msg={msg} isStreaming={loading && i === messages.length - 1}
                 isLast={i === messages.length - 1} onRetry={onRetry} />
             )
           )}
-          {loading && messages[messages.length - 1]?.role !== "assistant" && (
+          {/* 交互式工具卡片（ask_user） */}
+          {pendingInteractive && (
+            <AskUserBlock
+              title={pendingInteractive.title}
+              description={pendingInteractive.description}
+              submit_label={pendingInteractive.submit_label}
+              questions={pendingInteractive.questions}
+              onResolve={onInteractiveResolve!}
+            />
+          )}
+          {loading && messages[messages.length - 1]?.role !== "assistant" && !pendingInteractive && (
             <div className="self-start w-full">
               <div className="flex items-center gap-2 mb-1.5">
                 <Bot size={14} className="text-primary" />

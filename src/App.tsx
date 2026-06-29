@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Settings, MessageSquarePlus, Bot, History, Server, X, Trash2, Sun, Moon } from "lucide-react";
 import ChatView from "./components/chat/ChatView";
 import SettingsView from "./components/settings/SettingsView";
-import { startMcpServer, stopMcpServer } from "./lib/commands";
+import { getTools, executeTool, startMcpServer, stopMcpServer } from "./lib/commands";
 import { loadAIConfig, saveAIConfig, loadConversationsFromStorage, saveConversationsToStorage, loadTheme, saveTheme } from "./lib/db";
-import type { Conversation, ChatMessage, AIConfig, SendAttachment } from "./lib/types";
+import type { Conversation, ChatMessage, AIConfig, SendAttachment, ToolCall } from "./lib/types";
 import { DEFAULT_PROVIDERS, getActiveConfig } from "./lib/types";
 import { toast } from "sonner";
 
@@ -20,6 +20,216 @@ const DEFAULT_AI_CONFIG: AIConfig = {
   thinking_level: "medium",
   primary_hue: 200,
 };
+
+/** 让出 UI 线程，使浏览器有机会处理 pending 的 UI 更新 */
+function yieldToUI(): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, 16)); // ~60fps 一帧
+}
+
+/**
+ * 解析 ask_user 参数，构建表单定义。
+ * 支持两种格式：
+ *   1. 新版：args.questions 是 JSON 字符串，含完整字段定义
+ *   2. 旧版：args.question + args.type + args.options（单字段简化版）
+ */
+function parseAskUserArgs(args: any): {
+  title?: string;
+  description?: string;
+  submit_label?: string;
+  questions: Array<{
+    id: string;
+    type: string;
+    question: string;
+    message?: string;
+    placeholder?: string;
+    options?: { label: string; value: string; description?: string; recommended?: boolean }[];
+    required?: boolean;
+    allow_free_text?: boolean;
+    min_select?: number;
+    max_select?: number;
+  }>;
+} {
+  // 新版：questions JSON 数组
+  if (args.questions) {
+    try {
+      const qs = typeof args.questions === "string" ? JSON.parse(args.questions) : args.questions;
+      if (Array.isArray(qs) && qs.length > 0) {
+        return {
+          title: args.title,
+          description: args.description,
+          submit_label: args.submit_label,
+          questions: qs.map((q: any) => ({
+            id: q.id || `q_${Math.random().toString(36).slice(2, 6)}`,
+            type: q.type || "text",
+            question: q.question || q.label || "",
+            message: q.message,
+            placeholder: q.placeholder,
+            options: q.options,
+            required: q.required,
+            allow_free_text: q.allow_free_text,
+            min_select: q.min_select,
+            max_select: q.max_select,
+          })),
+        };
+      }
+    } catch { /* fall through to legacy */ }
+  }
+
+  // 旧版：单字段
+  const question = args.question || "请输入：";
+  const type = args.type || "text";
+  let options: { label: string; value: string; description?: string; recommended?: boolean }[] | undefined;
+  if (args.options) {
+    try {
+      options = typeof args.options === "string" ? JSON.parse(args.options) : args.options;
+    } catch { /* ignore */ }
+  }
+  return {
+    questions: [{
+      id: "q0",
+      type,
+      question,
+      options,
+      required: true,
+    }],
+  };
+}
+
+/**
+ * 显示 ask_user 交互式对话框，等待用户响应 —— 通过 pendingInteractive 状态
+ * 让 ChatView 渲染内嵌表单卡片，用户操作后 resolve。
+ * 返回 JSON 字符串（各字段答案）或 null（取消）。
+ *
+ * 关键：setPending 后立即 yieldToUI()，让 React 有机会渲染表单UI，
+ * 然后才阻塞等待用户输入，避免"卡住"。
+ */
+async function askUserInteractive(
+  args: any,
+  setPending: (p: any) => void,
+  resolveRef: { current: ((value: string | null) => void) | null },
+): Promise<string | null> {
+  const form = parseAskUserArgs(args);
+
+  // 先设置表单状态
+  setPending({ toolCallId: "", ...form });
+
+  // ── 让出 UI 线程，让 React 渲染表单后再等待用户输入 ──
+  await yieldToUI();
+  // 再等一帧确保动画起始帧已经渲染
+  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+
+  // 然后才阻塞等待用户响应
+  return new Promise<string | null>((resolve) => {
+    resolveRef.current = resolve;
+  });
+}
+
+/**
+ * 危险操作确认 —— 通过 ask_user 的 confirm 类型实现内嵌确认框。
+ */
+async function confirmDangerousAction(
+  title: string,
+  message: string,
+  setPending: (p: any) => void,
+  resolveRef: { current: ((value: string | null) => void) | null },
+): Promise<boolean> {
+  const result = await askUserInteractive(
+    { question: `${title}\n\n${message}`, type: "confirm" },
+    setPending,
+    resolveRef,
+  );
+  return result === "yes";
+}
+
+/**
+ * Default system prompt — written in English for more reliable model adherence.
+ * Models are trained primarily on English data and follow English instructions
+ * more precisely, especially for structured tool-use protocols.
+ * The final rule tells the model to reply in the user's language.
+ */
+function getDefaultSystemPrompt(): string {
+  return `You are CeBianDesktop, an AI assistant that runs directly on the user's local computer. You have full access to the local file system, system commands, and desktop environment through your built-in tools.
+
+## Core Capability
+
+You have 20+ **local tools** that let you read/write files, execute commands, search the filesystem, get system info, control the clipboard, capture screenshots, and more. You operate on the **user's real computer** — all paths are real filesystem paths, not a virtual filesystem.
+
+## Tool Categories & Usage Guide
+
+Each tool's detailed parameters and JSON schema are provided separately in the \`tools\` array. This section tells you WHEN to use which tool.
+
+### 📁 File Operations
+- **read_local_file** — Read a text file's full content. Use this when the user mentions a file (code, config, log, etc.).
+- **write_new_file** — Create a new file or overwrite an existing one. Use to save AI-generated code, reports, etc.
+- **edit_file** — Find-and-replace specific text within a file. For partial edits like changing a config value or renaming a variable. Leaves the rest of the file untouched.
+
+### 📂 Directory Operations
+- **list_directory** — List files and subdirectories in a directory. Use when the user asks "what files are here?" Always use absolute paths.
+- **create_directory** — Create directories (recursive).
+- **rename_path** — Rename or move a file/directory.
+- **delete_path** — Delete a file or directory (recursive, irreversible!).
+- **search_files** — Search files by name or content. Recursive, max depth 10, max 50 results. Use when you can't find a file.
+
+### 🌐 File & Network
+- **download_file** — Download a file from a URL to local disk.
+- **open_path** — Open a file/directory with the system default application (like double-clicking).
+- **fetch_url** — Make an HTTP request to fetch webpage or API content.
+
+### ⚙️ System Operations
+- **run_command** — Execute a system command in the terminal (cmd.exe on Windows). Use for git, build scripts, system queries, etc. Be careful with destructive commands.
+- **system_info** — Get full system information (OS, hostname, CPU, memory, disks, username).
+- **system_notify** — Send a desktop notification to the user.
+
+### 📊 Processes & Windows
+- **list_processes** — List running processes sorted by memory usage. Can filter by name.
+- **list_windows** — List all open window titles on the desktop.
+- **capture_screen** — Take a full-screen screenshot and save as PNG. User must provide a save path.
+
+### 📋 Clipboard
+- **clipboard_read** — Read the current text from the system clipboard.
+- **clipboard_write** — Write text to the system clipboard so the user can paste it elsewhere.
+
+### \ud83d\udcac Interactive (ask_user)
+- **ask_user** \u2014 Present a dynamic form or question to the user and wait for their response. This is your PRIMARY way to interact with the user when you need information, decisions, or confirmations.
+  - **Single question**: Use \`question\` + \`type\` (text/confirm/select) for simple cases.
+  - **Multi-field form**: Use the \`questions\` JSON array for complex forms. Each question has:
+    - \`id\` (required): Unique key for the answer
+    - \`question\` (required): The text shown to the user
+    - \`type\` (optional): \`text\` (default), \`textarea\`, \`confirm\`, \`single_select\`, \`multi_select\`, \`dropdown\`
+    - \`options\`: Array of \`{label, value, description?, recommended?}\` for selection types
+    - \`required\`: Whether this field must be filled
+    - \`message\`: Helper text shown below the question
+    - \`placeholder\`: Placeholder text for text/textarea fields
+    - \`allow_free_text\`: Allow custom input alongside predefined options
+    - \`min_select\` / \`max_select\`: Selection limits for multi_select
+  - **Form options**: \`title\` (form heading), \`description\` (form-level helper text), \`submit_label\` (custom button text)
+  - **Examples**:
+    - Simple confirm: \`{question: "Delete file?", type: "confirm"}\`
+    - Multi-field form: \`{title: "New Project", questions: [{id:"name", question:"Project name", required:true}, {id:"type", question:"Project type", type:"single_select", options:[{label:"Web",value:"web"},{label:"Desktop",value:"desktop"}]}]}\`
+  - Do NOT ask questions in plain text \u2014 always use this tool for structured interaction.
+
+## Important Rules
+
+1. **Always use absolute paths** — e.g. C:\\Users\\Username\\Desktop\\file.txt
+2. **This is the real filesystem** — files you create/modify/delete are actually visible to the user on their computer. Confirm before destructive operations.
+3. **Check before changing** — When unsure if a file exists, use search_files or list_directory first, then modify.
+4. **The user's Desktop is typically at C:\\Users\\<username>\\Desktop** — use system_info to get the username.
+5. **Windows paths** — Use C:\\path\\to\\file format. Escape backslashes properly in strings.
+6. **If one tool doesn't work as expected, try another approach** — e.g. if list_directory doesn't show subdirectory content, use search_files by name.
+7. **For listing installed software** — When the user asks "what software is installed?", use run_command with one of these (DO NOT traverse Program Files directories):
+   - \`wmic product get name,version\` (complete but slow)
+   - \`powershell "Get-ItemProperty HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\* | Select-Object DisplayName,DisplayVersion | Where-Object { $_.DisplayName } | Format-Table -AutoSize"\`
+   - \`dir "C:\\Program Files" /B\`
+   - \`dir "C:\\Program Files (x86)" /B\`
+   Prefer wmic or the PowerShell command. Do NOT walk directories to enumerate installed software.
+
+## Output Style
+
+- **Always respond in the same language the user uses.** If they write in Chinese, reply in Chinese. If English, reply in English.
+- After executing a tool, briefly summarize what you did.
+- Tool results come back as JSON — use them to answer the user's question naturally.
+- If an operation requires user confirmation (deleting files, running dangerous commands), ask first before executing.`;
+}
 
 function createNewConversation(): Conversation {
   return {
@@ -64,6 +274,27 @@ export default function App() {
   const [, forceRender] = useState(0);
   /** 所有进行中的流，key = 会话 ID */
   const activeStreamsRef = useRef<Map<string, StreamState>>(new Map());
+
+  /** 交互式工具（ask_user）的等待状态 */
+  const [pendingInteractive, setPendingInteractive] = useState<{
+    toolCallId: string;
+    title?: string;
+    description?: string;
+    submit_label?: string;
+    questions: Array<{
+      id: string;
+      type: string;
+      question: string;
+      message?: string;
+      placeholder?: string;
+      options?: { label: string; value: string; description?: string; recommended?: boolean }[];
+      required?: boolean;
+      allow_free_text?: boolean;
+      min_select?: number;
+      max_select?: number;
+    }>;
+  } | null>(null);
+  const interactiveResolveRef = useRef<((value: string | null) => void) | null>(null);
 
   // 切换主题
   useEffect(() => {
@@ -257,9 +488,9 @@ export default function App() {
     forceRender((n) => n + 1);
   };
 
-  // 发送消息（流式）— 支持多会话并发
+  // 发送消息（流式）— 支持多会话并发，内置工具调用循环
   const handleSend = useCallback(
-    async (content: string, attachments?: SendAttachment[]) => {
+    async (content: string, _attachments?: SendAttachment[]) => {
       if (!content.trim()) return;
 
       const streamSessionId = currentSessionId;
@@ -291,6 +522,8 @@ export default function App() {
 
       let fullContent = "";
       let fullThinking = "";
+      let currentMessages = [...updated];
+      let accumulatedUsage: { input: number; output: number } | undefined;
 
       try {
         const active = getActiveConfig(aiConfig);
@@ -305,151 +538,337 @@ export default function App() {
           msgCount: updated.length,
         });
 
-        let systemPrompt = aiConfig.system_prompt || "你是一个有用的 AI 助手，可以通过 MCP 工具与外部系统交互。";
-        const webSearch = (window as any).__webSearch;
-        if (webSearch) {
-          systemPrompt += "\n\n注意：联网搜索已开启。如果需要获取最新信息，你可以告知用户你将进行网络搜索。";
+        // 获取工具定义（一次获取，全程复用）
+        let toolDefs: any[] = [];
+        try {
+          toolDefs = await getTools();
+          console.log(`[handleSend] 获取到 ${toolDefs.length} 个工具`);
+        } catch (e) {
+          console.warn("[handleSend] 获取工具列表失败:", e);
         }
-        const systemMsg: ChatMessage = { role: "system", content: systemPrompt };
-
-        const apiMessages: any[] = [systemMsg];
-        for (let i = 0; i < updated.length; i++) {
-          const msg = updated[i];
-          if (msg.role === "user") {
-            if (i === updated.length - 1 && attachments && attachments.length > 0) {
-              const multiContent: any[] = [{ type: "text", text: msg.content }];
-              for (const att of attachments) {
-                if (att.type === "image" && att.data.startsWith("data:")) {
-                  multiContent.push({ type: "image_url", image_url: { url: att.data } });
-                } else if (att.type === "file") {
-                  multiContent.push({ type: "text", text: `[附件: ${att.name}]\n${att.data}` });
-                }
-              }
-              apiMessages.push({ role: "user", content: multiContent });
-            } else {
-              apiMessages.push({ role: "user", content: msg.content });
-            }
-          } else {
-            apiMessages.push({ role: msg.role, content: msg.content });
-          }
-        }
+        const openaiTools = toolDefs.map((t: any) => ({
+          type: "function",
+          function: {
+            name: t.name,
+            description: t.description,
+            parameters: t.inputSchema,
+          },
+        }));
 
         // 启动定期持久化
         startStreamPersist(streamState);
 
-        const resp = await fetch(`${active.endpoint}/chat/completions`, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${active.api_key}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model: active.model,
-            messages: apiMessages,
-            max_tokens: active.max_tokens,
-            temperature: active.temperature,
-            stream: true,
-            stream_options: { include_usage: true },
-          }),
-          signal: controller.signal,
-        });
+        // ─── 工具调用循环（最大 10 轮） ──────────────────────
+        const MAX_TOOL_DEPTH = 10;
+        for (let depth = 0; depth <= MAX_TOOL_DEPTH; depth++) {
+          if (depth === MAX_TOOL_DEPTH) {
+            throw new Error("工具调用超过最大递归深度");
+          }
 
-        if (!resp.ok) {
-          const body = await resp.text().catch(() => "");
-          throw new Error(`HTTP ${resp.status} - ${body}`);
-        }
+          // 构建 API 消息（含 tool 角色消息）
+          let systemPrompt = aiConfig.system_prompt || getDefaultSystemPrompt();
+          const systemMsg: ChatMessage = { role: "system", content: systemPrompt };
 
-        const reader = resp.body!.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop() || "";
-
-          for (const line of lines) {
-            if (!line.startsWith("data: ")) continue;
-            const data = line.slice(6).trim();
-            if (data === "[DONE]") continue;
-
-            try {
-              const chunk = JSON.parse(data);
-              // 捕获 token 用量（流末尾 chunk 携带）
-              if (chunk.usage) {
-                streamState.usage = {
-                  input: chunk.usage.prompt_tokens || 0,
-                  output: chunk.usage.completion_tokens || 0,
-                };
+          const apiMessages: any[] = [systemMsg];
+          for (let i = 0; i < currentMessages.length; i++) {
+            const msg = currentMessages[i];
+            if (msg.role === "user") {
+              apiMessages.push({ role: "user", content: msg.content });
+            } else if (msg.role === "assistant") {
+              const m: any = { role: "assistant", content: msg.content };
+              if (msg.tool_calls && msg.tool_calls.length > 0) {
+                m.tool_calls = msg.tool_calls.map((tc: ToolCall) => ({
+                  id: tc.id,
+                  type: "function",
+                  function: { name: tc.function.name, arguments: tc.function.arguments },
+                }));
               }
-              const choices = chunk.choices;
-              if (!choices || choices.length === 0) continue;
-              const delta = choices[0].delta || {};
-
-              if (delta.content) {
-                fullContent += delta.content;
-                streamState.fullContent = fullContent;
-                // 仅在当前显示的会话是此流时才更新 UI
-                if (sessionIdRef.current === streamSessionId) {
-                  setMessages((prev) => {
-                    if (prev.length === 0) return prev;
-                    const updatedMsgs = [...prev];
-                    const last = updatedMsgs[updatedMsgs.length - 1];
-                    if (last?.role === "assistant") {
-                      updatedMsgs[updatedMsgs.length - 1] = {
-                        ...last,
-                        content: fullContent,
-                        reasoning_content: fullThinking || undefined,
-                      };
-                    }
-                    return updatedMsgs;
-                  });
-                }
-              }
-              if (delta.reasoning_content) {
-                fullThinking += delta.reasoning_content || "";
-                streamState.fullThinking = fullThinking;
-                if (sessionIdRef.current === streamSessionId) {
-                  setMessages((prev) => {
-                    if (prev.length === 0) return prev;
-                    const updatedMsgs = [...prev];
-                    const last = updatedMsgs[updatedMsgs.length - 1];
-                    if (last?.role === "assistant") {
-                      updatedMsgs[updatedMsgs.length - 1] = {
-                        ...last,
-                        content: fullContent,
-                        reasoning_content: fullThinking || undefined,
-                      };
-                    }
-                    return updatedMsgs;
-                  });
-                }
-              }
-            } catch {
-              // 跳过无法解析的行
+              apiMessages.push(m);
+            } else if (msg.role === "tool") {
+              apiMessages.push({
+                role: "tool",
+                content: msg.content,
+                tool_call_id: msg.tool_call_id,
+              });
+            } else {
+              apiMessages.push({ role: msg.role, content: msg.content });
             }
           }
-        }
 
-        // 流式完成 — 保存完整结果
-        stopStreamPersist(streamState);
-        const finalAssistantMsg: ChatMessage = {
-          role: "assistant",
-          content: fullContent,
-          reasoning_content: fullThinking || undefined,
-          usage: streamState.usage,
-        };
-        const finalMsgs = [...updated, finalAssistantMsg];
-        persistSessionMessages(streamSessionId, finalMsgs);
-        // 如果当前正好在看这个会话，同时更新本地 state
-        if (sessionIdRef.current === streamSessionId) {
-          setMessages(finalMsgs);
+          // 本轮内容积累
+          let roundContent = "";
+          // 按 index 积累工具调用（SSE 分块发送）
+          const toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
+
+          const resp = await fetch(`${active.endpoint}/chat/completions`, {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${active.api_key}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              model: active.model,
+              messages: apiMessages,
+              max_tokens: active.max_tokens,
+              temperature: active.temperature,
+              stream: true,
+              stream_options: { include_usage: true },
+              ...(openaiTools.length > 0 ? { tools: openaiTools } : {}),
+            }),
+            signal: controller.signal,
+          });
+
+          if (!resp.ok) {
+            const body = await resp.text().catch(() => "");
+            throw new Error(`HTTP ${resp.status} - ${body}`);
+          }
+
+          const reader = resp.body!.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() || "";
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              const data = line.slice(6).trim();
+              if (data === "[DONE]") continue;
+
+              try {
+                const chunk = JSON.parse(data);
+                // 捕获 token 用量（流末尾 chunk 携带）
+                if (chunk.usage) {
+                  accumulatedUsage = {
+                    input: chunk.usage.prompt_tokens || 0,
+                    output: chunk.usage.completion_tokens || 0,
+                  };
+                }
+                const choices = chunk.choices;
+                if (!choices || choices.length === 0) continue;
+                const delta = choices[0].delta || {};
+
+                if (delta.content) {
+                  roundContent += delta.content;
+                  fullContent += delta.content;
+                  streamState.fullContent = fullContent;
+                  // 仅在当前显示的会话是此流时才更新 UI
+                  if (sessionIdRef.current === streamSessionId) {
+                    setMessages((prev) => {
+                      if (prev.length === 0) return prev;
+                      const updatedMsgs = [...prev];
+                      const last = updatedMsgs[updatedMsgs.length - 1];
+                      if (last?.role === "assistant") {
+                        updatedMsgs[updatedMsgs.length - 1] = {
+                          ...last,
+                          content: fullContent,
+                          reasoning_content: fullThinking || undefined,
+                        };
+                      }
+                      return updatedMsgs;
+                    });
+                  }
+                }
+                if (delta.reasoning_content) {
+                  fullThinking += delta.reasoning_content || "";
+                  streamState.fullThinking = fullThinking;
+                  if (sessionIdRef.current === streamSessionId) {
+                    setMessages((prev) => {
+                      if (prev.length === 0) return prev;
+                      const updatedMsgs = [...prev];
+                      const last = updatedMsgs[updatedMsgs.length - 1];
+                      if (last?.role === "assistant") {
+                        updatedMsgs[updatedMsgs.length - 1] = {
+                          ...last,
+                          content: fullContent,
+                          reasoning_content: fullThinking || undefined,
+                        };
+                      }
+                      return updatedMsgs;
+                    });
+                  }
+                }
+                // ═══ 积累工具调用（SSE 分 chunk 发送，按 index 合并）═══
+                if (delta.tool_calls) {
+                  for (const tc of delta.tool_calls) {
+                    const index = tc.index ?? 0;
+                    if (!toolCallMap.has(index)) {
+                      toolCallMap.set(index, { id: "", name: "", arguments: "" });
+                    }
+                    const entry = toolCallMap.get(index)!;
+                    if (tc.id) entry.id += tc.id;
+                    if (tc.function?.name) entry.name += tc.function.name;
+                    if (tc.function?.arguments) entry.arguments += tc.function.arguments;
+                  }
+                }
+              } catch {
+                // 跳过无法解析的行
+              }
+            }
+          }
+
+          // 将积累的工具调用转换为 ToolCall 列表，按 index 排序
+          const indices = Array.from(toolCallMap.keys()).sort((a, b) => a - b);
+          const roundToolCalls: ToolCall[] = indices.map(idx => {
+            const entry = toolCallMap.get(idx)!;
+            return {
+              id: entry.id,
+              type: "function",
+              function: { name: entry.name, arguments: entry.arguments },
+            };
+          });
+
+          if (roundToolCalls.length === 0) {
+            // ─── 没有工具调用 → 本轮就是最终结果 ───
+            stopStreamPersist(streamState);
+            const finalAssistantMsg: ChatMessage = {
+              role: "assistant",
+              content: fullContent,
+              reasoning_content: fullThinking || undefined,
+              usage: accumulatedUsage,
+            };
+            const finalMsgs = [...updated, finalAssistantMsg];
+            persistSessionMessages(streamSessionId, finalMsgs);
+            if (sessionIdRef.current === streamSessionId) {
+              setMessages(finalMsgs);
+            }
+            cleanupStream(streamSessionId);
+            cleanupListeners();
+            return;
+          }
+
+          // ─── 有工具调用 → 执行工具，继续下一轮 ───
+          console.log(`[handleSend] 第 ${depth + 1} 轮检测到 ${roundToolCalls.length} 个工具调用`);
+
+          // 构建 assistant 消息并加入历史
+          const assistantMsg: ChatMessage = {
+            role: "assistant",
+            content: roundContent,
+            tool_calls: roundToolCalls,
+            reasoning_content: fullThinking || undefined,
+          };
+          currentMessages = [...currentMessages, assistantMsg];
+
+          // 更新 UI 显示"正在执行工具..."
+          persistSessionMessages(streamSessionId, currentMessages);
+          if (sessionIdRef.current === streamSessionId) {
+            setMessages([...currentMessages, { role: "assistant", content: "" } as ChatMessage]);
+          }
+
+          // 执行每个工具调用
+          const toolResults: ChatMessage[] = [];
+          for (const tc of roundToolCalls) {
+            try {
+              const args = JSON.parse(tc.function.arguments);
+              const toolName = tc.function.name;
+
+              // ── ask_user 交互式工具：展示内嵌表单/按钮卡片等待用户响应 ──
+              if (toolName === "ask_user") {
+                const userResponse = await askUserInteractive(
+                  args,
+                  setPendingInteractive,
+                  interactiveResolveRef,
+                );
+                if (userResponse === null) {
+                  toolResults.push({
+                    role: "tool",
+                    content: JSON.stringify({ cancelled: true, message: "用户已取消操作" }),
+                    tool_call_id: tc.id,
+                    name: toolName,
+                  } as ChatMessage);
+                } else {
+                  toolResults.push({
+                    role: "tool",
+                    content: JSON.stringify({ response: userResponse }),
+                    tool_call_id: tc.id,
+                    name: toolName,
+                  } as ChatMessage);
+                }
+                continue;
+              }
+
+              // ── 危险操作确认：删除文件/目录 ──
+              if (toolName === "delete_path") {
+                const confirmed = await confirmDangerousAction(
+                  `确认删除`,
+                  `确定要删除以下路径吗？此操作不可撤销！\n${args.path}`,
+                  setPendingInteractive,
+                  interactiveResolveRef,
+                );
+                if (!confirmed) {
+                  toolResults.push({
+                    role: "tool",
+                    content: JSON.stringify({ error: "用户取消了删除操作" }),
+                    tool_call_id: tc.id,
+                    name: toolName,
+                  } as ChatMessage);
+                  continue;
+                }
+              }
+
+              // ── 危险操作确认：执行命令（黑名单检测） ──
+              if (toolName === "run_command") {
+                const cmd = (args.command || "").toLowerCase();
+                const dangerousCmds = ["format", "del ", "rmdir", "rd ", "rm ", "shutdown", "taskkill", "reg delete", "diskpart"];
+                const isDangerous = dangerousCmds.some(d => cmd.includes(d));
+                if (isDangerous) {
+                  const confirmed = await confirmDangerousAction(
+                    `确认执行命令`,
+                    `确定要执行以下命令吗？\n${args.command}\n\n此命令可能对系统有影响，请确认。`,
+                    setPendingInteractive,
+                    interactiveResolveRef,
+                  );
+                  if (!confirmed) {
+                    toolResults.push({
+                      role: "tool",
+                      content: JSON.stringify({ error: "用户取消了命令执行" }),
+                      tool_call_id: tc.id,
+                      name: toolName,
+                    } as ChatMessage);
+                    continue;
+                  }
+                }
+              }
+
+              console.log(`[handleSend] 执行工具: ${toolName}`, tc.function.arguments);
+              const result = await executeTool(toolName, args);
+              toolResults.push({
+                role: "tool",
+                content: JSON.stringify(result, null, 2),
+                tool_call_id: tc.id,
+                name: toolName,
+              } as ChatMessage);
+            } catch (err: any) {
+              console.error(`[handleSend] 工具执行失败: ${tc.function.name}`, err);
+              toolResults.push({
+                role: "tool",
+                content: `工具执行失败: ${err.message || err}`,
+                tool_call_id: tc.id,
+                name: tc.function.name,
+              } as ChatMessage);
+            }
+          }
+
+          // 将工具结果加入消息列表
+          currentMessages = [...currentMessages, ...toolResults];
+          persistSessionMessages(streamSessionId, currentMessages);
+
+          // 让出 UI 线程，让浏览器有机会渲染最新的消息和工具结果
+          await yieldToUI();
+
+          // 重置本轮内容，准备下一轮流式请求
+          fullContent = "";
+          fullThinking = "";
+          streamState.fullContent = "";
+          streamState.fullThinking = "";
+
+          // 继续下一轮循环
         }
-        cleanupStream(streamSessionId);
-        cleanupListeners();
       } catch (err: any) {
         if (err?.name === "AbortError") {
           // 中止：保留已生成的部分内容，追加已取消标记
@@ -459,7 +878,7 @@ export default function App() {
             content: fullContent,
             reasoning_content: fullThinking || undefined,
             cancelled: true,
-            usage: streamState.usage,
+            usage: accumulatedUsage,
           };
           const cancelledMsgs = [...updated, cancelledMsg];
           persistSessionMessages(streamSessionId, cancelledMsgs);
@@ -489,6 +908,24 @@ export default function App() {
       updateCurrentConversation, persistSessionMessages, cleanupListeners,
     ]
   );
+
+  // 回滚到指定用户消息：删除该消息及之后所有消息，并把内容填入输入框
+  const handleRollback = useCallback((index: number) => {
+    if (!currentSessionId) return;
+    if (activeStreamsRef.current.has(currentSessionId)) return;
+    setMessages((prev) => {
+      const truncated = prev.slice(0, index);
+      updateCurrentConversation(truncated);
+      return truncated;
+    });
+  }, [currentSessionId, updateCurrentConversation]);
+
+  /** 用户对交互式工具的响应 */
+  const handleInteractiveResolve = useCallback((value: string | null) => {
+    interactiveResolveRef.current?.(value);
+    interactiveResolveRef.current = null;
+    setPendingInteractive(null);
+  }, []);
 
   // 停止当前会话的流式输出
   const handleStop = useCallback(() => {
@@ -769,6 +1206,9 @@ export default function App() {
             aiConfig={aiConfig}
             onConfigChange={setAiConfig}
             onNavigateSettings={() => setCurrentView("settings")}
+            onRollback={handleRollback}
+            pendingInteractive={pendingInteractive}
+            onInteractiveResolve={handleInteractiveResolve}
           />
 
           <div

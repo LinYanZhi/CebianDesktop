@@ -14,6 +14,12 @@ use commands::McpServerState;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .setup(|app| {
+            // 窗口状态插件：记住窗口大小和位置
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_window_state::Builder::default().build())?;
+            Ok(())
+        })
         .manage(McpServerState::new())
         .invoke_handler(tauri::generate_handler![
             commands::get_tools,
