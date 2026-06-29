@@ -749,25 +749,24 @@ pub fn get_skill_tools(app_handle: &tauri::AppHandle) -> Result<Vec<Value>, Stri
             continue; // 跳过未命名的技能
         }
 
-        // 工具名称：只允许小写字母、数字、下划线
+        // 工具名称：只允许 ASCII 字母、数字、下划线、连字符（符合 ^[a-zA-Z0-9_-]+$）
         let safe_name: String = tool_name
             .chars()
-            .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+            .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
             .collect();
         if safe_name.is_empty() {
             continue;
         }
 
+        let desc = if skill.description.is_empty() {
+            format!("执行技能「{}」", tool_name)
+        } else {
+            format!("[技能] {} — {}", tool_name, skill.description)
+        };
+
         tools.push(json!({
             "name": format!("skill_{}", safe_name),
-            "description": {
-                let desc = if skill.description.is_empty() {
-                    format!("执行技能「{}」", tool_name)
-                } else {
-                    format!("[技能] {} — {}", tool_name, skill.description)
-                };
-                desc
-            },
+            "description": desc,
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -794,7 +793,7 @@ pub fn execute_skill(app_handle: &tauri::AppHandle, name: &str, args: &Value) ->
     let skills = workspace::list_files(app_handle, workspace::WorkspaceDir::Skills)?;
     let skill = skills.iter().find(|s| {
         let safe: String = s.name.chars()
-            .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+            .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
             .collect();
         safe == skill_name || s.name == skill_name
     }).ok_or_else(|| format!("未找到技能 '{}'", skill_name))?;
