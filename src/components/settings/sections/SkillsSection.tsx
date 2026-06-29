@@ -102,10 +102,11 @@ export function SkillsSection() {
   const [creatingFile, setCreatingFile] = useState(false);
   const [creatingFolder, setCreatingFolder] = useState(false);
   const [createValue, setCreateValue] = useState("");
+  // ─── 重命名/新建错误提示 ──────────────────────────
+  const [renameError, setRenameError] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
   const [createDirContext, setCreateDirContext] = useState<string>("");
   const [currentDir, setCurrentDir] = useState<string>(""); // 当前工作目录（点击空白=根，点击目录=目录，点击文件=父目录）
-  const [renameError, setRenameError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; fileId?: string; isDir?: boolean } | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
@@ -388,7 +389,7 @@ export function SkillsSection() {
     // 检查重名
     const existingNames = new Set(skills.map(s => s.filename));
     if (existingNames.has(fullName)) {
-      setCreateError(trimmed);
+      setCreateError("文件已存在");
       setCreatingFile(true);
       return;
     }
@@ -409,7 +410,7 @@ export function SkillsSection() {
     const existingNames = new Set(skills.map(s => s.filename));
     // 目录的 fullName 如 "123"，但目录 filename 是 "123/"
     if (existingNames.has(fullName + '/')) {
-      setCreateError(trimmed);
+      setCreateError("目录已存在");
       setCreatingFolder(true);
       return;
     }
@@ -465,7 +466,7 @@ export function SkillsSection() {
     const finalName = parentDir ? parentDir + '/' + trimmed : trimmed;
     // 检查重名（排除当前文件）
     if (finalName !== file.filename && skills.some(s => s.filename === finalName)) {
-      setRenameError(trimmed);
+      setRenameError("文件名已存在");
       setRenaming(id);
       setRenameValue(trimmed);
       return;
@@ -623,6 +624,7 @@ export function SkillsSection() {
                   }}
                   onChange={(e) => { setCreateValue(e.target.value); setCreateError(null); }}
                   className={`flex-1 text-[11px] bg-background border rounded px-2 py-1 outline-none min-w-0 ${createError ? 'border-red-500 ring-1 ring-red-500' : 'border-ring'}`} />
+                {createError && <span className="text-[10px] text-red-500 whitespace-nowrap shrink-0">{createError}</span>}
               </div>
             )}
             {creatingFile && (
@@ -637,6 +639,7 @@ export function SkillsSection() {
                   }}
                   onChange={(e) => { setCreateValue(e.target.value); setCreateError(null); }}
                   className={`flex-1 text-[11px] bg-background border rounded px-2 py-1 outline-none min-w-0 ${createError ? 'border-red-500 ring-1 ring-red-500' : 'border-ring'}`} />
+                {createError && <span className="text-[10px] text-red-500 whitespace-nowrap shrink-0">{createError}</span>}
               </div>
             )}
             {visibleItems.length === 0 && !creatingFile && !creatingFolder ? (
@@ -658,6 +661,7 @@ export function SkillsSection() {
                           onChange={(e) => { setRenameValue(e.target.value); setRenameError(null); }}
                           className={`flex-1 text-[11px] bg-background border rounded px-2 py-1 outline-none min-w-0 ${renameError ? 'border-red-500 ring-1 ring-red-500' : 'border-ring'}`}
                           onClick={(e) => e.stopPropagation()} />
+                        {renameError && <span className="text-[10px] text-red-500 whitespace-nowrap shrink-0">{renameError}</span>}
                       </div>
                     ) : isDir(s) ? (
                       // ── 目录项 ──
