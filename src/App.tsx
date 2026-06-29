@@ -288,6 +288,9 @@ export default function App() {
       };
       activeStreamsRef.current.set(streamSessionId, streamState);
 
+      let fullContent = "";
+      let fullThinking = "";
+
       try {
         const active = getActiveConfig(aiConfig);
         if (!active.api_key.trim() || !active.endpoint.trim()) {
@@ -357,9 +360,6 @@ export default function App() {
         const reader = resp.body!.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-
-        let fullContent = "";
-        let fullThinking = "";
 
         while (true) {
           const { done, value } = await reader.read();
@@ -442,6 +442,19 @@ export default function App() {
         cleanupListeners();
       } catch (err: any) {
         if (err?.name === "AbortError") {
+          // 中止：保留已生成的部分内容，追加已取消标记
+          stopStreamPersist(streamState);
+          const cancelledMsg: ChatMessage = {
+            role: "assistant",
+            content: fullContent,
+            reasoning_content: fullThinking || undefined,
+            cancelled: true,
+          };
+          const cancelledMsgs = [...updated, cancelledMsg];
+          persistSessionMessages(streamSessionId, cancelledMsgs);
+          if (sessionIdRef.current === streamSessionId) {
+            setMessages(cancelledMsgs);
+          }
           cleanupStream(streamSessionId);
           cleanupListeners();
           return;

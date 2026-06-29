@@ -18,6 +18,8 @@ export interface ChatMessage {
   thinking?: string;
   /** 思考推理过程内容（流式逐 token 积累） */
   reasoning_content?: string;
+  /** 此消息是否被用户中止生成 */
+  cancelled?: boolean;
 }
 
 export interface ToolCall {
@@ -44,8 +46,8 @@ export const DEFAULT_PROVIDERS: ProviderInfo[] = [
     models: ["claude-3-5-sonnet-20240620", "claude-3-haiku-20240307", "claude-3-opus-20240229"],
     selectedModel: "claude-3-5-sonnet-20240620", connected: false },
   { id: "deepseek", name: "DeepSeek", api_key: "", endpoint: "https://api.deepseek.com/v1",
-    models: ["deepseek-chat", "deepseek-reasoner"],
-    selectedModel: "deepseek-chat", connected: false },
+    models: ["deepseek-v4-flash", "deepseek-v4-pro"],
+    selectedModel: "deepseek-v4-flash", connected: false },
   { id: "gemini", name: "Google Gemini", api_key: "", endpoint: "https://generativelanguage.googleapis.com/v1beta",
     models: ["gemini-2.0-flash", "gemini-2.0-pro", "gemini-1.5-pro"],
     selectedModel: "gemini-2.0-flash", connected: false },

@@ -151,6 +151,9 @@ function AgentMessageBlock({ msg, isStreaming }: { msg: ChatMessage; isStreaming
           <span className="inline-block w-1.5 h-4 bg-primary rounded-sm animate-pulse ml-0.5 align-text-bottom" />
         )}
       </div>
+      {msg.cancelled && (
+        <div className="text-xs text-muted-foreground/80 italic mt-1">已取消</div>
+      )}
       {!isStreaming && msg.content && (
         <div className="flex items-center gap-1 mt-1">
           <CopyButton text={msg.content} />
