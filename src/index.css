@@ -89,7 +89,7 @@ html, body, #root {
   to { transform: translateX(100%); opacity: 0; }
 }
 .animate-slide-in { animation: slide-in-right 0.35s cubic-bezier(0.16, 1, 0.3, 1); }
-.animate-slide-out { animation: slide-out-right 0.25s ease-out; }
+.animate-slide-out { animation: slide-out-right 0.35s cubic-bezier(0.16, 1, 0.3, 1); }
 
 /* Fade in */
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
