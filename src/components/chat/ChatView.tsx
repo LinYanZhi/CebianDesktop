@@ -833,9 +833,26 @@ const MarkdownRenderer = memo(function MarkdownRenderer({ content }: { content: 
 //  AI 消息
 // ═══════════════════════════════════════════════════════════
 
-function AgentMessageBlock({ msg, isStreaming, isLast, onRetry }: {
+function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResults }: {
   msg: ChatMessage; isStreaming?: boolean; isLast?: boolean; onRetry?: () => void;
+  toolResults?: ChatMessage[];
 }) {
+  const [toolsOpen, setToolsOpen] = useState(true);
+  const hasToolCalls = msg.tool_calls && msg.tool_calls.length > 0;
+  const allDone = hasToolCalls && toolResults && toolResults.length > 0;
+
+  // 构建工具名 → 结果的映射
+  const toolResultsMap = useMemo(() => {
+    if (!toolResults || !hasToolCalls) return undefined;
+    const map = new Map<string, string>();
+    for (const tr of toolResults) {
+      if (tr.tool_call_id && tr.content) {
+        map.set(tr.tool_call_id, tr.content);
+      }
+    }
+    return map;
+  }, [toolResults, hasToolCalls]);
+
   return (
     <div className="self-start w-full">
       <div className="flex items-center gap-2 mb-1.5">
@@ -843,9 +860,25 @@ function AgentMessageBlock({ msg, isStreaming, isLast, onRetry }: {
         <span className="font-medium text-xs text-muted-foreground">Cebian Agent</span>
       </div>
       {msg.reasoning_content && <ThinkingBlock content={msg.reasoning_content} isLive={isStreaming} />}
-      {/* 工具调用卡片 */}
-      {msg.tool_calls && msg.tool_calls.length > 0 && (
-        <ToolCallCards tool_calls={msg.tool_calls} />
+      {/* 工具调用卡片（可折叠） */}
+      {hasToolCalls && (
+        <div className="border border-border rounded-lg overflow-hidden mb-2">
+          <button
+            onClick={() => setToolsOpen(!toolsOpen)}
+            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors select-none"
+          >
+            <ChevronRight size={12} className={`shrink-0 transition-transform ${toolsOpen ? "rotate-90" : ""}`} />
+            <span className="font-medium">{allDone ? "已执行工具" : "正在执行工具..."}</span>
+            <span className="text-muted-foreground/50">({msg.tool_calls!.length})</span>
+          </button>
+          <div className={`grid transition-[grid-template-rows] duration-300 ${toolsOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
+            <div className="overflow-hidden">
+              <div className="pb-2">
+                <ToolCallCards tool_calls={msg.tool_calls!} results={toolResultsMap} />
+              </div>
+            </div>
+          </div>
+        </div>
       )}
       <div className="text-sm leading-relaxed">
         <MarkdownRenderer content={msg.content || ""} />
@@ -1533,21 +1566,48 @@ export default function ChatView({
           );
         })()}
         <div className="flex flex-col gap-4 py-4 px-5">
-          {messages.map((msg, i) =>
-            msg.role === "user" ? (
-              <UserMessageBlock key={i} msg={msg} index={i} onRollback={handleRollback} />
-            ) : msg.compacted ? (
-              <div key={i} className="flex justify-center">
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent/50 border border-border text-[10px] text-muted-foreground">
-                  <FileText size={10} />
-                  <span>上下文已压缩 — 早期对话已折叠为摘要，减少 token 消耗</span>
-                </div>
-              </div>
-            ) : (
-              <AgentMessageBlock key={i} msg={msg} isStreaming={loading && i === messages.length - 1}
-                isLast={i === messages.length - 1} onRetry={onRetry} />
-            )
-          )}
+          {(() => {
+            // 收集后续 tool 消息，用于展示工具调用结果
+            const skipIndices = new Set<number>();
+            const items: React.ReactNode[] = [];
+            for (let i = 0; i < messages.length; i++) {
+              if (skipIndices.has(i)) continue;
+              const msg = messages[i];
+
+              if (msg.role === "user") {
+                items.push(<UserMessageBlock key={i} msg={msg} index={i} onRollback={handleRollback} />);
+              } else if (msg.compacted) {
+                items.push(
+                  <div key={i} className="flex justify-center">
+                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent/50 border border-border text-[10px] text-muted-foreground">
+                      <FileText size={10} />
+                      <span>上下文已压缩 — 早期对话已折叠为摘要，减少 token 消耗</span>
+                    </div>
+                  </div>
+                );
+              } else if (msg.role === "assistant") {
+                // 收集紧接着的 tool 消息作为工具结果
+                const toolResults: ChatMessage[] = [];
+                if (msg.tool_calls && msg.tool_calls.length > 0) {
+                  let j = i + 1;
+                  while (j < messages.length && messages[j].role === "tool") {
+                    toolResults.push(messages[j]);
+                    skipIndices.add(j);
+                    j++;
+                  }
+                }
+                items.push(
+                  <AgentMessageBlock key={i} msg={msg}
+                    isStreaming={loading && i === messages.length - 1}
+                    isLast={i === messages.length - 1} onRetry={onRetry}
+                    toolResults={toolResults.length > 0 ? toolResults : undefined}
+                  />
+                );
+              }
+              // tool 消息跳过（已在 Assistant 的 toolResults 中展示）
+            }
+            return items;
+          })()}
           {/* 交互式工具卡片（ask_user） */}
           {pendingInteractive && (
             <AskUserBlock
