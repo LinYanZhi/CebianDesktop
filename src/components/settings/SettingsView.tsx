@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import {
   ArrowLeft, Bot, Key, MessageSquare, FileText, Puzzle, Plug,
-  DatabaseBackup, HardDrive, Sliders, Info, Eye, EyeOff, Save, Unplug
+  DatabaseBackup, HardDrive, Sliders, Info, Eye, EyeOff, Save, Unplug, Plus, Trash2
 } from "lucide-react";
 import { toast } from "sonner";
 import type { AIConfig, ProviderInfo } from "../../lib/types";
+import { listPrompts, savePrompt, deletePrompt, createPromptTemplate } from "../../lib/prompts";
+import type { Prompt } from "../../lib/prompts";
 
 interface SettingsViewProps {
   config: AIConfig;
@@ -179,26 +181,198 @@ function ProvidersSection({ config, onChange }: { config: AIConfig; onChange: (c
   );
 }
 
-function InstructionsSection() {
+function InstructionsSection({ config, onChange }: { config: AIConfig; onChange: (c: AIConfig) => void }) {
   return (
     <section>
-      <h2 className="text-base font-semibold mb-4">指引</h2>
-      <p className="text-sm text-muted-foreground mb-4">自定义 AI 助手的行为指引。</p>
-      <textarea className="w-full h-32 bg-background border border-input rounded-lg p-3 text-sm outline-none focus:border-ring transition-colors resize-none"
-        placeholder="设置 AI 助手的个性化行为指令..." />
+      <h2 className="text-base font-semibold mb-4">系统提示词</h2>
+      <p className="text-sm text-muted-foreground mb-4">自定义 AI 助手的行为和角色定位。此内容会作为系统消息发送给 AI。</p>
+      <textarea value={config.system_prompt || ''}
+        onChange={(e) => onChange({ ...config, system_prompt: e.target.value })}
+        className="w-full h-48 bg-background border border-input rounded-lg p-3 text-sm outline-none focus:border-ring transition-colors resize-none font-mono"
+        placeholder="输入系统提示词，决定 AI 助手的角色和行为..." />
     </section>
   );
 }
 
-function PromptsSection({ config, onChange }: { config: AIConfig; onChange: (c: AIConfig) => void }) {
+function PromptsSection() {
+  const [prompts, setPrompts] = useState<Prompt[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<Prompt | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  // 加载提示词列表
+  const load = async () => {
+    const list = await listPrompts();
+    setPrompts(list);
+  };
+  useEffect(() => { load(); }, []);
+
+  // 选中一个 prompt
+  const selectPrompt = async (id: string) => {
+    if (dirty) {
+      toast.warning("请先保存当前编辑的提示词");
+      return;
+    }
+    setSelectedId(id);
+    const p = prompts.find(p => p.id === id);
+    setEditing(p ? { ...p } : null);
+    setDirty(false);
+  };
+
+  // 新建
+  const handleNew = () => {
+    if (dirty) {
+      toast.warning("请先保存当前编辑的提示词");
+      return;
+    }
+    const blank = createPromptTemplate();
+    setEditing(blank);
+    setSelectedId(blank.id);
+    setDirty(true);
+  };
+
+  // 保存
+  const handleSave = async () => {
+    if (!editing) return;
+    if (!editing.name.trim()) {
+      toast.error("请输入提示词名称");
+      return;
+    }
+    if (!editing.content.trim()) {
+      toast.error("请输入提示词内容");
+      return;
+    }
+    setLoading(true);
+    try {
+      await savePrompt(editing);
+      toast.success("保存成功");
+      setDirty(false);
+      await load();
+      setSelectedId(editing.id);
+    } catch (e: any) {
+      toast.error("保存失败: " + (e?.toString() || "未知错误"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 删除
+  const handleDelete = async () => {
+    if (!editing) return;
+    try {
+      await deletePrompt(editing.id);
+      toast.success("已删除");
+      setSelectedId(null);
+      setEditing(null);
+      setDirty(false);
+      await load();
+    } catch (e: any) {
+      toast.error("删除失败: " + (e?.toString() || "未知错误"));
+    }
+  };
+
   return (
     <section>
-      <h2 className="text-base font-semibold mb-4">系统提示词</h2>
-      <textarea value={config.system_prompt || ''}
-        onChange={(e) => onChange({ ...config, system_prompt: e.target.value })}
-        className="w-full h-40 bg-background border border-input rounded-lg p-3 text-sm outline-none focus:border-ring transition-colors resize-none font-mono"
-        placeholder="在这里配置 AI 助手的系统提示词..." />
-      <p className="text-xs text-muted-foreground mt-2">提示词决定了 AI 助手的行为和角色定位。</p>
+      <h2 className="text-base font-semibold mb-4">提示词</h2>
+      <p className="text-sm text-muted-foreground mb-4">
+        在输入框中输入 <code className="text-primary text-xs bg-primary/10 px-1 rounded">/</code> 可快速唤出提示词列表。
+        模板变量：<code className="text-xs bg-muted px-1 rounded">{`{{date}}`}</code> <code className="text-xs bg-muted px-1 rounded">{`{{time}}`}</code> <code className="text-xs bg-muted px-1 rounded">{`{{clipboard}}`}</code>
+      </p>
+
+      <div className="flex gap-4 h-[400px]">
+        {/* 左侧列表 */}
+        <div className="w-56 shrink-0 flex flex-col gap-2">
+          <button onClick={handleNew}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-input text-sm text-muted-foreground hover:text-foreground hover:border-ring transition-colors"
+          >
+            <Plus size={14} />
+            新建提示词
+          </button>
+          <div className="flex-1 overflow-y-auto space-y-0.5 border border-border rounded-lg p-1">
+            {prompts.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-8">暂无提示词</p>
+            ) : (
+              prompts.map(p => (
+                <button key={p.id}
+                  onClick={() => selectPrompt(p.id)}
+                  className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
+                    selectedId === p.id
+                      ? "bg-accent text-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                  }`}
+                >
+                  <div className="truncate">{p.name || "(未命名)"}</div>
+                  {p.description && (
+                    <div className="text-[10px] text-muted-foreground truncate mt-0.5">{p.description}</div>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        {/* 右侧编辑区 */}
+        <div className="flex-1 flex flex-col border border-border rounded-lg p-4 overflow-y-auto">
+          {!editing ? (
+            <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+              请选择或创建一个提示词
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* 名称 */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">名称</label>
+                <input type="text" value={editing.name}
+                  onChange={(e) => { setEditing({ ...editing, name: e.target.value }); setDirty(true); }}
+                  placeholder="如 translate-selection"
+                  className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring"
+                />
+              </div>
+
+              {/* 描述 */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">描述</label>
+                <input type="text" value={editing.description}
+                  onChange={(e) => { setEditing({ ...editing, description: e.target.value }); setDirty(true); }}
+                  placeholder="简短描述这个提示词的用途"
+                  className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring"
+                />
+              </div>
+
+              {/* 内容 */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">内容</label>
+                <textarea value={editing.content}
+                  onChange={(e) => { setEditing({ ...editing, content: e.target.value }); setDirty(true); }}
+                  placeholder="输入提示词正文，支持 {{date}} {{time}} {{clipboard}} 等模板变量"
+                  rows={10}
+                  className="w-full bg-background border border-input rounded-lg p-3 text-sm outline-none focus:border-ring resize-none font-mono"
+                />
+              </div>
+
+              {/* 操作按钮 */}
+              <div className="flex items-center gap-3 pt-2">
+                <button onClick={handleSave} disabled={loading || !dirty}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Save size={14} />
+                  {loading ? "保存中..." : "保存"}
+                </button>
+                <button onClick={handleDelete}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-destructive/10 text-destructive rounded-lg text-xs font-medium hover:bg-destructive/20 border border-destructive/30"
+                >
+                  <Trash2 size={14} />
+                  删除
+                </button>
+                {dirty && (
+                  <span className="text-xs text-amber-500 ml-2">有未保存的修改</span>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </section>
   );
 }
@@ -469,8 +643,8 @@ export default function SettingsView(props: SettingsViewProps) {
     switch (active) {
       case "providers": return <ProvidersSection config={props.config} onChange={props.onConfigChange} />;
       case "appearance": return <AppearanceSection config={props.config} onChange={props.onConfigChange} />;
-      case "instructions": return <InstructionsSection />;
-      case "prompts": return <PromptsSection config={props.config} onChange={props.onConfigChange} />;
+      case "instructions": return <InstructionsSection config={props.config} onChange={props.onConfigChange} />;
+      case "prompts": return <PromptsSection />;
       case "skills": return <SkillsSection />;
       case "mcp": return <MCPSection port={props.serverPort} running={props.serverRunning} onStart={props.onStartServer} onStop={props.onStopServer} onPortChange={props.onPortChange} />;
       case "backup": return <BackupSection />;

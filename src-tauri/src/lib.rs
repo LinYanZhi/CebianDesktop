@@ -33,6 +33,9 @@ pub fn run() {
             commands::load_app_config,
             commands::save_conversations,
             commands::load_conversations,
+            commands::list_prompts,
+            commands::save_prompt,
+            commands::delete_prompt,
         ])
         .run(tauri::generate_context!())
         .expect("启动应用时出错");

@@ -10,7 +10,7 @@ use tauri::State;
 
 use crate::ai::{call_llm, AIConfig, ChatMessage};
 use crate::config_storage::{
-    save_config, load_config, AppConfig, Conversation,
+    save_config, load_config, AppConfig, Conversation, Prompt,
     save_conversations as storage_save_convs, load_conversations as storage_load_convs,
 };
 use crate::server;
@@ -208,4 +208,39 @@ pub fn load_conversations(
     app_handle: tauri::AppHandle,
 ) -> Result<Vec<Conversation>, String> {
     storage_load_convs(&app_handle)
+}
+
+// ─── Prompt CRUD ───────────────────────────────────────────
+
+/// 列出所有提示词
+#[tauri::command]
+pub fn list_prompts(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<Prompt>, String> {
+    crate::config_storage::load_prompts(&app_handle)
+}
+
+/// 保存一个提示词（创建或更新）
+#[tauri::command]
+pub fn save_prompt(
+    app_handle: tauri::AppHandle,
+    prompt: Prompt,
+) -> Result<(), String> {
+    let mut prompts = crate::config_storage::load_prompts(&app_handle)?;
+    // 如果已存在相同 id，则替换；否则追加
+    if let Some(pos) = prompts.iter().position(|p| p.id == prompt.id) {
+        prompts[pos] = prompt;
+    } else {
+        prompts.push(prompt);
+    }
+    crate::config_storage::save_prompts(&app_handle, &prompts)
+}
+
+/// 删除一个提示词
+#[tauri::command]
+pub fn delete_prompt(
+    app_handle: tauri::AppHandle,
+    id: String,
+) -> Result<(), String> {
+    crate::config_storage::delete_prompt(&app_handle, &id)
 }

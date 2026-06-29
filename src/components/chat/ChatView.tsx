@@ -7,6 +7,8 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage, AIConfig, ThinkingLevel, SendAttachment, ToolCall } from "../../lib/types";
 import { getActiveConfig, hasUsableModel } from "../../lib/types";
+import { listPrompts, replaceTemplateVars } from "../../lib/prompts";
+import type { Prompt } from "../../lib/prompts";
 import { toast } from "sonner";
 
 interface ChatViewProps {
@@ -437,12 +439,7 @@ function AskUserBlock({
     return (
       <div className="my-3 p-4 rounded-xl border bg-card shadow-sm animate-form-enter">
         <div className="text-sm whitespace-pre-wrap text-foreground mb-3">{questions[0].question}</div>
-        <FormField
-          field={questions[0]}
-          value={values[questions[0].id]}
-          onChange={(v) => updateField(questions[0].id, v)}
-        />
-        <div className="flex gap-2 mt-3">
+        <div className="flex gap-2">
           <button onClick={() => onResolve("yes")}
             className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
             确认
@@ -863,8 +860,75 @@ function ChatInput({
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const slashMenuRef = useRef<HTMLDivElement>(null);
   const [attachments, setAttachments] = useState<SendAttachment[]>([]);
   const [webSearch, setWebSearch] = useState(false);
+
+  // ── Slash Prompts ──
+  const [showSlash, setShowSlash] = useState(false);
+  const [prompts, setPrompts] = useState<Prompt[]>([]);
+  const [selectedPromptIdx, setSelectedPromptIdx] = useState(0);
+
+  // 扫描提示词（输入 / 时触发）
+  useEffect(() => {
+    if (!showSlash) return;
+    listPrompts().then(setPrompts).catch(() => setPrompts([]));
+  }, [showSlash]);
+
+  // 键盘导航
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (showSlash && prompts.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setSelectedPromptIdx((i) => (i + 1) % prompts.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setSelectedPromptIdx((i) => (i - 1 + prompts.length) % prompts.length);
+        return;
+      }
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        const target = prompts[selectedPromptIdx];
+        if (target) handleSelectPrompt(target);
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setShowSlash(false);
+        return;
+      }
+    }
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  };
+
+  // 选择 prompt
+  const handleSelectPrompt = async (prompt: Prompt) => {
+    try {
+      const filled = await replaceTemplateVars(prompt.content);
+      setInputValue(filled);
+      setShowSlash(false);
+      textareaRef.current?.focus();
+    } catch {
+      toast.error("读取提示词失败");
+    }
+  };
+
+  // 过滤
+  const slashFilter = inputValue.startsWith("/") ? inputValue.slice(1).toLowerCase() : "";
+  const filteredPrompts = slashFilter
+    ? prompts.filter((p) => p.name.toLowerCase().includes(slashFilter) || p.description.toLowerCase().includes(slashFilter))
+    : prompts;
+  const isSlashVisible = showSlash && (slashFilter === "" || filteredPrompts.length > 0);
+
+  // 高亮索引随列表变化重置
+  useEffect(() => {
+    setSelectedPromptIdx(0);
+  }, [filteredPrompts.length]);
 
   // 自动增高
   const adjustHeight = useCallback(() => {
@@ -951,9 +1015,43 @@ function ChatInput({
   const isReasoningModel = active.model.toLowerCase().includes("reason") || active.model.toLowerCase().includes("deepseek");
 
   return (
-    <footer className="border-t border-border bg-background shrink-0">
+    <footer className="border-t border-border bg-background shrink-0 relative">
       {/* 附件 chips */}
       <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
+
+      {/* Slash 提示词菜单 */}
+      {isSlashVisible && (
+        <div ref={slashMenuRef}
+          className="absolute bottom-full left-4 right-4 mb-2 bg-popover border border-border rounded-lg shadow-xl z-50 max-h-52 overflow-y-auto animate-form-enter"
+        >
+          {filteredPrompts.length === 0 ? (
+            <p className="text-xs text-muted-foreground text-center py-3 px-2.5">
+              暂无提示词，请在设置中创建
+            </p>
+          ) : (
+            <div className="py-1">
+              {filteredPrompts.map((p, idx) => {
+                const selected = idx === selectedPromptIdx;
+                return (
+                  <button key={p.id}
+                    onClick={() => handleSelectPrompt(p)}
+                    onMouseMove={() => setSelectedPromptIdx(idx)}
+                    className={`w-full flex items-start gap-2.5 px-3 py-2 text-left transition-colors ${selected ? "bg-accent" : "hover:bg-accent/50"}`}
+                  >
+                    <FileText className="size-4 mt-0.5 shrink-0 text-muted-foreground" />
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-foreground truncate">{p.name}</div>
+                      {p.description && (
+                        <div className="text-xs text-muted-foreground truncate mt-0.5">{p.description}</div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 输入卡片 */}
       <div className="px-4 py-3">
@@ -985,9 +1083,14 @@ function ChatInput({
           <textarea
             ref={textareaRef}
             value={inputValue}
-            onChange={(e) => { setInputValue(e.target.value); adjustHeight(); }}
-            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-            placeholder="输入消息..."
+            onChange={(e) => {
+              const val = e.target.value;
+              setInputValue(val);
+              setShowSlash(val.startsWith("/") && !loading);
+              adjustHeight();
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder='输入消息，输入 "/" 可唤起提示词...'
             rows={1}
             className="w-full bg-transparent resize-none px-4 py-2 text-sm outline-none placeholder:text-muted-foreground/50"
           />

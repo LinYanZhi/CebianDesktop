@@ -123,3 +123,55 @@ pub fn load_conversations(app: &tauri::AppHandle) -> Result<Vec<Conversation>, S
     serde_json::from_str(&json)
         .map_err(|e| format!("解析对话文件失败: {}", e))
 }
+
+// ─── Prompt 存储 ────────────────────────────────────────────
+
+/// 单个提示词，对应前端的 Slash Prompt
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Prompt {
+    /// 唯一标识（生成后不变，用于删除/更新）
+    pub id: String,
+    /// 前端显示的简称，如 translate-selection
+    pub name: String,
+    /// 简短说明
+    pub description: String,
+    /// Prompt 正文（模板变量会在前端替换）
+    pub content: String,
+    /// 创建时间戳
+    pub created_at: u64,
+    /// 更新时间戳
+    pub updated_at: u64,
+}
+
+fn prompts_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(ensure_data_dir(app)?.join("prompts.json"))
+}
+
+pub fn save_prompts(app: &tauri::AppHandle, prompts: &[Prompt]) -> Result<(), String> {
+    let path = prompts_path(app)?;
+    let json = serde_json::to_string_pretty(prompts)
+        .map_err(|e| format!("序列化提示词失败: {}", e))?;
+    fs::write(&path, &json)
+        .map_err(|e| format!("写入提示词文件失败: {}", e))
+}
+
+pub fn load_prompts(app: &tauri::AppHandle) -> Result<Vec<Prompt>, String> {
+    let path = prompts_path(app)?;
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let json = fs::read_to_string(&path)
+        .map_err(|e| format!("读取提示词文件失败: {}", e))?;
+    serde_json::from_str(&json)
+        .map_err(|e| format!("解析提示词文件失败: {}", e))
+}
+
+pub fn delete_prompt(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
+    let mut prompts = load_prompts(app)?;
+    let len_before = prompts.len();
+    prompts.retain(|p| p.id != id);
+    if prompts.len() == len_before {
+        return Err(format!("未找到 ID 为 '{}' 的提示词", id));
+    }
+    save_prompts(app, &prompts)
+}
