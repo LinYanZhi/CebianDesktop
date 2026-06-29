@@ -1,15 +1,17 @@
 import { listen } from "@tauri-apps/api/event";
 import { useState, useRef, useEffect } from "react";
 import {
-  FileCode, FileText, FileJson, File, Search, FilePlus, FolderPlus, MoreHorizontal, Download, Upload,
+  FileCode, FileText, FileJson, File, Search, FilePlus, FolderPlus, MoreHorizontal, Download,
   FolderOpen, Trash2, Plus, Folder, FileImage, FileArchive, ChevronRight, ChevronDown,
 } from "lucide-react";
 import { toast } from "sonner";
-import {
-  listWorkspaceFiles, writeWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile,
-  exportWorkspaceFileContent, importWorkspaceFileContent, openWorkspaceDir,
+import { listWorkspaceFiles, writeWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile,
+  exportWorkspaceFileContent, openWorkspaceDir, openFileLocation, getWorkspaceFilePath,
   createWorkspaceSubdir, deleteWorkspaceSubdir, moveWorkspaceFile,
+  exportWorkspaceZipToPath, importWorkspaceZipPath,
 } from "../../../lib/workspace";
+import { save, open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import type { WorkspaceFile } from "../../../lib/workspace";
 import { CodeMirrorEditor } from "../../editor/CodeMirrorEditor";
 import { ContextMenu } from "../ContextMenu";
@@ -119,14 +121,15 @@ export function SkillsSection() {
   const fontTipTimer = useRef<ReturnType<typeof setTimeout>>();
   const draggingRef = useRef(false);
   const dragFileRef = useRef<string | null>(null);
+  const dragFilesRef = useRef<string[]>([]);
   const dragDirRef = useRef<string | null>(null);
   const dragStartPos = useRef<{ x: number; y: number } | null>(null);
   const dragActiveRef = useRef(false); // 是否超过阈值进入拖拽模式
   const treeContainerRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const createInputRef = useRef<HTMLInputElement>(null);
   const loadVersionRef = useRef(0); // 防过期加载
+  const draftCacheRef = useRef<Record<string, string>>({}); // 未保存的编辑内容（filename → content）
 
   const load = async () => {
     loadVersionRef.current += 1;
@@ -149,6 +152,9 @@ export function SkillsSection() {
   const handlePointerDown = (e: React.PointerEvent, filename: string) => {
     if (e.button !== 0) return; // 只响应左键
     dragFileRef.current = filename;
+    dragFilesRef.current = selectedFilenames.has(filename)
+      ? Array.from(selectedFilenames)
+      : [filename];
     dragDirRef.current = null;
     dragStartPos.current = { x: e.clientX, y: e.clientY };
     // 注意：不设置 draggingFile state，等 pointermove 超过阈值再触发
@@ -195,10 +201,12 @@ export function SkillsSection() {
     const onUp = async (e: PointerEvent) => {
       const isDragging = dragActiveRef.current;
       const fileId = dragFileRef.current;
+      const fileIds = dragFilesRef.current.slice();
       // 清理所有状态
       document.body.style.userSelect = '';
       document.body.style.webkitUserSelect = '';
       dragFileRef.current = null;
+      dragFilesRef.current = [];
       dragDirRef.current = null;
       dragStartPos.current = null;
       dragActiveRef.current = false;
@@ -206,20 +214,23 @@ export function SkillsSection() {
       setDraggingFile(null);
       setDragPos(null);
       // 没超过阈值 → 纯点击，不执行移动
-      if (!isDragging || !fileId) return;
+      if (!isDragging || fileIds.length === 0) return;
       // 鼠标释放位置检测目标目录
       let el = document.elementFromPoint(e.clientX, e.clientY) as HTMLElement | null;
       while (el && el !== container && !el.hasAttribute('data-dir-id')) {
         el = el.parentElement;
       }
       const targetDir = el?.getAttribute('data-dir-id') || '';
-      try {
-        await moveWorkspaceFile("skills", fileId, targetDir);
-        await load();
-        toast.success(targetDir ? "已移动到目录" : "已移回根目录");
-      } catch (err: any) {
-        toast.error("移动失败: " + (err?.toString() || "未知错误"));
+      // 批量移动
+      for (const fid of fileIds) {
+        try {
+          await moveWorkspaceFile("skills", fid, targetDir);
+        } catch (err: any) {
+          toast.error(`移动 ${fid} 失败: ${err?.toString()}`);
+        }
       }
+      if (fileIds.length > 1) toast.success(`已移动 ${fileIds.length} 个文件`);
+      await load();
     };
 
     document.addEventListener('pointermove', onMove);
@@ -315,9 +326,17 @@ export function SkillsSection() {
      }
    };
 
-  const selectFile = (id: string) => {
-    const file = skills.find(s => s.id === id);
-    if (file) setEditing({ ...file });
+  const selectFile = (filename: string) => {
+    // 保存当前正在编辑的未保存内容到草稿缓存
+    if (editing && dirtyMap[editing.id]) {
+      draftCacheRef.current[editing.filename] = editing.content;
+    }
+    // 加载新文件，优先取草稿缓存中的内容
+    const file = skills.find(s => s.filename === filename);
+    if (file) {
+      const content = filename in draftCacheRef.current ? draftCacheRef.current[filename] : file.content;
+      setEditing({ ...file, content });
+    }
   };
 
   // ─── 目录展开/折叠 ──────────────────────────────────────
@@ -395,7 +414,7 @@ export function SkillsSection() {
     }
     await writeWorkspaceFile("skills", fullName, trimmed.replace(/\.\w+$/, ''), "", "");
     const list = await load();
-    const file = list.find(s => s.id === fullName);
+    const file = list.find(s => s.filename === fullName);
     if (file) { setSelectedFilenames(new Set([file.filename])); setEditing({ ...file }); }
     setDirtyMap(prev => ({ ...prev, [file?.id || '']: false }));
   };
@@ -430,6 +449,7 @@ export function SkillsSection() {
       await writeWorkspaceFile("skills", editing.id, editing.name, editing.description, editing.content);
       toast.success("保存成功");
       setDirtyMap(prev => ({ ...prev, [editing.id]: false }));
+      delete draftCacheRef.current[editing.filename];
       await load();
       setSelectedFilenames(new Set([editing.filename]));
     } catch (e: any) {
@@ -450,7 +470,10 @@ export function SkillsSection() {
     try {
       await deleteWorkspaceFile("skills", id);
       toast.success("已删除");
-      if (file && selectedFilenames.has(file.filename)) { setEditing(null); setDirtyMap(prev => ({ ...prev, [id]: false })); }
+      if (file) {
+        delete draftCacheRef.current[file.filename];
+        if (selectedFilenames.has(file.filename)) { setEditing(null); setDirtyMap(prev => ({ ...prev, [id]: false })); }
+      }
       await load();
     } catch (e: any) {
       toast.error("删除失败: " + (e?.toString() || "未知错误"));
@@ -486,39 +509,65 @@ export function SkillsSection() {
     }
   };
 
-  const handleExportFile = async (id: string) => {
+  // ─── 导出 ──────────────────────────────────────────────
+  /** 导出选中文件为 ZIP —— 让用户选择保存路径 */
+  const handleExportSelectedZip = async (ids: string[]) => {
+    const filePath = await save({
+      defaultPath: `skills-${Date.now()}.zip`,
+      filters: [{ name: "ZIP 压缩包", extensions: ["zip"] }],
+    });
+    if (!filePath) return;
     try {
-      const raw = await exportWorkspaceFileContent("skills", id);
-      const file = skills.find(s => s.id === id);
-      const filename = file?.filename || `${id}.md`;
-      const blob = new Blob([raw], { type: "text/markdown" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
-      URL.revokeObjectURL(url);
-      toast.success("导出成功");
+      await exportWorkspaceZipToPath("skills", ids, filePath);
+      toast.success("ZIP 导出成功");
     } catch (e: any) {
-      toast.error("导出失败: " + (e?.toString() || "未知错误"));
+      toast.error("ZIP 导出失败: " + (e?.toString() || "未知错误"));
     }
   };
 
-  const handleExportAll = async () => {
-    for (const s of skills) await handleExportFile(s.id);
+  /** 全部导出为 ZIP */
+  const handleExportAllZip = async () => {
+    await handleExportSelectedZip([]);
   };
 
-  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  // ─── 导入 ──────────────────────────────────────────────
+  /** 导入 ZIP 文件 —— 让用户选择路径 */
+  const handleImportZip = async () => {
+    const filePath = await open({
+      multiple: false,
+      title: "选择要导入的 ZIP 文件",
+      filters: [{ name: "ZIP 压缩包", extensions: ["zip"] }],
+    });
+    if (!filePath) return;
     try {
-      const text = await file.text();
-      await importWorkspaceFileContent("skills", text);
-      toast.success("导入成功");
+      const count = await importWorkspaceZipPath("skills", filePath);
+      toast.success(`ZIP 导入成功，共 ${count} 个文件`);
       await load();
     } catch (e: any) {
-      toast.error("导入失败: " + (e?.toString() || "未知错误"));
+      toast.error("ZIP 导入失败: " + (e?.toString() || "未知错误"));
     }
-    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
+
+  /** 另存为：将文件拷贝到选择的目录（散装复制） */
+  const handleSaveAs = async (ids: string[]) => {
+    const dir = await open({ directory: true, multiple: false, title: "选择目标目录" });
+    if (!dir) return;
+    let count = 0;
+    for (const id of ids) {
+      try {
+        const file = skills.find(s => s.id === id);
+        if (!file) continue;
+        const raw = await exportWorkspaceFileContent("skills", id);
+        const filename = file.filename.replace(/\//g, '_');
+        await invoke("write_file_to_path", { path: `${dir}\\${filename}`, content: raw });
+        count++;
+      } catch (e: any) {
+        toast.error(`另存为 ${id} 失败: ${e?.toString()}`);
+      }
+    }
+    if (count > 0) toast.success(`已将 ${count} 个文件另存到目标目录`);
+  };
 
   const handleDeleteDir = async (dirId: string) => {
     try {
@@ -590,18 +639,18 @@ export function SkillsSection() {
               {moreOpen && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
-                  <div className="absolute right-0 top-full mt-1 z-50 w-36 bg-popover border border-border rounded-lg shadow-lg py-1 text-xs">
-                    <button onClick={() => { setMoreOpen(false); handleExportAll(); }}
+                  <div className="absolute right-0 top-full mt-1 z-50 w-32 bg-popover border border-border rounded-lg shadow-lg py-1 text-xs">
+                    <button onClick={() => { setMoreOpen(false); handleExportAllZip(); }}
                       className="w-full flex items-center gap-2 px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors text-left">
-                      <Download size={12} /> 导出全部
+                      <Download size={12} /> 导出
                     </button>
-                    <button onClick={() => { setMoreOpen(false); fileInputRef.current?.click(); }}
+                    <button onClick={() => { setMoreOpen(false); handleImportZip(); }}
                       className="w-full flex items-center gap-2 px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors text-left">
-                      <Upload size={12} /> 导入文件
+                      <FileArchive size={12} /> 导入
                     </button>
                     <button onClick={() => { setMoreOpen(false); openWorkspaceDir("skills"); }}
                       className="w-full flex items-center gap-2 px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors text-left">
-                      <FolderOpen size={12} /> 打开位置
+                      <FolderOpen size={12} /> 打开目录
                     </button>
                   </div>
                 </>
@@ -612,7 +661,7 @@ export function SkillsSection() {
           {/* 文件树 */}
           <div ref={treeContainerRef} className="flex-1 overflow-y-auto p-1 space-y-0.5"
             onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
-            onPointerDown={() => { setCurrentDir(""); }}>
+            onPointerDown={(e) => { if (e.target === e.currentTarget) { setCurrentDir(""); setSelectedFilenames(new Set()); } }}>
             {creatingFolder && (
               <div className="flex items-center gap-1.5 px-1.5 py-1">
                 <Folder size={12} className="shrink-0 text-muted-foreground/50" />
@@ -650,7 +699,7 @@ export function SkillsSection() {
                 const selected = selectedFilenames.has(s.filename);
                 return (
                   <div key={s.id}
-                    onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCtxMenu({ x: e.clientX, y: e.clientY, fileId: s.id, isDir: isDir(s) }); }}>
+                    onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCtxMenu({ x: e.clientX, y: e.clientY, fileId: s.filename, isDir: isDir(s) }); }}>
                     {renaming === s.id ? (
                       <div className="flex items-center gap-1.5 px-1.5 py-1" style={{ paddingLeft: 8 + depth * 16 }}>
                         <input ref={renameInputRef} type="text" value={renameValue}
@@ -687,7 +736,7 @@ export function SkillsSection() {
                     ) : (
                       // ── 文件项 ──
                       <div tabIndex={-1}
-                        onClick={(e) => { toggleSelect(s.filename, e.ctrlKey || e.metaKey, e.shiftKey); selectFile(s.id); setCurrentDir(dirOf(s)); }}
+                        onClick={(e) => { toggleSelect(s.filename, e.ctrlKey || e.metaKey, e.shiftKey); selectFile(s.filename); setCurrentDir(dirOf(s)); }}
                         onPointerDown={(e) => handlePointerDown(e, s.filename)}
                         className={`flex items-center px-2.5 py-1.5 rounded-md text-xs cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
                           selected ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
@@ -745,7 +794,7 @@ export function SkillsSection() {
               }}>
               <CodeMirrorEditor
                 value={editing.content}
-                onChange={(val) => { setEditing({ ...editing, content: val }); setDirtyMap(prev => ({ ...prev, [editing.id]: true })); }}
+                onChange={(val) => { setEditing({ ...editing, content: val }); draftCacheRef.current[editing.filename] = val; setDirtyMap(prev => ({ ...prev, [editing.id]: true })); }}
                 language={editing.filename.endsWith('.js') || editing.filename.endsWith('.ts') ? 'javascript' : editing.filename.endsWith('.yaml') || editing.filename.endsWith('.yml') ? 'yaml' : 'markdown'}
                 placeholder="在此编写技能定义（Markdown/代码格式）..."
                 fontSize={`${fontSize}px`} />
@@ -759,39 +808,63 @@ export function SkillsSection() {
       </div>
 
       {/* ── 右键菜单 ── */}
-      {ctxMenu && (
-        <ContextMenu x={ctxMenu.x} y={ctxMenu.y}
+      {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y}
           items={
-            ctxMenu.fileId && ctxMenu.isDir
-               ? [
-                   { label: "在此目录新建文件", icon: <Plus size={12} />, onClick: () => { setCreateDirContext(ctxMenu.fileId!); setCreatingFile(true); setCreatingFolder(false); setRenaming(null); } },
-                   { label: "新建子目录", icon: <FolderPlus size={12} />, onClick: () => { setCreateDirContext(ctxMenu.fileId!); setCreatingFolder(true); setCreatingFile(false); setRenaming(null); } },
-                  { label: "重命名目录", icon: <FileText size={12} />, shortcut: "R", onClick: () => { const f = skills.find(s => s.id === ctxMenu.fileId); if (f) { setRenaming(f.id); setRenameValue(baseName(f)); } } },
-                  { label: "删除目录", icon: <Trash2 size={12} />, shortcut: "D", danger: true, onClick: () => handleDeleteDir(ctxMenu.fileId!) },
-                ]
-              : ctxMenu.fileId
-              ? [
-                  { label: "重命名", icon: <FileText size={12} />, shortcut: "R", onClick: () => { const f = skills.find(s => s.id === ctxMenu.fileId); if (f) { setRenaming(f.id); setRenameValue(baseName(f)); } } },
-                  { label: "导出文件", icon: <Download size={12} />, onClick: () => handleExportFile(ctxMenu.fileId!) },
-                  { label: "删除文件", icon: <Trash2 size={12} />, shortcut: "D", danger: true, onClick: () => handleDelete(ctxMenu.fileId!) },
-                ]
-              : [
-                  { label: "新建技能文件", icon: <Plus size={12} />, onClick: handleNew },
-                  { label: "新建文件夹", icon: <FolderPlus size={12} />, onClick: handleNewFolder },
-                  { label: "导入文件", icon: <Upload size={12} />, onClick: () => fileInputRef.current?.click() },
-                ]
+            ctxMenu.isDir
+            ? (() => {
+                const dirName = ctxMenu.fileId!.replace(/\/$/, '');
+                return [
+                  { label: "在此目录新建文件", icon: <Plus size={12} />, onClick: () => { setCtxMenu(null); setCreateDirContext(dirName); setCreatingFile(true); setCreatingFolder(false); setRenaming(null); } },
+                  { label: "新建子目录", icon: <FolderPlus size={12} />, onClick: () => { setCtxMenu(null); setCreateDirContext(dirName); setCreatingFolder(true); setCreatingFile(false); setRenaming(null); } },
+                  { label: "重命名目录", icon: <FileText size={12} />, shortcut: "R", onClick: () => { setCtxMenu(null); const f = skills.find(s => s.filename === ctxMenu.fileId); if (f) { setRenaming(f.id); setRenameValue(baseName(f)); } } },
+                  { label: "删除目录", icon: <Trash2 size={12} />, shortcut: "D", danger: true, onClick: () => { setCtxMenu(null); handleDeleteDir(dirName); } },
+                ];
+              })()
+            : ctxMenu.fileId && selectedFilenames.has(ctxMenu.fileId) && selectedFilenames.size > 1
+            ? (() => {
+                const names = Array.from(selectedFilenames);
+                const files = names.map(n => skills.find(s => s.filename === n)).filter(Boolean) as WorkspaceFile[];
+                const ids = files.map(f => f.id);
+                const copyPaths = async () => {
+                  const paths = await Promise.all(ids.map(id => getWorkspaceFilePath("skills", id)));
+                  await navigator.clipboard.writeText(paths.join('\n'));
+                  toast.success("路径已复制");
+                };
+                return [
+                  { label: `导出选中的 ${files.length} 个文件`, icon: <Download size={12} />, onClick: () => { setCtxMenu(null); handleExportSelectedZip(ids); } },
+                  { label: "另存为...", icon: <FolderOpen size={12} />, onClick: () => { setCtxMenu(null); handleSaveAs(ids); } },
+                  { label: "复制路径", icon: <FileText size={12} />, shortcut: "C", onClick: () => { setCtxMenu(null); copyPaths(); } },
+                ] as ContextMenuItem[];
+              })()
+            : ctxMenu.fileId
+            ? (() => {
+                const f = skills.find(s => s.filename === ctxMenu.fileId);
+                const fid = f?.id;
+                return [
+                  { label: "重命名", icon: <FileText size={12} />, shortcut: "R", onClick: () => { setCtxMenu(null); if (f) { setRenaming(f.id); setRenameValue(baseName(f)); } } },
+                  { label: "另存为", icon: <FolderOpen size={12} />, onClick: () => { setCtxMenu(null); if (fid) handleSaveAs([fid]); } },
+                  { label: "打开位置", icon: <FolderOpen size={12} />, shortcut: "O", onClick: () => { setCtxMenu(null); if (fid) openFileLocation("skills", fid); } },
+                  { label: "复制路径", icon: <FileText size={12} />, shortcut: "C", onClick: async () => { setCtxMenu(null); if (fid) { const p = await getWorkspaceFilePath("skills", fid); await navigator.clipboard.writeText(p); toast.success("路径已复制"); } } },
+                  { label: "删除文件", icon: <Trash2 size={12} />, shortcut: "D", danger: true, onClick: () => { setCtxMenu(null); if (fid) handleDelete(fid); } },
+                ];
+              })()
+            : [
+                { label: "新建文件", icon: <Plus size={12} />, onClick: () => { setCtxMenu(null); handleNew(); } },
+                { label: "新建文件夹", icon: <FolderPlus size={12} />, onClick: () => { setCtxMenu(null); handleNewFolder(); } },
+                { label: "打开目录", icon: <FolderOpen size={12} />, onClick: () => { setCtxMenu(null); openWorkspaceDir("skills"); } },
+              ]
           }
-          onClose={() => setCtxMenu(null)} />
-      )}
-
-      <input ref={fileInputRef} type="file" accept=".md" onChange={handleImport} className="hidden" />
+          onClose={() => setCtxMenu(null)} />}
 
       {/* ── 拖拽浮动指示器 ── */}
       {draggingFile && dragPos && (
         <div style={{ position: 'fixed', left: dragPos.x + 12, top: dragPos.y - 8, pointerEvents: 'none', zIndex: 9999 }}
           className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-border bg-popover shadow-xl text-xs">
           <FileText size={13} className="shrink-0 text-muted-foreground/60" />
-          <span className="font-medium text-foreground max-w-[180px] truncate">{draggingFile.replace(/^.*\//, '')}</span>
+          <span className="font-medium text-foreground max-w-[180px] truncate">
+            {draggingFile.replace(/^.*\//, '')}
+            {dragFilesRef.current.length > 1 && <span className="ml-1 text-muted-foreground/60">+{dragFilesRef.current.length - 1}</span>}
+          </span>
           <span className="text-[10px] text-muted-foreground/50 ml-1 px-1.5 py-0.5 rounded bg-muted leading-none">移动</span>
         </div>
       )}
