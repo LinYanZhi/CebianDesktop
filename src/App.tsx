@@ -1053,7 +1053,19 @@ export default function App() {
       const conv = conversations.find((c) => c.id === id);
       if (conv) {
         setCurrentSessionId(id);
-        setMessages(conv.messages);
+        // 如果此会话有进行中的流，从流状态重建消息（比持久化状态更新）
+        const streamState = activeStreamsRef.current.get(id);
+        if (streamState) {
+          const partial: ChatMessage = {
+            role: "assistant",
+            content: streamState.fullContent,
+            reasoning_content: streamState.fullThinking || undefined,
+          };
+          const liveMsgs = [...streamState.prevMessages, partial];
+          setMessages(liveMsgs);
+        } else {
+          setMessages(conv.messages);
+        }
       }
     },
     [conversations]
