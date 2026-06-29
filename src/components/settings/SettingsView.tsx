@@ -986,7 +986,7 @@ export default function SettingsView(props: SettingsViewProps) {
   };
 
   return (
-    <div className="flex-1 flex flex-col min-w-0">
+    <div className="w-full h-full flex flex-col min-w-0">
       {/* 顶部栏 */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
         <button onClick={props.onBack} className="p-1 rounded-md hover:bg-accent text-muted-foreground">
@@ -1013,8 +1013,8 @@ export default function SettingsView(props: SettingsViewProps) {
 
       {/* 竖向导航 */}
       {navMode === "wide" ? (
-        <div className="flex-1 flex min-h-0">
-          <nav className="w-44 border-r border-border bg-card p-2 flex flex-col gap-1 shrink-0 overflow-y-auto">
+        <div className="flex-1 flex min-h-0 h-full">
+          <nav className="w-44 border-r border-border bg-card p-2 flex flex-col gap-1 shrink-0 self-stretch overflow-y-auto">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               return (
@@ -1026,7 +1026,7 @@ export default function SettingsView(props: SettingsViewProps) {
               );
             })}
           </nav>
-          <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 min-w-0">
+          <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 min-w-0 flex flex-col">
             {renderSection()}
           </div>
         </div>
