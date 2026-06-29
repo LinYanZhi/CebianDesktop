@@ -82,11 +82,12 @@ pub async fn execute_tool(name: String, args: Value, mcp: State<'_, McpClientMan
             let description = args.get("description").and_then(|v| v.as_str()).unwrap_or("");
             let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
             let id = workspace::generate_id();
-            workspace::write_file(&app_handle, workspace::WorkspaceDir::Skills, &id, name_val, description, content)?;
+            let file_id = format!("{}.md", id);
+            workspace::write_file(&app_handle, workspace::WorkspaceDir::Skills, &file_id, name_val, description, content)?;
             return Ok(json!({
                 "id": id,
                 "name": name_val,
-                "filename": format!("{}.md", id),
+                "filename": file_id,
                 "message": format!("技能「{}」已创建成功。AI 现在可以通过 skill_{} 工具调用此技能。", name_val, name_val.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect::<String>()),
             }));
         }
@@ -162,11 +163,12 @@ pub fn execute_tool_internal(name: &str, args: &Value, app_handle: &tauri::AppHa
             let description = args.get("description").and_then(|v| v.as_str()).unwrap_or("");
             let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
             let id = workspace::generate_id();
-            workspace::write_file(app_handle, workspace::WorkspaceDir::Skills, &id, name_val, description, content)?;
+            let file_id = format!("{}.md", id);
+            workspace::write_file(app_handle, workspace::WorkspaceDir::Skills, &file_id, name_val, description, content)?;
             Ok(json!({
                 "id": id,
                 "name": name_val,
-                "filename": format!("{}.md", id),
+                "filename": file_id,
                 "message": format!("技能「{}」已创建成功。AI 现在可以通过 skill_{} 工具调用此技能。", name_val, name_val.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect::<String>()),
             }))
         }
