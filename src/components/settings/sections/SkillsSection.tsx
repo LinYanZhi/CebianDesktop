@@ -424,7 +424,8 @@ export function SkillsSection() {
 
   const handleSave = async () => {
     if (!editing) return;
-    if (!editing.name.trim()) { toast.error("请输入技能名称"); return; }
+    // 只有 .md 文件需要校验技能名称（其他文件没有 frontmatter）
+    if (editing.id.endsWith('.md') && !editing.name.trim()) { toast.error("请输入技能名称"); return; }
     try {
       await writeWorkspaceFile("skills", editing.id, editing.name, editing.description, editing.content);
       toast.success("保存成功");
