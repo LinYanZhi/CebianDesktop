@@ -141,6 +141,59 @@ pub async fn execute_tool(name: String, args: Value, mcp: State<'_, McpClientMan
     }
 }
 
+/// 内部工具执行（同步，用于 ai.rs 中调用技能管理工具）
+///
+/// 处理 skill_list / skill_create / skill_read / skill_delete 四个技能管理工具。
+/// 注意：此函数不处理 MCP 工具（MCP 需要 async 调用）和内置工具。
+pub fn execute_tool_internal(name: &str, args: &Value, app_handle: &tauri::AppHandle) -> Result<Value, String> {
+    match name {
+        "skill_list" => {
+            let files = workspace::list_files(app_handle, workspace::WorkspaceDir::Skills)?;
+            let skills: Vec<Value> = files.into_iter().map(|f| json!({
+                "name": f.name,
+                "description": f.description,
+                "filename": f.filename,
+                "updated_at": f.updated_at,
+            })).collect();
+            Ok(json!({"skills": skills, "count": skills.len()}))
+        }
+        "skill_create" => {
+            let name_val = args.get("name").and_then(|v| v.as_str()).ok_or("缺少 name 参数")?;
+            let description = args.get("description").and_then(|v| v.as_str()).unwrap_or("");
+            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let id = workspace::generate_id();
+            workspace::write_file(app_handle, workspace::WorkspaceDir::Skills, &id, name_val, description, content)?;
+            Ok(json!({
+                "id": id,
+                "name": name_val,
+                "filename": format!("{}.md", id),
+                "message": format!("技能「{}」已创建成功。AI 现在可以通过 skill_{} 工具调用此技能。", name_val, name_val.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect::<String>()),
+            }))
+        }
+        "skill_read" => {
+            let name_val = args.get("name").and_then(|v| v.as_str()).ok_or("缺少 name 参数")?;
+            let files = workspace::list_files(app_handle, workspace::WorkspaceDir::Skills)?;
+            let skill = files.iter().find(|f| f.name == name_val)
+                .ok_or_else(|| format!("未找到技能「{}」", name_val))?;
+            Ok(json!({
+                "name": skill.name,
+                "description": skill.description,
+                "filename": skill.filename,
+                "content": skill.content,
+            }))
+        }
+        "skill_delete" => {
+            let name_val = args.get("name").and_then(|v| v.as_str()).ok_or("缺少 name 参数")?;
+            let files = workspace::list_files(app_handle, workspace::WorkspaceDir::Skills)?;
+            let skill = files.iter().find(|f| f.name == name_val)
+                .ok_or_else(|| format!("未找到技能「{}」", name_val))?;
+            workspace::delete_file(app_handle, workspace::WorkspaceDir::Skills, &skill.id)?;
+            Ok(json!({"message": format!("技能「{}」已删除", name_val)}))
+        }
+        _ => Err(format!("未知工具: {}", name)),
+    }
+}
+
 /// 调用 AI LLM
 ///
 /// # 参数
@@ -481,6 +534,37 @@ pub fn create_workspace_subdir(
         _ => return Err(format!("无效的工作区子目录: {}", sub)),
     };
     workspace::create_subdir(&app_handle, dir, &dir_name)
+}
+
+/// 删除工作区子目录
+#[tauri::command]
+pub fn delete_workspace_subdir(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    dir_name: String,
+) -> Result<(), String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    workspace::delete_subdir(&app_handle, dir, &dir_name)
+}
+
+/// 移动工作区文件到目标目录
+#[tauri::command]
+pub fn move_workspace_file(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    file_id: String,
+    target_dir: String,
+) -> Result<(), String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    workspace::move_file_to_dir(&app_handle, dir, &file_id, &target_dir)
 }
 
 /// 生成工作区文件 ID

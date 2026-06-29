@@ -211,9 +211,9 @@ fn effective_max_tokens(config: &AIConfig) -> u32 {
 }
 
 /// 构建 AI 请求中使用的工具定义列表（OpenAI 函数调用格式）
-fn build_openai_tools() -> Vec<Value> {
+fn build_openai_tools(app_handle: Option<&tauri::AppHandle>) -> Vec<Value> {
     let tools = tools::get_tool_definitions();
-    tools
+    let mut result: Vec<Value> = tools
         .iter()
         .map(|tool| {
             json!({
@@ -225,7 +225,25 @@ fn build_openai_tools() -> Vec<Value> {
                 }
             })
         })
-        .collect()
+        .collect();
+
+    // 追加动态技能工具
+    if let Some(handle) = app_handle {
+        if let Ok(skill_tools) = tools::get_skill_tools(handle) {
+            for st in skill_tools {
+                result.push(json!({
+                    "type": "function",
+                    "function": {
+                        "name": st["name"],
+                        "description": st["description"],
+                        "parameters": st["inputSchema"],
+                    }
+                }));
+            }
+        }
+    }
+
+    result
 }
 
 /// 调用 AI LLM（OpenAI 兼容 API）
@@ -257,7 +275,7 @@ pub fn call_llm(config: &AIConfig, messages: &[ChatMessage]) -> Result<ChatMessa
     let api_messages = build_api_messages(config, messages);
 
     // 构建请求体
-    let openai_tools = build_openai_tools();
+    let openai_tools = build_openai_tools(None);
     let mut request_body = json!({
         "model": config.model,
         "messages": api_messages,
@@ -349,10 +367,11 @@ pub fn call_llm(config: &AIConfig, messages: &[ChatMessage]) -> Result<ChatMessa
 ///
 /// # 参数
 /// * `tool_calls` - 助手消息中的工具调用列表
+/// * `app_handle` - Tauri 应用句柄（用于执行技能相关工具）
 ///
 /// # 返回
 /// 工具执行结果消息列表（每条结果对应一个工具调用）
-pub fn execute_tool_call(tool_calls: &[ToolCall]) -> Vec<ChatMessage> {
+pub fn execute_tool_call(tool_calls: &[ToolCall], app_handle: Option<&tauri::AppHandle>) -> Vec<ChatMessage> {
     let mut results = Vec::new();
 
     for call in tool_calls {
@@ -362,7 +381,24 @@ pub fn execute_tool_call(tool_calls: &[ToolCall]) -> Vec<ChatMessage> {
         let args: Value = serde_json::from_str(&call.function.arguments).unwrap_or(json!({}));
 
         // 执行工具
-        let result = tools::execute_tool(tool_name, &args);
+        let result = if tool_name.starts_with("skill_") {
+            // 技能执行工具（skill_xxx）
+            if let Some(handle) = app_handle {
+                tools::execute_skill(handle, tool_name, &args)
+            } else {
+                Err("缺少 app_handle，无法执行技能".to_string())
+            }
+        } else if matches!(tool_name.as_str(), "skill_list" | "skill_create" | "skill_read" | "skill_delete") {
+            // 技能管理工具需要 app_handle
+            if let Some(handle) = app_handle {
+                crate::commands::execute_tool_internal(tool_name, &args, handle)
+            } else {
+                Err("缺少 app_handle，无法执行技能管理工具".to_string())
+            }
+        } else {
+            tools::execute_tool(tool_name, &args)
+        };
+
         let content = match result {
             Ok(value) => serde_json::to_string_pretty(&value).unwrap_or_default(),
             Err(e) => format!("工具执行失败: {}", e),
@@ -446,7 +482,7 @@ pub fn call_llm_streaming(
 
         // 构建请求体
         let api_messages = build_api_messages(config, &current_messages);
-        let openai_tools = build_openai_tools();
+        let openai_tools = build_openai_tools(Some(app_handle));
         let mut request_body = json!({
             "model": config.model,
             "messages": api_messages,
@@ -604,7 +640,7 @@ pub fn call_llm_streaming(
         }
 
         // 执行工具调用
-        let tool_results = execute_tool_call(&tool_calls);
+        let tool_results = execute_tool_call(&tool_calls, Some(app_handle));
 
         // 发送工具执行结果事件
         for tr in &tool_results {

@@ -205,9 +205,10 @@ pub fn get_tool_definitions() -> Vec<Value> {
             "创建一个新的技能文件。技能是 AI 的可调用能力模块，创建后 AI 可以在对话中按需调用。\
              \n\n注意：name 用英文小写字母和连字符，如 web-researcher、code-reviewer。\
              \n技能内容用 Markdown 格式，描述该技能的能力和使用方式。\
+             \n说明：如果用户想要中文技能名，也可以在创建后通过编辑器手动修改 frontmatter 的 name 字段。\
              \n\n创建完成后，AI 可以立即通过 skill_xxx 工具调用此技能。",
             &[
-                ("name", "string", "技能名称（英文小写+连字符，如 web-researcher）"),
+                ("name", "string", "技能名称（建议英文小写+连字符，如 web-researcher。如果用户希望用中文名，创建后可在编辑器中修改）"),
                 ("description", "string", "简短描述这个技能的用途（对 AI 可见）"),
                 ("content", "string", "技能定义内容（Markdown 格式），描述该技能的能力、规则和执行方式"),
             ], ["name", "description", "content"]),
