@@ -10,68 +10,77 @@ use std::process::Command;
 use serde_json::{json, Value};
 use walkdir::WalkDir;
 
+macro_rules! td {
+    ($name:expr, $desc:expr, $props:expr, [$($req:expr),* $(,)?]) => {
+        tool_def($name, $desc, props($props), vec![$($req),*])
+    };
+    ($name:expr, $desc:expr, $props:expr, []) => {
+        tool_def($name, $desc, props($props), vec![])
+    };
+}
+
 /// 获取所有工具定义列表
 pub fn get_tool_definitions() -> Vec<Value> {
     vec![
         // ─── 文件读取 ───
-        tool_def("read_local_file", "读取本地文件内容",
-            props(&[("path", "string", "要读取的文件路径（绝对路径）")], &["path"])),
+        td!("read_local_file", "读取本地文件内容",
+            &[("path", "string", "要读取的文件路径（绝对路径）")], ["path"]),
         // ─── 文件写入 ───
-        tool_def("write_new_file", "写入内容到文件（若文件已存在则覆盖）",
-            props(&[("path", "string", "文件路径（绝对路径）"), ("content", "string", "文件内容")], &["path", "content"])),
+        td!("write_new_file", "写入内容到文件（若文件已存在则覆盖）",
+            &[("path", "string", "文件路径（绝对路径）"), ("content", "string", "文件内容")], ["path", "content"]),
         // ─── 文件编辑 ───
-        tool_def("edit_file", "编辑文件：精确查找替换指定字符串",
-            props(&[("path", "string", "文件路径"), ("old_text", "string", "要被替换的文本"), ("new_text", "string", "替换后的文本")], &["path", "old_text", "new_text"])),
+        td!("edit_file", "编辑文件：精确查找替换指定字符串",
+            &[("path", "string", "文件路径"), ("old_text", "string", "要被替换的文本"), ("new_text", "string", "替换后的文本")], ["path", "old_text", "new_text"]),
         // ─── 目录操作 ───
-        tool_def("create_directory", "创建目录（递归创建父目录）",
-            props(&[("path", "string", "目录路径（绝对路径）")], &["path"])),
-        tool_def("list_directory", "列出目录中的文件和子目录",
-            props(&[("path", "string", "要列出的目录路径（绝对路径）")], &["path"])),
+        td!("create_directory", "创建目录（递归创建父目录）",
+            &[("path", "string", "目录路径（绝对路径）")], ["path"]),
+        td!("list_directory", "列出目录中的文件和子目录",
+            &[("path", "string", "要列出的目录路径（绝对路径）")], ["path"]),
         // ─── 重命名/移动 ───
-        tool_def("rename_path", "重命名或移动文件/目录",
-            props(&[("old_path", "string", "原路径"), ("new_path", "string", "新路径")], &["old_path", "new_path"])),
+        td!("rename_path", "重命名或移动文件/目录",
+            &[("old_path", "string", "原路径"), ("new_path", "string", "新路径")], ["old_path", "new_path"]),
         // ─── 删除 ───
-        tool_def("delete_path", "删除文件或目录（目录递归删除）",
-            props(&[("path", "string", "要删除的路径")], &["path"])),
+        td!("delete_path", "删除文件或目录（目录递归删除）",
+            &[("path", "string", "要删除的路径")], ["path"]),
         // ─── 文件搜索 ───
-        tool_def("search_files", "按名称或内容搜索文件",
-            props(&[("directory", "string", "搜索起始目录"), ("pattern", "string", "搜索关键词"), ("mode", "string", "搜索模式: 'name'(按文件名) 或 'content'(按内容)")], &["directory", "pattern"])),
+        td!("search_files", "按名称或内容搜索文件",
+            &[("directory", "string", "搜索起始目录"), ("pattern", "string", "搜索关键词"), ("mode", "string", "搜索模式: 'name'(按文件名) 或 'content'(按内容)")], ["directory", "pattern"]),
         // ─── 下载 ───
-        tool_def("download_file", "从 URL 下载文件到本地",
-            props(&[("url", "string", "文件下载 URL"), ("destination", "string", "保存路径（绝对路径）")], &["url", "destination"])),
+        td!("download_file", "从 URL 下载文件到本地",
+            &[("url", "string", "文件下载 URL"), ("destination", "string", "保存路径（绝对路径）")], ["url", "destination"]),
         // ─── 打开文件/目录 ───
-        tool_def("open_path", "使用系统默认程序打开文件或目录",
-            props(&[("path", "string", "要打开的文件或目录路径")], &["path"])),
+        td!("open_path", "使用系统默认程序打开文件或目录",
+            &[("path", "string", "要打开的文件或目录路径")], ["path"]),
         // ─── 执行命令 ───
-        tool_def("run_command", "在终端中执行命令并返回输出",
-            props(&[("command", "string", "要执行的命令"), ("cwd", "string", "工作目录（可选）")], &["command"])),
+        td!("run_command", "在终端中执行命令并返回输出",
+            &[("command", "string", "要执行的命令"), ("cwd", "string", "工作目录（可选）")], ["command"]),
         // ─── 网络请求 ───
-        tool_def("fetch_url", "发起 HTTP 请求获取 URL 内容",
-            props(&[("url", "string", "请求 URL"), ("method", "string", "HTTP 方法 (GET/POST)，默认 GET"), ("body", "string", "请求体（POST 时使用）")], &["url"])),
+        td!("fetch_url", "发起 HTTP 请求获取 URL 内容",
+            &[("url", "string", "请求 URL"), ("method", "string", "HTTP 方法 (GET/POST)，默认 GET"), ("body", "string", "请求体（POST 时使用）")], ["url"]),
         // ─── 剪贴板 ───
-        tool_def("clipboard_read", "读取系统剪贴板文本内容",
-            props(&[], &[])),
-        tool_def("clipboard_write", "写入文本内容到系统剪贴板",
-            props(&[("text", "string", "要写入的文本")], &["text"])),
+        td!("clipboard_read", "读取系统剪贴板文本内容",
+            &[], []),
+        td!("clipboard_write", "写入文本内容到系统剪贴板",
+            &[("text", "string", "要写入的文本")], ["text"]),
         // ─── 系统信息 ───
-        tool_def("system_info", "获取系统信息（操作系统、主机名、CPU、内存、磁盘等）",
-            props(&[], &[])),
+        td!("system_info", "获取系统信息（操作系统、主机名、CPU、内存、磁盘等）",
+            &[], []),
         // ─── 进程列表 ───
-        tool_def("list_processes", "列出正在运行的进程（可按名称过滤）",
-            props(&[("name_filter", "string", "进程名过滤关键词（可选）")], &[])),
+        td!("list_processes", "列出正在运行的进程（可按名称过滤）",
+            &[("name_filter", "string", "进程名过滤关键词（可选）")], []),
         // ─── 窗口列表 ───
-        tool_def("list_windows", "列出当前打开的窗口",
-            props(&[], &[])),
+        td!("list_windows", "列出当前打开的窗口",
+            &[], []),
         // ─── 截屏 ───
-        tool_def("capture_screen", "截取屏幕并保存为图片",
-            props(&[("save_path", "string", "截图保存路径（PNG 格式）")], &["save_path"])),
+        td!("capture_screen", "截取屏幕并保存为图片",
+            &[("save_path", "string", "截图保存路径（PNG 格式）")], ["save_path"]),
         // ─── 系统通知 ───
-        tool_def("system_notify", "发送系统通知",
-            props(&[("title", "string", "通知标题"), ("message", "string", "通知内容")], &["title", "message"])),
+        td!("system_notify", "发送系统通知",
+            &[("title", "string", "通知标题"), ("message", "string", "通知内容")], ["title", "message"]),
     ]
 }
 
-fn tool_def(name: &str, description: &str, props: Value, required: &[&str]) -> Value {
+fn tool_def(name: &str, description: &str, props: Value, required: Vec<&str>) -> Value {
     json!({
         "name": name,
         "description": description,
@@ -83,7 +92,7 @@ fn tool_def(name: &str, description: &str, props: Value, required: &[&str]) -> V
     })
 }
 
-fn props(entries: &[(&str, &str, &str)], _required: &[&str]) -> Value {
+fn props(entries: &[(&str, &str, &str)]) -> Value {
     let map: serde_json::Map<String, Value> = entries
         .iter()
         .map(|(k, typ, desc)| {
