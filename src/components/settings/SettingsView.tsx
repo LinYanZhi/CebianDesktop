@@ -1,12 +1,11 @@
 import { useState, useRef, useEffect } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowLeft, Bot, Key, MessageSquare, FileText, Puzzle, Plug,
-  DatabaseBackup, HardDrive, Sliders, Info, Eye, EyeOff, Save, Unplug, Plus, Trash2, Download, Upload, Globe, Check
+  DatabaseBackup, HardDrive, Sliders, Info, Eye, EyeOff, Save, Unplug, Plus, Trash2, Download, Upload
 } from "lucide-react";
 import { toast } from "sonner";
 import type { AIConfig, ProviderInfo } from "../../lib/types";
-import { listPrompts, savePrompt, deletePrompt, createPromptTemplate } from "../../lib/prompts";
-import type { Prompt } from "../../lib/prompts";
 import { loadMcpConfig, saveMcpConfig, connectMcpServer, disconnectMcpServer } from "../../lib/mcp";
 import type { McpServerConfig } from "../../lib/mcp";
 import {
@@ -20,7 +19,6 @@ import {
   importWorkspaceFileContent,
 } from "../../lib/workspace";
 import type { WorkspaceFile } from "../../lib/workspace";
-import { useI18n } from "../../lib/i18n";
 
 interface SettingsViewProps {
   config: AIConfig;
@@ -49,7 +47,6 @@ const NAV_ITEMS: NavItem[] = [
   { id: "backup", label: "备份与恢复", icon: DatabaseBackup },
   { id: "storage", label: "文件系统", icon: HardDrive },
   { id: "advanced", label: "高级", icon: Sliders },
-  { id: "language", label: "语言", icon: Globe },
   { id: "about", label: "关于", icon: Info },
 ];
 
@@ -210,81 +207,107 @@ function InstructionsSection({ config, onChange }: { config: AIConfig; onChange:
 }
 
 function PromptsSection() {
-  const [prompts, setPrompts] = useState<Prompt[]>([]);
+  const [prompts, setPrompts] = useState<WorkspaceFile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Prompt | null>(null);
+  const [editing, setEditing] = useState<WorkspaceFile | null>(null);
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; fileId?: string } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 加载提示词列表
   const load = async () => {
-    const list = await listPrompts();
+    const list = await listWorkspaceFiles("prompts");
     setPrompts(list);
   };
   useEffect(() => { load(); }, []);
 
-  // 选中一个 prompt
-  const selectPrompt = async (id: string) => {
-    if (dirty) {
-      toast.warning("请先保存当前编辑的提示词");
-      return;
-    }
+  const selectFile = (id: string) => {
     setSelectedId(id);
-    const p = prompts.find(p => p.id === id);
-    setEditing(p ? { ...p } : null);
+    const file = prompts.find(p => p.id === id);
+    if (file) setEditing({ ...file });
     setDirty(false);
   };
 
-  // 新建
   const handleNew = async () => {
-    if (dirty) {
-      toast.warning("请先保存当前编辑的提示词");
-      return;
-    }
-    const blank = await createPromptTemplate();
-    setEditing(blank);
-    setSelectedId(blank.id);
-    setDirty(true);
+    if (dirty) { toast.warning("请先保存当前编辑"); return; }
+    const id = await generateWorkspaceId();
+    await writeWorkspaceFile("prompts", id, "新提示词", "", "");
+    await load();
+    setSelectedId(id);
+    const file = prompts.find(p => p.id === id);
+    if (file) setEditing({ ...file });
+    setDirty(false);
   };
 
-  // 保存
   const handleSave = async () => {
     if (!editing) return;
-    if (!editing.name.trim()) {
-      toast.error("请输入提示词名称");
-      return;
-    }
-    if (!editing.content.trim()) {
-      toast.error("请输入提示词内容");
-      return;
-    }
+    if (!editing.name.trim()) { toast.error("请输入提示词名称"); return; }
     setLoading(true);
     try {
-      await savePrompt(editing);
+      await writeWorkspaceFile("prompts", editing.id, editing.name, editing.description, editing.content);
       toast.success("保存成功");
       setDirty(false);
       await load();
       setSelectedId(editing.id);
     } catch (e: any) {
       toast.error("保存失败: " + (e?.toString() || "未知错误"));
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
-  // 删除
-  const handleDelete = async () => {
-    if (!editing) return;
+  const handleDelete = async (id: string) => {
     try {
-      await deletePrompt(editing.id);
+      await deleteWorkspaceFile("prompts", id);
       toast.success("已删除");
-      setSelectedId(null);
-      setEditing(null);
-      setDirty(false);
+      if (selectedId === id) { setSelectedId(null); setEditing(null); setDirty(false); }
       await load();
     } catch (e: any) {
       toast.error("删除失败: " + (e?.toString() || "未知错误"));
     }
+  };
+
+  const handleRename = async (id: string, newName: string) => {
+    if (!newName.trim()) return;
+    const file = prompts.find(p => p.id === id);
+    if (!file) return;
+    await writeWorkspaceFile("prompts", id, newName.trim(), file.description, file.content);
+    await load();
+    if (editing?.id === id) setEditing({ ...editing, name: newName.trim() });
+    setDirty(true);
+  };
+
+  const handleExportFile = async (id: string) => {
+    try {
+      const raw = await exportWorkspaceFileContent("prompts", id);
+      const file = prompts.find(p => p.id === id);
+      const filename = file?.filename || `${id}.md`;
+      const blob = new Blob([raw], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+      toast.success("导出成功");
+    } catch (e: any) {
+      toast.error("导出失败: " + (e?.toString() || "未知错误"));
+    }
+  };
+
+  const handleExportAll = async () => {
+    for (const p of prompts) await handleExportFile(p.id);
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      await importWorkspaceFileContent("prompts", text);
+      toast.success("导入成功");
+      await load();
+    } catch (e: any) {
+      toast.error("导入失败: " + (e?.toString() || "未知错误"));
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   return (
@@ -295,104 +318,159 @@ function PromptsSection() {
         模板变量：<code className="text-xs bg-muted px-1 rounded">{`{{date}}`}</code> <code className="text-xs bg-muted px-1 rounded">{`{{time}}`}</code> <code className="text-xs bg-muted px-1 rounded">{`{{clipboard}}`}</code>
       </p>
 
-      <div className="flex gap-4 h-[400px]">
-        {/* 左侧列表 */}
-        <div className="w-56 shrink-0 flex flex-col gap-2">
-          <button onClick={handleNew}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-input text-sm text-muted-foreground hover:text-foreground hover:border-ring transition-colors"
-          >
-            <Plus size={14} />
-            新建提示词
-          </button>
-          <div className="flex-1 overflow-y-auto space-y-0.5 border border-border rounded-lg p-1">
+      <div className="flex items-center gap-2 mb-4">
+        <button onClick={handleNew}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-input text-xs text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
+          <Plus size={13} /> 新建
+        </button>
+        <div className="w-px h-4 bg-border" />
+        <button onClick={handleExportAll} disabled={prompts.length === 0}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-input text-xs text-muted-foreground hover:text-foreground hover:border-ring transition-colors disabled:opacity-30">
+          <Download size={13} /> 导出全部
+        </button>
+        <button onClick={() => fileInputRef.current?.click()}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-input text-xs text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
+          <Upload size={13} /> 导入
+        </button>
+        <input ref={fileInputRef} type="file" accept=".md" onChange={handleImport} className="hidden" />
+      </div>
+
+      <div className="flex gap-0 h-[420px] border border-border rounded-lg overflow-hidden">
+        <div className="w-52 shrink-0 border-r border-border bg-card flex flex-col">
+          <div className="flex items-center gap-1 px-3 py-2 border-b border-border">
+            <FileText size={12} className="text-muted-foreground" />
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">prompts/</span>
+            <span className="text-[10px] text-muted-foreground/60">({prompts.length})</span>
+          </div>
+          <div className="flex-1 overflow-y-auto p-1 space-y-0.5"
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setCtxMenu({ x: e.clientX, y: e.clientY });
+            }}>
             {prompts.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-8">暂无提示词</p>
+              <p className="text-[11px] text-muted-foreground text-center py-8">空目录</p>
             ) : (
               prompts.map(p => (
-                <button key={p.id}
-                  onClick={() => selectPrompt(p.id)}
-                  className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                    selectedId === p.id
-                      ? "bg-accent text-foreground font-medium"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                  }`}
-                >
-                  <div className="truncate">{p.name || "(未命名)"}</div>
-                  {p.description && (
-                    <div className="text-[10px] text-muted-foreground truncate mt-0.5">{p.description}</div>
-                  )}
-                </button>
+                <div key={p.id}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setCtxMenu({ x: e.clientX, y: e.clientY, fileId: p.id });
+                  }}>
+                  <button onClick={() => selectFile(p.id)}
+                    className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs transition-colors text-left ${
+                      selectedId === p.id
+                        ? "bg-accent text-foreground"
+                        : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                    }`}
+                    title={p.filename}>
+                    <FileText size={12} className="shrink-0 opacity-60" />
+                    <span className="truncate">{p.name || p.id}</span>
+                  </button>
+                </div>
               ))
             )}
           </div>
         </div>
 
-        {/* 右侧编辑区 */}
-        <div className="flex-1 flex flex-col border border-border rounded-lg p-4 overflow-y-auto">
-          {!editing ? (
-            <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-              请选择或创建一个提示词
+        {!editing ? (
+          <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground bg-background">
+            <div className="text-center">
+              <FileText size={32} className="mx-auto mb-2 opacity-20" />
+              <p>选择或新建一个提示词文件</p>
             </div>
-          ) : (
-            <div className="space-y-4">
-              {/* 名称 */}
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">名称</label>
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col bg-background min-w-0">
+            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border bg-muted/30 shrink-0">
+              <FileText size={12} className="text-primary shrink-0" />
+              {renaming === editing.id ? (
+                <input type="text" value={renameValue}
+                  autoFocus
+                  onBlur={() => setRenaming(null)}
+                  onKeyDown={async (e) => {
+                    if (e.key === "Enter") { await handleRename(editing.id, renameValue); setRenaming(null); }
+                    if (e.key === "Escape") setRenaming(null);
+                  }}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  className="flex-1 text-xs bg-background border border-input rounded px-1.5 py-0.5 outline-none focus:border-ring" />
+              ) : (
+                <span className="text-xs font-medium text-foreground truncate">{editing.filename}</span>
+              )}
+              <span className="text-[10px] text-muted-foreground/60 ml-auto shrink-0">
+                {editing.name ? `${editing.name} — ` : ""}{editing.description || "无描述"}
+              </span>
+            </div>
+
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              <div className="flex items-center gap-2 px-4 pt-3 pb-1">
                 <input type="text" value={editing.name}
                   onChange={(e) => { setEditing({ ...editing, name: e.target.value }); setDirty(true); }}
-                  placeholder="如 translate-selection"
-                  className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring"
-                />
-              </div>
-
-              {/* 描述 */}
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">描述</label>
+                  placeholder="name: 提示词名称"
+                  className="flex-1 text-xs bg-muted/50 border border-border/50 rounded px-2 py-1 font-mono outline-none focus:border-ring/50 placeholder:text-muted-foreground/30" />
                 <input type="text" value={editing.description}
                   onChange={(e) => { setEditing({ ...editing, description: e.target.value }); setDirty(true); }}
-                  placeholder="简短描述这个提示词的用途"
-                  className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring"
-                />
+                  placeholder="description: 简短描述"
+                  className="flex-1 text-xs bg-muted/50 border border-border/50 rounded px-2 py-1 font-mono outline-none focus:border-ring/50 placeholder:text-muted-foreground/30" />
               </div>
-
-              {/* 内容 */}
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">内容</label>
+              <div className="px-4 pb-1">
+                <div className="text-[10px] text-muted-foreground/40 font-mono border-b border-border/30 pb-1">--- frontmatter end ---</div>
+              </div>
+              <div className="flex-1 min-h-0 px-4 pb-3">
                 <textarea value={editing.content}
                   onChange={(e) => { setEditing({ ...editing, content: e.target.value }); setDirty(true); }}
-                  placeholder="输入提示词正文，支持 {{date}} {{time}} {{clipboard}} 等模板变量"
-                  rows={10}
-                  className="w-full bg-background border border-input rounded-lg p-3 text-sm outline-none focus:border-ring resize-none font-mono"
-                />
-              </div>
-
-              {/* 操作按钮 */}
-              <div className="flex items-center gap-3 pt-2">
-                <button onClick={handleSave} disabled={loading || !dirty}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Save size={14} />
-                  {loading ? "保存中..." : "保存"}
-                </button>
-                <button onClick={handleDelete}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-destructive/10 text-destructive rounded-lg text-xs font-medium hover:bg-destructive/20 border border-destructive/30"
-                >
-                  <Trash2 size={14} />
-                  删除
-                </button>
-                {dirty && (
-                  <span className="text-xs text-amber-500 ml-2">有未保存的修改</span>
-                )}
+                  placeholder="在此编写提示词内容（支持 {{date}} {{time}} {{clipboard}} 模板变量）..."
+                  className="w-full h-full bg-muted/20 border border-border/30 rounded-lg p-3 text-xs font-mono leading-relaxed outline-none focus:border-ring/50 resize-none placeholder:text-muted-foreground/20" />
               </div>
             </div>
-          )}
-        </div>
+
+            <div className="flex items-center gap-2 px-4 py-1.5 border-t border-border bg-muted/30 shrink-0">
+              <div className="flex items-center gap-2">
+                <button onClick={handleSave} disabled={loading || !dirty}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors">
+                  <Save size={11} /> {loading ? "保存中..." : "保存"}
+                </button>
+                <button onClick={() => handleExportFile(editing.id)}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-input text-[10px] text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
+                  <Download size={11} /> 导出
+                </button>
+                <button onClick={() => {
+                  if (window.confirm(`确认删除「${editing.name || editing.id}」？`)) handleDelete(editing.id);
+                }}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-destructive/30 text-[10px] text-destructive hover:bg-destructive/10 transition-colors">
+                  <Trash2 size={11} /> 删除
+                </button>
+              </div>
+              {dirty && <span className="text-[10px] text-amber-500 ml-auto">● 未保存</span>}
+            </div>
+          </div>
+        )}
       </div>
+
+      {ctxMenu && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y}
+          items={
+            ctxMenu.fileId
+              ? [
+                  { label: "重命名", icon: <FileText size={12} />, onClick: () => {
+                    const f = prompts.find(p => p.id === ctxMenu.fileId);
+                    if (f) { setRenaming(f.id); setRenameValue(f.name || f.id); }
+                  }},
+                  { label: "导出文件", icon: <Download size={12} />, onClick: () => handleExportFile(ctxMenu.fileId!) },
+                  { label: "删除文件", icon: <Trash2 size={12} />, danger: true, onClick: () => handleDelete(ctxMenu.fileId!) },
+                ]
+              : [
+                  { label: "新建提示词文件", icon: <Plus size={12} />, onClick: handleNew },
+                  { label: "导入文件", icon: <Upload size={12} />, onClick: () => fileInputRef.current?.click() },
+                ]
+          }
+          onClose={() => setCtxMenu(null)} />
+      )}
     </section>
   );
 }
 
-// ── 自定义右键菜单 ──────────────────────────────────
+// ── 自定义右键菜单（使用 Portal 避免祖先 CSS transform 干扰 fixed 定位） ──
 function ContextMenu({ x, y, items, onClose }: {
   x: number; y: number;
   items: { label: string; icon?: React.ReactNode; danger?: boolean; onClick: () => void }[];
@@ -407,9 +485,9 @@ function ContextMenu({ x, y, items, onClose }: {
     return () => document.removeEventListener("mousedown", handler);
   }, [onClose]);
 
-  return (
+  return createPortal(
     <div ref={ref}
-      className="fixed z-50 min-w-[140px] bg-popover border border-border rounded-lg shadow-xl py-1"
+      className="fixed z-[9999] min-w-[140px] bg-popover border border-border rounded-lg shadow-xl py-1"
       style={{ left: x, top: y }}>
       {items.map((item, i) => (
         <button key={i} onClick={() => { item.onClick(); onClose(); }}
@@ -418,7 +496,8 @@ function ContextMenu({ x, y, items, onClose }: {
           {item.label}
         </button>
       ))}
-    </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1056,35 +1135,6 @@ function AppearanceSection({ config, onChange }: { config: AIConfig; onChange: (
   );
 }
 
-function LanguageSection() {
-  const { lang, setLang, t } = useI18n();
-
-  const langs = [
-    { id: "zh" as const, label: "中文" },
-    { id: "en" as const, label: "English" },
-  ];
-
-  return (
-    <section>
-      <h2 className="text-base font-semibold mb-4">{t("language.title")}</h2>
-      <p className="text-sm text-muted-foreground mb-4">{t("language.label")}</p>
-      <div className="flex flex-col gap-2 max-w-xs">
-        {langs.map((l) => (
-          <button key={l.id} onClick={() => setLang(l.id)}
-            className={`flex items-center justify-between px-4 py-3 rounded-lg border text-sm transition-colors ${
-              lang === l.id
-                ? "border-primary bg-primary/5 text-foreground"
-                : "border-input text-muted-foreground hover:text-foreground hover:border-ring"
-            }`}>
-            <span>{l.label}</span>
-            {lang === l.id && <Check size={16} className="text-primary" />}
-          </button>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function AboutSection() {
   return (
     <section>
@@ -1211,7 +1261,6 @@ export default function SettingsView(props: SettingsViewProps) {
       case "backup": return <BackupSection />;
       case "storage": return <StorageSection />;
       case "advanced": return <AdvancedSection />;
-      case "language": return <LanguageSection />;
       case "about": return <AboutSection />;
       default: return null;
     }
