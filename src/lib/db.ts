@@ -116,9 +116,13 @@ export async function saveTheme(darkMode: boolean): Promise<void> {
 export async function loadTheme(): Promise<boolean> {
   try {
     const raw: AppConfigJson = await invoke("load_app_config");
-    return raw.theme !== "light";
+    if (raw.theme === "light") return false;
+    if (raw.theme === "dark") return true;
+    // 无存储偏好时，跟随系统
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
   } catch {
-    return true; // 默认深色
+    // 首次启动，跟随系统
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
   }
 }
 
