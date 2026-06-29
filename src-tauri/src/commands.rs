@@ -65,6 +65,54 @@ pub fn get_tools(mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle)
 /// 工具执行结果（JSON 格式）
 #[tauri::command]
 pub async fn execute_tool(name: String, args: Value, mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle) -> Result<Value, String> {
+    // 技能管理工具（需要 app_handle）
+    match name.as_str() {
+        "skill_list" => {
+            let files = workspace::list_files(&app_handle, workspace::WorkspaceDir::Skills)?;
+            let skills: Vec<Value> = files.into_iter().map(|f| json!({
+                "name": f.name,
+                "description": f.description,
+                "filename": f.filename,
+                "updated_at": f.updated_at,
+            })).collect();
+            return Ok(json!({"skills": skills, "count": skills.len()}));
+        }
+        "skill_create" => {
+            let name_val = args.get("name").and_then(|v| v.as_str()).ok_or("缺少 name 参数")?;
+            let description = args.get("description").and_then(|v| v.as_str()).unwrap_or("");
+            let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
+            let id = workspace::generate_id();
+            workspace::write_file(&app_handle, workspace::WorkspaceDir::Skills, &id, name_val, description, content)?;
+            return Ok(json!({
+                "id": id,
+                "name": name_val,
+                "filename": format!("{}.md", id),
+                "message": format!("技能「{}」已创建成功。AI 现在可以通过 skill_{} 工具调用此技能。", name_val, name_val.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect::<String>()),
+            }));
+        }
+        "skill_read" => {
+            let name_val = args.get("name").and_then(|v| v.as_str()).ok_or("缺少 name 参数")?;
+            let files = workspace::list_files(&app_handle, workspace::WorkspaceDir::Skills)?;
+            let skill = files.iter().find(|f| f.name == name_val)
+                .ok_or_else(|| format!("未找到技能「{}」", name_val))?;
+            return Ok(json!({
+                "name": skill.name,
+                "description": skill.description,
+                "filename": skill.filename,
+                "content": skill.content,
+            }));
+        }
+        "skill_delete" => {
+            let name_val = args.get("name").and_then(|v| v.as_str()).ok_or("缺少 name 参数")?;
+            let files = workspace::list_files(&app_handle, workspace::WorkspaceDir::Skills)?;
+            let skill = files.iter().find(|f| f.name == name_val)
+                .ok_or_else(|| format!("未找到技能「{}」", name_val))?;
+            workspace::delete_file(&app_handle, workspace::WorkspaceDir::Skills, &skill.id)?;
+            return Ok(json!({"message": format!("技能「{}」已删除", name_val)}));
+        }
+        _ => {}
+    }
+
     // MCP 工具（前缀 mcp:）路由到 MCP 客户端
     if name.starts_with("mcp:") {
         return mcp.call_tool(&name, &args).or_else(|e| Ok(json!({ "error": e })));

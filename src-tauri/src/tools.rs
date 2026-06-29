@@ -192,6 +192,38 @@ pub fn get_tool_definitions() -> Vec<Value> {
                 ("type", "string", "（旧版，仅配合 question 使用）问题类型：text / confirm / select"),
                 ("options", "string", "（旧版，仅配合 question+select 使用）JSON 选项数组"),
             ], []),
+
+        // ═══════════════════════════════════════════════════════════
+        //  技能管理
+        // ═══════════════════════════════════════════════════════════
+        td!("skill_list",
+            "列出工作区中所有已安装的技能。返回每个技能的名称、描述、文件名和更新时间。\
+             \n\n适合场景：查看有哪些可用技能、获取技能列表供用户选择。",
+            &[], []),
+
+        td!("skill_create",
+            "创建一个新的技能文件。技能是 AI 的可调用能力模块，创建后 AI 可以在对话中按需调用。\
+             \n\n注意：name 用英文小写字母和连字符，如 web-researcher、code-reviewer。\
+             \n技能内容用 Markdown 格式，描述该技能的能力和使用方式。\
+             \n\n创建完成后，AI 可以立即通过 skill_xxx 工具调用此技能。",
+            &[
+                ("name", "string", "技能名称（英文小写+连字符，如 web-researcher）"),
+                ("description", "string", "简短描述这个技能的用途（对 AI 可见）"),
+                ("content", "string", "技能定义内容（Markdown 格式），描述该技能的能力、规则和执行方式"),
+            ], ["name", "description", "content"]),
+
+        td!("skill_read",
+            "读取指定技能的完整定义内容。返回技能的名称、描述、文件名和 Markdown 内容。\
+             \n\n适合场景：查看某个技能的具体实现方式、编辑前获取当前内容。",
+            &[
+                ("name", "string", "技能名称（如 web-researcher）"),
+            ], ["name"]),
+
+        td!("skill_delete",
+            "从工作区中彻底删除一个技能文件。注意：此操作不可撤销。",
+            &[
+                ("name", "string", "要删除的技能名称"),
+            ], ["name"]),
     ]
 }
 
