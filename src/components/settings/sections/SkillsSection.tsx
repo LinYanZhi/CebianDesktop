@@ -661,10 +661,10 @@ export function SkillsSection() {
                       </div>
                     ) : isDir(s) ? (
                       // ── 目录项 ──
-                      <div data-dir-id={s.id}
+                      <div data-dir-id={s.id} tabIndex={-1}
                         onClick={(e) => { toggleDir(s.id); toggleSelect(s.filename, e.ctrlKey || e.metaKey, e.shiftKey); setCurrentDir(s.id); }}
                         onPointerDown={(e) => handlePointerDown(e, s.filename)}
-                        className={`flex items-center px-2.5 py-1.5 rounded-md text-xs cursor-pointer transition-colors group ${
+                        className={`flex items-center px-2.5 py-1.5 rounded-md text-xs cursor-pointer transition-colors group focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
                           dragOverDir === s.id ? 'bg-accent ring-1 ring-primary' : selected ? 'bg-accent/70' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
                         }`}
                         style={{ paddingLeft: 8 + depth * 16 }}>
@@ -681,10 +681,10 @@ export function SkillsSection() {
                       </div>
                     ) : (
                       // ── 文件项 ──
-                      <div
+                      <div tabIndex={-1}
                         onClick={(e) => { toggleSelect(s.filename, e.ctrlKey || e.metaKey, e.shiftKey); selectFile(s.id); setCurrentDir(dirOf(s)); }}
                         onPointerDown={(e) => handlePointerDown(e, s.filename)}
-                        className={`flex items-center px-2.5 py-1.5 rounded-md text-xs cursor-pointer transition-colors ${
+                        className={`flex items-center px-2.5 py-1.5 rounded-md text-xs cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
                           selected ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
                         }`}
                         style={{ paddingLeft: 8 + depth * 16 }}

@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* highlight.js 背景透明 */
+.hljs { background: transparent !important; }
+
 /* ===== 全局 ===== */
 html, body, #root {
   width: 100%;

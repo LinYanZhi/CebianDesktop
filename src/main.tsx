@@ -4,6 +4,7 @@ import { Toaster } from "sonner";
 import App from "./App";
 import { I18nProvider } from "./lib/i18n";
 import "./index.css";
+import "highlight.js/styles/github-dark-dimmed.css";
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
