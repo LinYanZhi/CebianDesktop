@@ -684,7 +684,7 @@ export default function App() {
       <div className="flex-1 flex overflow-hidden">
         {/* 历史面板：仅对话模式可用 */}
          {currentView === "chat" && (<>
-        <div className={`shrink-0 border-r bg-card flex flex-col overflow-hidden transition-[width] duration-200 ease-out ${showHistory ? '' : 'w-0 !duration-200'}`}
+        <div className={`shrink-0 border-r bg-card flex flex-col overflow-hidden transition-[width] duration-200 ease-out ${showHistory ? '' : 'w-0 border-r-0 !duration-200'}`}
           style={{
             width: showHistory ? historyWidth : 0,
             borderColor: darkMode ? "hsl(220,15%,25%)" : "hsl(20,6%,82%)",
