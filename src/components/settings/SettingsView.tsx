@@ -3,6 +3,7 @@ import {
   ArrowLeft, Bot, Key, MessageSquare, FileText, Puzzle, Plug,
   DatabaseBackup, HardDrive, Sliders, Info, Eye, EyeOff, Save, Unplug
 } from "lucide-react";
+import { toast } from "sonner";
 import type { AIConfig, ProviderInfo } from "../../lib/types";
 
 interface SettingsViewProps {
@@ -51,22 +52,73 @@ function ProvidersSection({ config, onChange }: { config: AIConfig; onChange: (c
   const handleSave = async (provider: ProviderInfo) => {
     const trimmedKey = provider.api_key.trim();
     if (!trimmedKey) return;
+    if (saving[provider.id]) return;
+
     setSaving(s => ({ ...s, [provider.id]: true }));
-    // 立即一次性更新所有字段
-    onChange({
-      ...config,
-      providers: config.providers.map(p =>
-        p.id === provider.id
-          ? { ...p, api_key: trimmedKey, connected: true }
-          : p
-      ),
-      activeProviderId: provider.id,
-    });
-    setSaving(s => ({ ...s, [provider.id]: false }));
+
+    try {
+      // 发送一条测试消息验证 API Key
+      const verifyModel = provider.selectedModel || provider.models[0];
+      const endpoint = provider.endpoint.trim().replace(/\/$/, "");
+
+      const resp = await fetch(`${endpoint}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${trimmedKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: verifyModel,
+          messages: [{ role: "user", content: "Reply only: ok" }],
+          max_tokens: 5,
+        }),
+        signal: AbortSignal.timeout(15000),
+      });
+
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "");
+        throw new Error(`HTTP ${resp.status}${body ? ` - ${body.slice(0, 200)}` : ""}`);
+      }
+
+      const data = await resp.json();
+      const text = data.choices?.[0]?.message?.content ?? "";
+      if (!text.toLowerCase().includes("ok")) {
+        throw new Error("回复内容不符合预期");
+      }
+
+      // 验证通过
+      onChange({
+        ...config,
+        providers: config.providers.map(p =>
+          p.id === provider.id
+            ? { ...p, api_key: trimmedKey, connected: true }
+            : p
+        ),
+        activeProviderId: provider.id,
+      });
+      toast.success(`${provider.name} 连接成功`);
+    } catch (err: any) {
+      // 验证失败，但仍保存 key（下次可重试）
+      const reason = err instanceof Error ? err.message : "未知错误";
+      console.error(`[Verify] ${provider.name}:`, reason);
+      onChange({
+        ...config,
+        providers: config.providers.map(p =>
+          p.id === provider.id
+            ? { ...p, api_key: trimmedKey, connected: false }
+            : p
+        ),
+      });
+      toast.warning(`${provider.name} 验证失败，已保存密钥`, {
+        description: reason,
+      });
+    } finally {
+      setSaving(s => ({ ...s, [provider.id]: false }));
+    }
   };
 
   const handleDisconnect = (provider: ProviderInfo) => {
-    updateProvider(provider.id, { connected: false, api_key: "" });
+    updateProvider(provider.id, { connected: false });
   };
 
   const statusBadge = (provider: ProviderInfo) => {
