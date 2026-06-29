@@ -875,7 +875,9 @@ const MarkdownRenderer = memo(function MarkdownRenderer({ content }: { content: 
         components={{
           pre: ({ node, children }) => <CodeBlock node={node}>{children}</CodeBlock>,
           code: ({ className, children, ...props }) => {
-            const isBlock = className?.startsWith("language-");
+            // rehype-highlight 会加 className="hljs language-xxx"
+            // 不能用 startsWith 因为 "hljs " 在前面
+            const isBlock = !!className && /(?:^|\s)(?:hljs|language-)/.test(className);
             if (isBlock) return <code className={className} {...props}>{children}</code>;
             return (
               <code className="bg-accent/50 text-accent-foreground px-1.5 py-0.5 rounded text-sm font-mono" {...props}>
