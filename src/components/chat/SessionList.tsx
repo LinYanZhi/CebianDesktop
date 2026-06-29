@@ -27,12 +27,12 @@ export default function SessionList({
   onDelete,
 }: SessionListProps) {
   return (
-    <div className="flex flex-col h-full bg-gray-900/40">
+    <div className="flex flex-col h-full bg-card/40">
       {/* 新建对话按钮 */}
       <div className="p-3">
         <button
           onClick={onNew}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-gray-600/50 text-gray-400 hover:text-gray-200 hover:border-gray-500/50 hover:bg-gray-800/50 transition-all text-sm"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-border/50 text-muted-foreground hover:text-foreground hover:border-border hover:bg-accent/50 transition-all text-sm"
         >
           <Plus size={16} />
           <span>新建对话</span>
@@ -42,7 +42,7 @@ export default function SessionList({
       {/* 对话列表 */}
       <div className="flex-1 overflow-y-auto px-2 pb-2 space-y-1">
         {conversations.length === 0 && (
-          <p className="text-center text-gray-600 text-xs py-8 select-none">暂无对话</p>
+          <p className="text-center text-muted-foreground/40 text-xs py-8 select-none">暂无对话</p>
         )}
 
         {conversations.map((conv) => {
@@ -52,24 +52,24 @@ export default function SessionList({
               key={conv.id}
               className={`group flex items-center gap-2 px-3 py-2.5 rounded-lg cursor-pointer transition-colors ${
                 isActive
-                  ? "bg-blue-600/20 border border-blue-500/30"
-                  : "hover:bg-gray-800/50 border border-transparent"
+                  ? "bg-primary/15 border border-primary/25"
+                  : "hover:bg-accent/40 border border-transparent"
               }`}
               onClick={() => onSelect(conv.id)}
             >
               <MessageSquare
                 size={16}
-                className={`flex-shrink-0 ${isActive ? "text-blue-400" : "text-gray-500"}`}
+                className={`flex-shrink-0 ${isActive ? "text-primary" : "text-muted-foreground"}`}
               />
               <div className="flex-1 min-w-0">
                 <p
                   className={`text-sm truncate ${
-                    isActive ? "text-blue-200" : "text-gray-300"
+                    isActive ? "text-foreground" : "text-foreground/70"
                   }`}
                 >
                   {conv.title || "新对话"}
                 </p>
-                <p className="text-xs text-gray-600 mt-0.5">
+                <p className="text-xs text-muted-foreground/50 mt-0.5">
                   {formatDate(conv.updatedAt)}
                 </p>
               </div>
@@ -78,7 +78,7 @@ export default function SessionList({
                   e.stopPropagation();
                   onDelete(conv.id);
                 }}
-                className="flex-shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-red-500/20 hover:text-red-400 text-gray-600 transition-all"
+                className="flex-shrink-0 p-1 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive text-muted-foreground transition-all"
                 title="删除对话"
               >
                 <Trash2 size={14} />
