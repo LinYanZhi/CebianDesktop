@@ -92,6 +92,16 @@ export async function openWorkspaceDir(sub: WorkspaceSubDir): Promise<string> {
   return invoke("open_workspace_dir", { sub });
 }
 
+/** 在文件管理器中打开并定位到工作区中指定文件 */
+export async function openFileLocation(sub: WorkspaceSubDir, id: string): Promise<string> {
+  return invoke("open_file_location", { sub, id });
+}
+
+/** 获取工作区文件的绝对路径（不打开资源管理器） */
+export async function getWorkspaceFilePath(sub: WorkspaceSubDir, id: string): Promise<string> {
+  return invoke("get_workspace_file_path", { sub, id });
+}
+
 /** 在工作区子目录下创建子文件夹 */
 export async function createWorkspaceSubdir(sub: WorkspaceSubDir, dirName: string): Promise<void> {
   return invoke("create_workspace_subdir", { sub, dirName });
@@ -105,4 +115,29 @@ export async function deleteWorkspaceSubdir(sub: WorkspaceSubDir, dirName: strin
 /** 将工作区文件移动到目标目录（空字符串表示根目录） */
 export async function moveWorkspaceFile(sub: WorkspaceSubDir, fileId: string, targetDir: string): Promise<void> {
   return invoke("move_workspace_file", { sub, fileId, targetDir });
+}
+
+/** 将工作区子目录下指定文件导出为 ZIP（返回 base64 字符串） */
+export async function exportWorkspaceZip(sub: WorkspaceSubDir, ids: string[]): Promise<string> {
+  return invoke("export_workspace_zip", { sub, ids });
+}
+
+/** 从 ZIP(base64) 导入文件到工作区子目录，返回导入数量 */
+export async function importWorkspaceZip(sub: WorkspaceSubDir, data: string): Promise<number> {
+  return invoke("import_workspace_zip", { sub, data });
+}
+
+/** 从本地目录导入文件到工作区子目录，返回导入数量 */
+export async function importWorkspaceDirectory(sub: WorkspaceSubDir, dirPath: string): Promise<number> {
+  return invoke("import_workspace_directory", { sub, dirPath });
+}
+
+/** 将 ZIP 文件导出到指定路径 */
+export async function exportWorkspaceZipToPath(sub: WorkspaceSubDir, ids: string[], path: string): Promise<number> {
+  return invoke("export_workspace_zip_to_path", { sub, ids, path });
+}
+
+/** 从指定 ZIP 文件路径导入 */
+export async function importWorkspaceZipPath(sub: WorkspaceSubDir, zipPath: string): Promise<number> {
+  return invoke("import_workspace_zip_path", { sub, zipPath });
 }
