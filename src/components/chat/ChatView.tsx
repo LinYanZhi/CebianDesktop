@@ -1257,6 +1257,13 @@ export default function ChatView({
           {messages.map((msg, i) =>
             msg.role === "user" ? (
               <UserMessageBlock key={i} msg={msg} index={i} onRollback={handleRollback} />
+            ) : msg.compacted ? (
+              <div key={i} className="flex justify-center">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent/50 border border-border text-[10px] text-muted-foreground">
+                  <FileText size={10} />
+                  <span>上下文已压缩 — 早期对话已折叠为摘要，减少 token 消耗</span>
+                </div>
+              </div>
             ) : (
               <AgentMessageBlock key={i} msg={msg} isStreaming={loading && i === messages.length - 1}
                 isLast={i === messages.length - 1} onRetry={onRetry} />

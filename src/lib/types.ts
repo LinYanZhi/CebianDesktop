@@ -20,6 +20,8 @@ export interface ChatMessage {
   reasoning_content?: string;
   /** 此消息是否被用户中止生成 */
   cancelled?: boolean;
+  /** 此消息是否为上下文压缩摘要 */
+  compacted?: boolean;
   /** 模型返回的 token 用量 */
   usage?: {
     input: number;
@@ -98,6 +100,8 @@ export interface Conversation {
   messages: ChatMessage[];
   createdAt: number;
   updatedAt: number;
+  /** 最近一次上下文压缩的时间戳 */
+  compactedAt?: number;
 }
 
 export interface MCPServerStatus {
