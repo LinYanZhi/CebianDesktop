@@ -328,16 +328,18 @@ export function SkillsSection() {
     });
   };
 
+  const sectionRef = useRef<HTMLDivElement>(null);
+
   // ─── 快捷键 ────────────────────────────────────────────
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      // F2：重命名选中文件
-      if (e.key === "F2") {
+      // F2：只在技能面板内有焦点时生效（防止聊天页面误触）
+      if (e.key === "F2" && sectionRef.current?.contains(document.activeElement)) {
+        e.preventDefault();
         const selected = Array.from(selectedFilenames);
         if (selected.length === 1) {
           const f = skills.find(s => s.filename === selected[0]);
           if (f) {
-            e.preventDefault();
             setRenaming(f.id);
             setRenameValue(baseName(f));
           }
@@ -553,7 +555,7 @@ export function SkillsSection() {
   };
 
   return (
-    <section className="flex flex-col flex-1 min-h-0">
+    <section ref={sectionRef} className="flex flex-col flex-1 min-h-0">
       <h2 className="text-base font-semibold mb-3 shrink-0 sr-only">技能</h2>
 
       <div className="flex-1 flex min-h-0 bg-card overflow-hidden">
