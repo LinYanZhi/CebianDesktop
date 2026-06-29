@@ -1255,13 +1255,50 @@ function ChatInput({
   const [selectedPromptIdx, setSelectedPromptIdx] = useState(0);
 
   // ── Speech Recognition ──
-  const inputValueRef = useRef(inputValue);
-  inputValueRef.current = inputValue;
-  const baseTextRef = useRef(""); // 开始录音时的输入框内容，用于拼接语音识别结果
+  // 语音识别到的文本在 textarea 中的 range（start/end 字符索引）
+  // 每次 interim 更新时，替换这个 range 内的文本，而非覆盖整个 textarea
+  const voiceRangeRef = useRef<{start: number; end: number} | null>(null);
+  const lastVoiceTextRef = useRef("");
   const speech = useSpeechRecognition(
     undefined,
-    (text) => {
-      setInputValue(baseTextRef.current + text);
+    (speechText) => {
+      const el = textareaRef.current;
+      if (!el) return;
+
+      const currentValue = el.value;
+      const cursorPos = el.selectionStart;
+
+      let newValue: string;
+      let newCursorPos: number;
+
+      if (voiceRangeRef.current === null) {
+        // 首次语音结果：在光标位置插入
+        newValue = currentValue.slice(0, cursorPos) + speechText + currentValue.slice(cursorPos);
+        newCursorPos = cursorPos + speechText.length;
+        voiceRangeRef.current = { start: cursorPos, end: newCursorPos };
+      } else {
+        const { start, end } = voiceRangeRef.current;
+        // 检查语音 range 中的文本是否仍是上次的语音文本（用户可能手动编辑过）
+        if (start <= currentValue.length && currentValue.slice(start, Math.min(end, currentValue.length)) === lastVoiceTextRef.current) {
+          // range 有效：替换旧语音文本
+          newValue = currentValue.slice(0, start) + speechText + currentValue.slice(end);
+          newCursorPos = start + speechText.length;
+          voiceRangeRef.current = { start, end: newCursorPos };
+        } else {
+          // range 失效（用户编辑过）：在当前光标位置重新插入
+          newValue = currentValue.slice(0, cursorPos) + speechText + currentValue.slice(cursorPos);
+          newCursorPos = cursorPos + speechText.length;
+          voiceRangeRef.current = { start: cursorPos, end: newCursorPos };
+        }
+      }
+
+      lastVoiceTextRef.current = speechText;
+      setInputValue(newValue);
+
+      // React 重渲染后恢复光标到语音文本末尾
+      requestAnimationFrame(() => {
+        el.selectionStart = el.selectionEnd = newCursorPos;
+      });
     },
     "zh-CN",
   );
@@ -1506,7 +1543,8 @@ function ChatInput({
                     if (speech.listening) {
                       speech.stop();
                     } else {
-                      baseTextRef.current = inputValueRef.current;
+                      voiceRangeRef.current = null; // 重置语音 range，新语音从光标处开始
+                      lastVoiceTextRef.current = "";
                       speech.start();
                     }
                   }}
