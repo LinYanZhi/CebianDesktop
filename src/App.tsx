@@ -362,6 +362,7 @@ export default function App() {
   const [historyWidth, setHistoryWidth] = useState(280);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [ctxConv, setCtxConv] = useState<{ x: number; y: number; id: string } | null>(null);
   const unlistenRef = useRef<(() => void)[]>([]);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -1189,6 +1190,47 @@ export default function App() {
     if (e.key === "Escape") setRenamingId(null);
   }, [handleRenameSave]);
 
+  // 导出对话为 Markdown 文件
+  const handleExportConversation = useCallback((id: string) => {
+    const conv = conversations.find(c => c.id === id);
+    if (!conv) return;
+    let md = `# ${conv.title || "对话导出"}\n\n`;
+    md += `> 导出时间：${new Date().toLocaleString("zh-CN")}\n\n---\n\n`;
+    for (const msg of conv.messages) {
+      if (msg.role === "user") {
+        md += `## 用户\n\n${msg.content}\n\n`;
+      } else if (msg.role === "assistant") {
+        if (msg.tool_calls?.length) {
+          md += `## 助手\n\n${msg.content || ""}\n\n`;
+          for (const tc of msg.tool_calls) {
+            md += `### 调用工具：${tc.function.name}\n\n\`\`\`json\n${tc.function.arguments}\n\`\`\`\n\n`;
+          }
+        } else {
+          md += `## 助手\n\n${msg.content}\n\n`;
+        }
+      } else if (msg.role === "tool") {
+        md += `### 工具结果（${msg.name || "tool"}）\n\n\`\`\`\n${msg.content}\n\`\`\`\n\n`;
+      }
+    }
+    const blob = new Blob([md], { type: "text/markdown" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${conv.title || "对话"}.md`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setCtxConv(null);
+    toast.success("对话已导出");
+  }, [conversations]);
+
+  // 关闭右键菜单
+  useEffect(() => {
+    if (!ctxConv) return;
+    const close = () => setCtxConv(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, [ctxConv]);
+
   const formatTime = (ts: number) => {
     const d = new Date(ts);
     const now = new Date();
@@ -1274,6 +1316,7 @@ export default function App() {
               {[...conversations].reverse().map((conv) => (
                 <div key={conv.id}
                   onClick={() => handleSelectSession(conv.id)}
+                  onContextMenu={(e) => { e.preventDefault(); setCtxConv({ x: e.clientX, y: e.clientY, id: conv.id }); }}
                   className={`group flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer text-sm transition-colors ${
                     conv.id === currentSessionId
                       ? "bg-accent text-foreground"
@@ -1316,6 +1359,26 @@ export default function App() {
             </div>
           </div>
         </div>
+
+        {/* 对话右键菜单 */}
+        {ctxConv && (
+          <>
+            <div className="fixed inset-0 z-50" onClick={() => setCtxConv(null)} />
+            <div className="fixed z-50 w-36 bg-popover border border-border rounded-lg shadow-lg py-1 text-xs"
+              style={{ left: ctxConv.x, top: ctxConv.y }}>
+              <button onClick={() => { handleRenameStart(ctxConv.id, conversations.find(c => c.id === ctxConv.id)?.title || ""); setCtxConv(null); }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors text-left">
+                <span className="size-4 shrink-0 flex items-center justify-center text-[10px]">✎</span>
+                重命名
+              </button>
+              <button onClick={() => handleExportConversation(ctxConv.id)}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors text-left">
+                <span className="size-4 shrink-0 flex items-center justify-center text-[10px]">↓</span>
+                另存为
+              </button>
+            </div>
+          </>
+        )}
 
         {/* 拖拽手柄 */}
         {showHistory && (

@@ -328,6 +328,26 @@ export function SkillsSection() {
     });
   };
 
+  // ─── 快捷键 ────────────────────────────────────────────
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      // F2：重命名选中文件
+      if (e.key === "F2") {
+        const selected = Array.from(selectedFilenames);
+        if (selected.length === 1) {
+          const f = skills.find(s => s.filename === selected[0]);
+          if (f) {
+            e.preventDefault();
+            setRenaming(f.id);
+            setRenameValue(baseName(f));
+          }
+        }
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [selectedFilenames, skills]);
+
   // 自动聚焦输入框
   useEffect(() => {
     if (renaming) {
@@ -670,7 +690,7 @@ export function SkillsSection() {
                         <span className="w-4 shrink-0" />
                         {(() => { const fi = fileIcon(s.filename); const Icon = fi.icon; return <Icon size={14} className="w-[18px] shrink-0" />; })()}
                         <span className="w-2 shrink-0" />
-                        <span className="truncate flex-1 text-left">{s.name || baseName(s)}</span>
+                        <span className="truncate flex-1 text-left">{baseName(s)}</span>
                         {dirtyMap[s.id] && (
                           <span className="text-[10px] text-amber-500 shrink-0 leading-none">●</span>
                         )}
@@ -744,7 +764,7 @@ export function SkillsSection() {
                 ]
               : ctxMenu.fileId
               ? [
-                  { label: "重命名", icon: <FileText size={12} />, shortcut: "R", onClick: () => { const f = skills.find(s => s.id === ctxMenu.fileId); if (f) { setRenaming(f.id); setRenameValue(f.name || baseName(f)); } } },
+                  { label: "重命名", icon: <FileText size={12} />, shortcut: "R", onClick: () => { const f = skills.find(s => s.id === ctxMenu.fileId); if (f) { setRenaming(f.id); setRenameValue(baseName(f)); } } },
                   { label: "导出文件", icon: <Download size={12} />, onClick: () => handleExportFile(ctxMenu.fileId!) },
                   { label: "删除文件", icon: <Trash2 size={12} />, shortcut: "D", danger: true, onClick: () => handleDelete(ctxMenu.fileId!) },
                 ]
