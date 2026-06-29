@@ -295,6 +295,34 @@ pub fn delete_file(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str) -> Resul
         .map_err(|e| format!("删除文件失败: {}", e))
 }
 
+/// 重命名工作区文件（实际重命名磁盘上的文件）
+/// new_filename 可包含扩展名（如 myfile.js），否则默认 .md
+pub fn rename_file(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str, new_name: &str) -> Result<(), String> {
+    if new_name.is_empty() {
+        return Err("文件名不能为空".to_string());
+    }
+    if new_name.contains('/') || new_name.contains('\\') || new_name.contains('\0') {
+        return Err("文件名包含非法字符".to_string());
+    }
+    let dir = subdir_path(app, sub)?;
+    let old_path = dir.join(format!("{}.md", id));
+    // 如果 new_name 已有扩展名则直接使用，否则补 .md
+    let final_name = if new_name.contains('.') {
+        new_name.to_string()
+    } else {
+        format!("{}.md", new_name)
+    };
+    let new_path = dir.join(&final_name);
+    if !old_path.exists() {
+        return Err(format!("文件 '{}' 不存在", id));
+    }
+    if new_path.exists() {
+        return Err(format!("文件 '{}' 已存在", final_name));
+    }
+    fs::rename(&old_path, &new_path)
+        .map_err(|e| format!("重命名文件失败: {}", e))
+}
+
 /// 生成新文件 ID
 pub fn generate_id() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -303,6 +331,20 @@ pub fn generate_id() -> String {
         .unwrap_or_default()
         .as_millis();
     format!("{:x}", ts)
+}
+
+/// 在工作区子目录下创建子文件夹
+pub fn create_subdir(app: &tauri::AppHandle, sub: WorkspaceDir, dir_name: &str) -> Result<(), String> {
+    if dir_name.is_empty() {
+        return Err("文件夹名不能为空".to_string());
+    }
+    if dir_name.contains('/') || dir_name.contains('\\') || dir_name.contains('\0') {
+        return Err("文件夹名包含非法字符".to_string());
+    }
+    let dir = subdir_path(app, sub)?;
+    let new_dir = dir.join(dir_name);
+    fs::create_dir_all(&new_dir)
+        .map_err(|e| format!("创建文件夹失败: {}", e))
 }
 
 // ─── 备份与恢复 ──────────────────────────────────────────

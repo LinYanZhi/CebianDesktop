@@ -1,77 +1,119 @@
 import { useState, useRef, useEffect } from "react";
 import {
-  FileCode, Search, FilePlus, MoreHorizontal, Download, Upload, FolderOpen, Trash2, Plus, Save, Pencil, FileText,
+  FileCode, Search, FilePlus, FolderPlus, MoreHorizontal, Download, Upload, FolderOpen, Trash2, Plus, FileText,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
   listWorkspaceFiles,
   writeWorkspaceFile,
   deleteWorkspaceFile,
-  generateWorkspaceId,
+  renameWorkspaceFile,
   exportWorkspaceFileContent,
   importWorkspaceFileContent,
   openWorkspaceDir,
+  createWorkspaceSubdir,
 } from "../../../lib/workspace";
 import type { WorkspaceFile } from "../../../lib/workspace";
 import { CodeMirrorEditor } from "../../editor/CodeMirrorEditor";
 import { ContextMenu } from "../ContextMenu";
 
+/** 获取文件扩展名对应的图标和颜色 */
+function fileTypeInfo(filename: string): { label: string; color: string } {
+  if (filename.endsWith('.md')) return { label: 'md', color: 'text-blue-400 bg-blue-500/10 border-blue-500/30' };
+  if (filename.endsWith('.js') || filename.endsWith('.jsx')) return { label: 'js', color: 'text-yellow-400 bg-yellow-500/10 border-yellow-500/30' };
+  if (filename.endsWith('.ts') || filename.endsWith('.tsx')) return { label: 'ts', color: 'text-blue-500 bg-blue-500/10 border-blue-500/30' };
+  if (filename.endsWith('.yaml') || filename.endsWith('.yml')) return { label: 'yaml', color: 'text-purple-400 bg-purple-500/10 border-purple-500/30' };
+  if (filename.endsWith('.json')) return { label: 'json', color: 'text-green-400 bg-green-500/10 border-green-500/30' };
+  return { label: (filename.split('.').pop() || 'txt').toLowerCase(), color: 'text-muted-foreground bg-muted/50 border-border/50' };
+}
+
 export function SkillsSection() {
   const [skills, setSkills] = useState<WorkspaceFile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState<WorkspaceFile | null>(null);
-  const [dirty, setDirty] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [dirtyMap, setDirtyMap] = useState<Record<string, boolean>>({});
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [search, setSearch] = useState("");
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; fileId?: string } | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [leftWidth, setLeftWidth] = useState(240);
+  const [fontSize, setFontSize] = useState(13);
+  const [fontTip, setFontTip] = useState(false);
+  const fontTipTimer = useRef<ReturnType<typeof setTimeout>>();
   const draggingRef = useRef(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
     const list = await listWorkspaceFiles("skills");
     setSkills(list);
+    return list;
   };
   useEffect(() => { load(); }, []);
 
-  const filtered = skills.filter(s =>
-    !search || s.name.toLowerCase().includes(search.toLowerCase()) || s.id.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = skills
+    .filter(s =>
+      !search || s.filename.toLowerCase().includes(search.toLowerCase()) || s.name.toLowerCase().includes(search.toLowerCase())
+    )
+    .sort((a, b) => a.filename.localeCompare(b.filename));
+
+  // 自动聚焦重命名输入框
+  useEffect(() => {
+    if (renaming) {
+      // 延迟到 DOM 渲染完成
+      setTimeout(() => renameInputRef.current?.focus(), 10);
+    }
+  }, [renaming]);
 
   const selectFile = (id: string) => {
     setSelectedId(id);
     const file = skills.find(s => s.id === id);
     if (file) setEditing({ ...file });
-    setDirty(false);
+    // 不重置 dirtyMap — 未保存标记跨文件切换后仍保留
   };
 
   const handleNew = async () => {
-    if (dirty) { toast.warning("请先保存当前编辑"); return; }
-    const id = await generateWorkspaceId();
-    await writeWorkspaceFile("skills", id, "新技能", "", "");
-    await load();
-    setSelectedId(id);
-    const file = skills.find(s => s.id === id);
-    if (file) setEditing({ ...file });
-    setDirty(false);
+    if (Object.values(dirtyMap).some(v => v)) { toast.warning("请先保存当前编辑"); return; }
+    const name = "新技能";
+    // 用名称作为文件名，不同名自动加序号
+    const existingNames = new Set(skills.map(s => s.filename.replace(/\.md$/, '')));
+    let finalName = name;
+    let counter = 1;
+    while (existingNames.has(finalName)) {
+      counter++;
+      finalName = `${name}${counter}`;
+    }
+    await writeWorkspaceFile("skills", finalName, name, "", "");
+    const list = await load();
+    const file = list.find(s => s.id === finalName);
+    if (file) { setSelectedId(file.id); setEditing({ ...file }); }
+    setDirtyMap(prev => ({ ...prev, [finalName]: false }));
+  };
+
+  const handleNewFolder = async () => {
+    const name = prompt("请输入文件夹名称：", "新文件夹");
+    if (!name) return;
+    try {
+      await createWorkspaceSubdir("skills", name.trim());
+      toast.success(`文件夹「${name.trim()}」已创建`);
+    } catch (e: any) {
+      toast.error("创建文件夹失败: " + (e?.toString() || "未知错误"));
+    }
   };
 
   const handleSave = async () => {
     if (!editing) return;
     if (!editing.name.trim()) { toast.error("请输入技能名称"); return; }
-    setLoading(true);
     try {
       await writeWorkspaceFile("skills", editing.id, editing.name, editing.description, editing.content);
       toast.success("保存成功");
-      setDirty(false);
+      setDirtyMap(prev => ({ ...prev, [editing.id]: false }));
       await load();
       setSelectedId(editing.id);
     } catch (e: any) {
       toast.error("保存失败: " + (e?.toString() || "未知错误"));
-    } finally { setLoading(false); }
+    }
   };
 
   useEffect(() => {
@@ -86,7 +128,7 @@ export function SkillsSection() {
     try {
       await deleteWorkspaceFile("skills", id);
       toast.success("已删除");
-      if (selectedId === id) { setSelectedId(null); setEditing(null); setDirty(false); }
+      if (selectedId === id) { setSelectedId(null); setEditing(null); setDirtyMap(prev => ({ ...prev, [id]: false })); }
       await load();
     } catch (e: any) {
       toast.error("删除失败: " + (e?.toString() || "未知错误"));
@@ -97,10 +139,22 @@ export function SkillsSection() {
     if (!newName.trim()) return;
     const file = skills.find(s => s.id === id);
     if (!file) return;
-    await writeWorkspaceFile("skills", id, newName.trim(), file.description, file.content);
-    await load();
-    if (editing?.id === id) { setEditing({ ...editing, name: newName.trim() }); }
-    setDirty(true);
+    try {
+      // 用户可输入完整文件名（含后缀），也可只输入名称
+      let finalName = newName.trim();
+      // 不含后缀则补 .md
+      if (!finalName.includes('.')) finalName += '.md';
+      await renameWorkspaceFile("skills", id, finalName);
+      toast.success("重命名成功");
+      const list = await load();
+      const renamedFile = list.find(s => s.filename === finalName);
+      if (renamedFile) {
+        setSelectedId(renamedFile.id);
+        setEditing({ ...renamedFile });
+      }
+    } catch (e: any) {
+      toast.error("重命名失败: " + (e?.toString() || "未知错误"));
+    }
   };
 
   const handleExportFile = async (id: string) => {
@@ -158,15 +212,21 @@ export function SkillsSection() {
     document.addEventListener('mouseup', onUp);
   };
 
+  const showFontTip = () => {
+    setFontTip(true);
+    if (fontTipTimer.current) clearTimeout(fontTipTimer.current);
+    fontTipTimer.current = setTimeout(() => setFontTip(false), 1200);
+  };
+
   return (
     <section className="flex flex-col flex-1 min-h-0">
-      <h2 className="text-base font-semibold mb-3 shrink-0">技能</h2>
+      <h2 className="text-base font-semibold mb-3 shrink-0 sr-only">技能</h2>
 
-      <div className="flex-1 flex min-h-0 bg-card border border-border rounded-lg overflow-hidden">
+      <div className="flex-1 flex min-h-0 bg-card overflow-hidden">
         {/* ── 左侧：搜索 + 文件树 ── */}
         <div className="flex flex-col shrink-0 border-r border-border" style={{ width: leftWidth }}>
           {/* 搜索 + 操作按钮 */}
-          <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border shrink-0">
+          <div className="flex items-center gap-1 px-1 py-1 border-b border-border shrink-0">
             <div className="relative flex-1">
               <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground/50" />
               <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
@@ -177,6 +237,11 @@ export function SkillsSection() {
               className="flex items-center justify-center w-7 h-7 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0"
               title="新建技能文件">
               <FilePlus size={14} />
+            </button>
+            <button onClick={handleNewFolder}
+              className="flex items-center justify-center w-7 h-7 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0"
+              title="新建文件夹">
+              <FolderPlus size={14} />
             </button>
             <div className="relative">
               <button onClick={() => setMoreOpen(!moreOpen)}
@@ -212,22 +277,43 @@ export function SkillsSection() {
             {filtered.length === 0 ? (
               <p className="text-[11px] text-muted-foreground text-center py-8">{search ? "无匹配" : "空目录"}</p>
             ) : (
-              filtered.map(s => (
-                <div key={s.id}
-                  onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCtxMenu({ x: e.clientX, y: e.clientY, fileId: s.id }); }}>
-                  <button onClick={() => selectFile(s.id)}
-                    className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs transition-colors text-left group ${
-                      selectedId === s.id
-                        ? "bg-accent text-foreground"
-                        : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                    }`}
-                    title={s.filename}>
-                    <FileCode size={13} className="shrink-0 opacity-60" />
-                    <span className="truncate flex-1">{s.name || s.id}</span>
-                    <span className="text-[9px] text-muted-foreground/30 opacity-0 group-hover:opacity-100 transition-opacity">{s.id.slice(0, 6)}</span>
-                  </button>
-                </div>
-              ))
+              filtered.map(s => {
+                const ft = fileTypeInfo(s.filename);
+                return (
+                  <div key={s.id}
+                    onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCtxMenu({ x: e.clientX, y: e.clientY, fileId: s.id }); }}>
+                    {renaming === s.id ? (
+                      <div className="flex items-center gap-1.5 px-1.5 py-1">
+                        <input ref={renameInputRef} type="text" value={renameValue}
+                          onBlur={() => setRenaming(null)}
+                          onKeyDown={async (e) => {
+                            if (e.key === "Enter") { setRenaming(null); await handleRename(s.id, renameValue); }
+                            if (e.key === "Escape") setRenaming(null);
+                          }}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          className="flex-1 text-[11px] bg-background border border-ring rounded px-2 py-1 outline-none min-w-0"
+                          onClick={(e) => e.stopPropagation()} />
+                      </div>
+                    ) : (
+                      <button onClick={() => selectFile(s.id)}
+                        className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs transition-colors text-left group ${
+                          selectedId === s.id
+                            ? "bg-accent text-foreground"
+                            : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                        }`}
+                        title={s.filename}>
+                        <span className={`text-[8px] font-mono font-semibold uppercase px-1 py-0.5 rounded border shrink-0 ${ft.color}`}>
+                          {ft.label}
+                        </span>
+                        <span className="truncate flex-1 text-left">{s.filename}</span>
+                        {dirtyMap[s.id] && (
+                          <span className="text-[10px] text-amber-500 shrink-0 leading-none">●</span>
+                        )}
+                      </button>
+                    )}
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
@@ -246,78 +332,38 @@ export function SkillsSection() {
         ) : (
           <div className="flex-1 flex flex-col bg-background min-w-0">
             {/* 面包屑 + 文件路径 */}
-            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border bg-muted/20 shrink-0">
+            <div className="flex items-center gap-2 px-2 py-1 border-b border-border bg-muted/20 shrink-0">
               <div className="flex items-center gap-1 text-[11px] text-muted-foreground/70 font-mono truncate">
                 <span className="text-muted-foreground/40">workspace/skills/</span>
                 <span className="text-foreground/80">{editing.filename}</span>
               </div>
               <div className="flex-1" />
-              {renaming === editing.id ? (
-                <input type="text" value={renameValue} autoFocus
-                  onBlur={() => setRenaming(null)}
-                  onKeyDown={async (e) => {
-                    if (e.key === "Enter") { await handleRename(editing.id, renameValue); setRenaming(null); }
-                    if (e.key === "Escape") setRenaming(null);
-                  }}
-                  onChange={(e) => setRenameValue(e.target.value)}
-                  className="text-[11px] bg-background border border-input rounded px-1.5 py-0.5 w-28 outline-none focus:border-ring" />
-              ) : (
-                <button onClick={() => { setRenaming(editing.id); setRenameValue(editing.name || editing.id); }}
-                  className="text-[10px] text-muted-foreground/50 hover:text-foreground transition-colors shrink-0">
-                  <Pencil size={11} />
-                </button>
-              )}
               <span className="text-[9px] uppercase text-muted-foreground/30 font-mono border border-border/30 rounded px-1.5 py-0.5">
                 {editing.filename.endsWith('.md') ? 'md' : editing.filename.split('.').pop() || 'txt'}
               </span>
             </div>
 
-            {/* Frontmatter 编辑行 */}
-            <div className="flex items-center gap-2 px-4 pt-2 pb-1 shrink-0">
-              <input type="text" value={editing.name}
-                onChange={(e) => { setEditing({ ...editing, name: e.target.value }); setDirty(true); }}
-                placeholder="name: 技能名称"
-                className="flex-1 text-[11px] bg-transparent border border-border/30 rounded px-2 py-1 font-mono outline-none focus:border-ring/50 placeholder:text-muted-foreground/30" />
-              <input type="text" value={editing.description}
-                onChange={(e) => { setEditing({ ...editing, description: e.target.value }); setDirty(true); }}
-                placeholder="description: 简短描述"
-                className="flex-1 text-[11px] bg-transparent border border-border/30 rounded px-2 py-1 font-mono outline-none focus:border-ring/50 placeholder:text-muted-foreground/30" />
-            </div>
-            <div className="px-4 pb-1 shrink-0">
-              <div className="text-[9px] text-muted-foreground/30 font-mono border-b border-border/20 pb-1">--- frontmatter ---</div>
-            </div>
-
-            {/* CodeMirror 编辑器 */}
-            <div className="flex-1 min-h-0 px-4 pb-3">
-              <div className="h-full border border-border/20 rounded overflow-hidden">
-                <CodeMirrorEditor
-                  value={editing.content}
-                  onChange={(val) => { setEditing({ ...editing, content: val }); setDirty(true); }}
-                  language={editing.filename.endsWith('.js') || editing.filename.endsWith('.ts') ? 'javascript' : editing.filename.endsWith('.yaml') || editing.filename.endsWith('.yml') ? 'yaml' : 'markdown'}
-                  placeholder="在此编写技能定义（Markdown/代码格式）..."
-                />
+            {/* CodeMirror 编辑器 — 无内边距、无底部状态栏 */}
+            <div className="flex-1 min-h-0 relative"
+              onWheel={(e) => {
+                if (e.ctrlKey) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setFontSize(f => Math.max(10, Math.min(24, f - Math.sign(e.deltaY))));
+                  showFontTip();
+                }
+              }}>
+              <CodeMirrorEditor
+                value={editing.content}
+                onChange={(val) => { setEditing({ ...editing, content: val }); setDirtyMap(prev => ({ ...prev, [editing.id]: true })); }}
+                language={editing.filename.endsWith('.js') || editing.filename.endsWith('.ts') ? 'javascript' : editing.filename.endsWith('.yaml') || editing.filename.endsWith('.yml') ? 'yaml' : 'markdown'}
+                placeholder="在此编写技能定义（Markdown/代码格式）..."
+                fontSize={`${fontSize}px`}
+              />
+              {/* 字体大小浮动提示 */}
+              <div className={`absolute bottom-3 right-3 z-20 px-2.5 py-1 rounded-md bg-popover border border-border shadow-lg text-xs font-mono transition-opacity duration-200 pointer-events-none ${fontTip ? 'opacity-100' : 'opacity-0'}`}>
+                {fontSize}px
               </div>
-            </div>
-
-            {/* 底部状态栏 */}
-            <div className="flex items-center gap-2 px-4 py-1 border-t border-border bg-muted/20 shrink-0">
-              <div className="flex items-center gap-2">
-                <button onClick={handleSave} disabled={loading || !dirty}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors">
-                  <Save size={11} /> {loading ? "保存中..." : "保存"}
-                </button>
-                <button onClick={() => handleExportFile(editing.id)}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-input text-[10px] text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
-                  <Download size={11} /> 导出
-                </button>
-                <button onClick={() => { if (window.confirm(`确认删除「${editing.name || editing.id}」？`)) handleDelete(editing.id); }}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-destructive/30 text-[10px] text-destructive hover:bg-destructive/10 transition-colors">
-                  <Trash2 size={11} /> 删除
-                </button>
-              </div>
-              <div className="flex-1" />
-              {dirty && <span className="text-[10px] text-amber-500">● 未保存</span>}
-              <span className="text-[9px] text-muted-foreground/40">{(editing.content.match(/\n/g) || []).length + 1} 行</span>
             </div>
           </div>
         )}
@@ -329,7 +375,7 @@ export function SkillsSection() {
           items={
             ctxMenu.fileId
               ? [
-                  { label: "重命名", icon: <FileText size={12} />, onClick: () => { const f = skills.find(s => s.id === ctxMenu.fileId); if (f) { setRenaming(f.id); setRenameValue(f.name || f.id); } } },
+                  { label: "重命名", icon: <FileText size={12} />, onClick: () => { const f = skills.find(s => s.id === ctxMenu.fileId); if (f) { setRenaming(f.id); setRenameValue(f.filename || f.id); } } },
                   { label: "导出文件", icon: <Download size={12} />, onClick: () => handleExportFile(ctxMenu.fileId!) },
                   { label: "删除文件", icon: <Trash2 size={12} />, danger: true, onClick: () => handleDelete(ctxMenu.fileId!) },
                 ]

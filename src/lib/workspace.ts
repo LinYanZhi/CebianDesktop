@@ -57,6 +57,11 @@ export async function deleteWorkspaceFile(sub: WorkspaceSubDir, id: string): Pro
   return invoke("delete_workspace_file", { sub, id });
 }
 
+/** 重命名文件（实际重命名磁盘上的 .md 文件，newName 不含扩展名） */
+export async function renameWorkspaceFile(sub: WorkspaceSubDir, id: string, newName: string): Promise<void> {
+  return invoke("rename_workspace_file", { sub, id, newName });
+}
+
 /** 生成新 ID */
 export async function generateWorkspaceId(): Promise<string> {
   return invoke("generate_workspace_id");
@@ -85,4 +90,9 @@ export async function importBackup(data: string): Promise<void> {
 /** 在文件管理器中打开工作区子目录 */
 export async function openWorkspaceDir(sub: WorkspaceSubDir): Promise<string> {
   return invoke("open_workspace_dir", { sub });
+}
+
+/** 在工作区子目录下创建子文件夹 */
+export async function createWorkspaceSubdir(sub: WorkspaceSubDir, dirName: string): Promise<void> {
+  return invoke("create_workspace_subdir", { sub, dirName });
 }

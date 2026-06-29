@@ -131,7 +131,7 @@ export default function SettingsView(props: SettingsViewProps) {
               );
             })}
           </nav>
-          <div className="flex-1 overflow-y-auto p-6 min-w-0 flex flex-col min-h-0">
+          <div className={`flex-1 overflow-y-auto min-w-0 flex flex-col min-h-0 ${active === 'skills' ? 'p-0' : 'p-6'}`}>
             <div className="settings-content flex-1 flex flex-col min-h-0">{renderSection(props, active)}</div>
           </div>
         </div>
@@ -151,7 +151,7 @@ export default function SettingsView(props: SettingsViewProps) {
               );
             })}
           </nav>
-          <div className="flex-1 overflow-y-auto p-4 min-w-0 flex flex-col min-h-0">
+          <div className={`flex-1 overflow-y-auto min-w-0 flex flex-col min-h-0 ${active === 'skills' ? 'p-0' : 'p-4'}`}>
             <div className="settings-content flex-1 flex flex-col min-h-0">{renderSection(props, active)}</div>
           </div>
         </div>

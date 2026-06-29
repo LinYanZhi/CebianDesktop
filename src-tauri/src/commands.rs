@@ -452,6 +452,37 @@ pub fn delete_workspace_file(
     workspace::delete_file(&app_handle, dir, &id)
 }
 
+/// 重命名工作区文件
+#[tauri::command]
+pub fn rename_workspace_file(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    id: String,
+    new_name: String,
+) -> Result<(), String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    workspace::rename_file(&app_handle, dir, &id, &new_name)
+}
+
+/// 在工作区子目录下创建子文件夹
+#[tauri::command]
+pub fn create_workspace_subdir(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    dir_name: String,
+) -> Result<(), String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    workspace::create_subdir(&app_handle, dir, &dir_name)
+}
+
 /// 生成工作区文件 ID
 #[tauri::command]
 pub fn generate_workspace_id() -> String {

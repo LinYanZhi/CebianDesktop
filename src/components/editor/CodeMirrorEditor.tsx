@@ -21,6 +21,7 @@ interface CodeMirrorEditorProps {
   placeholder?: string;
   readOnly?: boolean;
   className?: string;
+  fontSize?: string;
 }
 
 function detectLanguage(filename: string): 'markdown' | 'yaml' | 'javascript' {
@@ -46,11 +47,13 @@ export function CodeMirrorEditor({
   placeholder = '',
   readOnly = false,
   className = '',
+  fontSize = '13px',
 }: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const onChangeRef = useRef(onChange);
   const valueRef = useRef(value);
+  const syncingRef = useRef(false);
 
   onChangeRef.current = onChange;
   valueRef.current = value;
@@ -58,6 +61,9 @@ export function CodeMirrorEditor({
   const themeComp = useMemo(() => new Compartment(), []);
   const readOnlyComp = useMemo(() => new Compartment(), []);
   const langComp = useMemo(() => new Compartment(), []);
+  const fontSizeComp = useMemo(() => new Compartment(), []);
+  const fontSizeStrRef = useRef(fontSize);
+  fontSizeStrRef.current = fontSize;
 
   // Resolve language from filename if not forced
   const resolvedLang = forcedLang || 'markdown';
@@ -74,7 +80,7 @@ export function CodeMirrorEditor({
     }
 
     const updateListener = EditorView.updateListener.of((update) => {
-      if (update.docChanged) {
+      if (update.docChanged && !syncingRef.current) {
         onChangeRef.current(update.state.doc.toString());
       }
     });
@@ -92,6 +98,7 @@ export function CodeMirrorEditor({
         themeComp.of(isDark ? oneDark : []),
         readOnlyComp.of(EditorState.readOnly.of(readOnly)),
         langComp.of(getLanguageExtension(resolvedLang)),
+        fontSizeComp.of(EditorView.theme({ '&': { fontSize: fontSizeStrRef.current } })),
       ],
     });
 
@@ -134,21 +141,31 @@ export function CodeMirrorEditor({
     });
   }, [resolvedLang, langComp]);
 
+  // Sync fontSize
+  useEffect(() => {
+    if (!viewRef.current) return;
+    viewRef.current.dispatch({
+      effects: fontSizeComp.reconfigure(EditorView.theme({ '&': { fontSize } })),
+    });
+  }, [fontSize, fontSizeComp]);
+
   // Sync value from outside (when file changes)
   useEffect(() => {
     if (!viewRef.current) return;
     const current = viewRef.current.state.doc.toString();
     if (current !== value) {
+      syncingRef.current = true;
       viewRef.current.dispatch({
         changes: { from: 0, to: current.length, insert: value },
       });
+      syncingRef.current = false;
     }
   }, [value]);
 
   return (
     <div
       ref={containerRef}
-      className={`overflow-hidden [&_.cm-editor]:h-full [&_.cm-scroller]:font-mono [&_.cm-scroller]:text-sm ${className}`}
+      className={`overflow-hidden [&_.cm-editor]:h-full [&_.cm-scroller]:font-mono ${className}`}
       style={{ height: '100%' }}
     />
   );
