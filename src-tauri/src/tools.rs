@@ -10,6 +10,10 @@ use std::sync::OnceLock;
 
 use serde_json::{json, Value};
 use walkdir::WalkDir;
+#[cfg(windows)]
+use winreg::enums::*;
+#[cfg(windows)]
+use winreg::RegKey;
 
 /// 允许 AI 进行文件写/删操作的安全目录列表
 /// 由 init_allowed_dirs() 在应用启动时初始化
@@ -176,7 +180,10 @@ pub fn get_tool_definitions() -> Vec<Value> {
              \n- 命令在用户系统上实际执行，请谨慎操作（尤其是删除、格式化等危险命令）\
              \n- 交互式命令（如需要用户输入）会挂起，应避免使用\
              \n- 返回 stdout 和 stderr 的输出\
-             \n\n适合场景：运行 git 命令、执行构建脚本、查询系统状态、启动程序等。",
+             \n- 已自动处理编码问题，中文输出可正常显示\
+             \n\n重要：优先使用 system_info 工具查询系统状态（如已安装软件、磁盘、内存等），\
+             \n不要通过 run_command 执行 PowerShell 或 WMIC 命令来获取系统信息。\
+             \n\n适合场景：运行 git 命令、执行构建脚本、启动程序等。",
             &[("command", "string", "要执行的命令，例如 dir 或 git status"), ("cwd", "string", "工作目录（可选，不指定则使用应用默认目录）")], ["command"]),
 
         td!("system_notify",
@@ -191,7 +198,8 @@ pub fn get_tool_definitions() -> Vec<Value> {
              \n- CPU 型号和核心数\
              \n- 内存总量和已用量\
              \n- 所有磁盘（硬盘）的容量和可用空间\
-             \n\n适合场景：了解用户电脑配置、检查磁盘空间、确认操作系统类型等。",
+             \n- 已安装软件列表（名称、版本、安装位置、发布者）及总数\
+             \n\n适合场景：了解用户电脑配置、检查磁盘空间、确认操作系统类型、查询已安装软件等。",
             &[], []),
 
         // ═══════════════════════════════════════════════════════════
@@ -642,11 +650,16 @@ fn open_path(path: &str) -> Result<String, String> {
 // ─── 命令执行 ────────────────────────────────────────────
 
 fn run_command(cmd: &str, cwd: Option<&str>) -> Result<String, String> {
-    let shell = if cfg!(windows) { "cmd" } else { "sh" };
-    let shell_arg = if cfg!(windows) { "/C" } else { "-c" };
+    let (shell, shell_arg, actual_cmd) = if cfg!(windows) {
+        // Windows 控制台默认 ANSI 编码（中文为 GBK/CP936），PowerShell 输出会乱码。
+        // 先执行 chcp 65001 切换到 UTF-8 代码页确保输出可读
+        ("cmd", "/C", format!("chcp 65001 >nul && {}", cmd))
+    } else {
+        ("sh", "-c", cmd.to_string())
+    };
 
     let mut command = Command::new(shell);
-    command.args([shell_arg, cmd]);
+    command.args([shell_arg, &actual_cmd]);
 
     if let Some(dir) = cwd {
         command.current_dir(dir);
@@ -697,6 +710,53 @@ fn clipboard_write(text: &str) -> Result<(), String> {
 
 // ─── 系统信息 ────────────────────────────────────────────
 
+/// 从 Windows 注册表读取已安装软件列表（仅 Windows）
+#[cfg(windows)]
+fn get_installed_software() -> Vec<Value> {
+    let mut software: Vec<Value> = Vec::new();
+    // 用 DisplayName 去重，因为同一软件可能出现在多个注册表路径
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+    let reg_paths = [
+        (HKEY_LOCAL_MACHINE, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Uninstall"),
+    ];
+
+    for (hkey, subkey) in &reg_paths {
+        if let Ok(key) = RegKey::predef(*hkey).open_subkey_with_flags(*subkey, KEY_READ) {
+            for name in key.enum_keys().filter_map(|k| k.ok()) {
+                if let Ok(sub) = key.open_subkey_with_flags(&name, KEY_READ) {
+                    let display_name: Option<String> = sub.get_value("DisplayName").ok();
+                    if let Some(ref dn) = display_name {
+                        if dn.trim().is_empty() || !seen.insert(dn.trim().to_lowercase()) {
+                            continue;
+                        }
+                        let version: Option<String> = sub.get_value("DisplayVersion").ok();
+                        let install_loc: Option<String> = sub.get_value("InstallLocation").ok();
+                        let publisher: Option<String> = sub.get_value("Publisher").ok();
+                        software.push(json!({
+                            "name": dn.trim(),
+                            "version": version.unwrap_or_default(),
+                            "install_location": install_loc.unwrap_or_default(),
+                            "publisher": publisher.unwrap_or_default(),
+                        }));
+                    }
+                }
+            }
+        }
+    }
+
+    software.sort_by(|a, b| a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")));
+    software
+}
+
+/// 获取非 Windows 系统的空软件列表
+#[cfg(not(windows))]
+fn get_installed_software() -> Vec<Value> {
+    Vec::new()
+}
+
 fn system_info() -> Result<Value, String> {
     use sysinfo::System;
 
@@ -729,6 +789,10 @@ fn system_info() -> Result<Value, String> {
         }));
     }
 
+    // 软件列表
+    let software = get_installed_software();
+    let software_count = software.len();
+
     Ok(json!({
         "os": os_info,
         "hostname": hostname,
@@ -737,6 +801,8 @@ fn system_info() -> Result<Value, String> {
         "disks": disks,
         "username": std::env::var("USERNAME").unwrap_or_default(),
         "computer_name": std::env::var("COMPUTERNAME").unwrap_or_default(),
+        "installed_software": software,
+        "installed_software_count": software_count,
     }))
 }
 
