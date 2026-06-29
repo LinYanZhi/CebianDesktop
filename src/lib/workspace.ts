@@ -96,3 +96,13 @@ export async function openWorkspaceDir(sub: WorkspaceSubDir): Promise<string> {
 export async function createWorkspaceSubdir(sub: WorkspaceSubDir, dirName: string): Promise<void> {
   return invoke("create_workspace_subdir", { sub, dirName });
 }
+
+/** 删除工作区子目录（递归） */
+export async function deleteWorkspaceSubdir(sub: WorkspaceSubDir, dirName: string): Promise<void> {
+  return invoke("delete_workspace_subdir", { sub, dirName });
+}
+
+/** 将工作区文件移动到目标目录（空字符串表示根目录） */
+export async function moveWorkspaceFile(sub: WorkspaceSubDir, fileId: string, targetDir: string): Promise<void> {
+  return invoke("move_workspace_file", { sub, fileId, targetDir });
+}

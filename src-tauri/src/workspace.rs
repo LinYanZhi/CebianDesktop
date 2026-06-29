@@ -18,8 +18,12 @@
 
 use serde::{Deserialize, Serialize};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::Duration;
 use tauri::Manager;
+use tauri::Emitter;
 
 /// 工作区子目录
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -140,48 +144,93 @@ pub fn get_subdir_path(app: &tauri::AppHandle, sub: WorkspaceDir) -> Result<Path
     subdir_path(app, sub)
 }
 
-/// 列出工作区子目录下的所有文件
+/// 列出工作区子目录下的所有文件和子目录（递归）
 pub fn list_files(app: &tauri::AppHandle, sub: WorkspaceDir) -> Result<Vec<WorkspaceFile>, String> {
     let dir = subdir_path(app, sub)?;
     let mut files = Vec::new();
-
-    for entry in fs::read_dir(&dir).map_err(|e| format!("读取目录失败: {}", e))? {
-        let entry = entry.map_err(|e| format!("读取条目失败: {}", e))?;
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("md") {
-            continue;
-        }
-        let filename = path.file_name()
-            .and_then(|s| s.to_str())
-            .map(|s| s.to_string())
-            .unwrap_or_default();
-        let id = filename_to_id(&filename);
-
-        let raw = fs::read_to_string(&path)
-            .map_err(|e| format!("读取文件失败: {}", e))?;
-
-        if let Some((meta, content)) = parse_md_file(&raw) {
-            files.push(WorkspaceFile {
-                filename,
-                id,
-                name: meta.name,
-                description: meta.description,
-                content,
-                created_at: meta.created_at,
-                updated_at: meta.updated_at,
-            });
-        }
-    }
-
-    // 按 updated_at 降序
-    files.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+    list_files_recursive(&dir, &dir, &mut files)?;
+    files.sort_by(|a, b| {
+        let a_is_dir = a.filename.ends_with('/');
+        let b_is_dir = b.filename.ends_with('/');
+        if a_is_dir != b_is_dir { return a_is_dir.cmp(&b_is_dir).reverse(); }
+        a.filename.cmp(&b.filename)
+    });
     Ok(files)
 }
 
+fn list_files_recursive(base: &Path, scan_dir: &Path, files: &mut Vec<WorkspaceFile>) -> Result<(), String> {
+    let mut entries: Vec<_> = fs::read_dir(scan_dir)
+        .map_err(|e| format!("读取目录失败: {}", e))?
+        .filter_map(|e| e.ok())
+        .collect();
+    entries.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+
+    for entry in entries {
+        let path = entry.path();
+        let rel = path.strip_prefix(base).map_err(|_| "路径错误".to_string())?;
+        let rel_str = rel.to_string_lossy().replace('\\', "/");
+
+        if path.is_dir() {
+            files.push(WorkspaceFile {
+                filename: rel_str.clone() + "/",
+                id: rel_str.clone(),
+                name: rel_str,
+                description: String::new(),
+                content: String::new(),
+                created_at: 0,
+                updated_at: 0,
+            });
+            list_files_recursive(base, &path, files)?;
+        } else if path.extension().and_then(|s| s.to_str()) == Some("md") {
+            let raw = fs::read_to_string(&path)
+                .map_err(|e| format!("读取文件失败: {}", e))?;
+            let id = rel_str.strip_suffix(".md").unwrap_or(&rel_str).to_string();
+            if let Some((meta, content)) = parse_md_file(&raw) {
+                files.push(WorkspaceFile {
+                    filename: rel_str,
+                    id,
+                    name: meta.name,
+                    description: meta.description,
+                    content,
+                    created_at: meta.created_at,
+                    updated_at: meta.updated_at,
+                });
+            } else {
+                files.push(WorkspaceFile {
+                    filename: rel_str.clone(),
+                    id: id.clone(),
+                    name: id,
+                    description: String::new(),
+                    content: raw,
+                    created_at: 0,
+                    updated_at: 0,
+                });
+            }
+        } else {
+            files.push(WorkspaceFile {
+                filename: rel_str.clone(),
+                id: rel_str,
+                name: String::new(),
+                description: String::new(),
+                content: fs::read_to_string(&path).unwrap_or_default(),
+                created_at: 0,
+                updated_at: 0,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// 读取工作区文件
+/// id 可含扩展名（如 "1.js"），否则自动尝试 .md
 pub fn read_file(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str) -> Result<WorkspaceFile, String> {
     let dir = subdir_path(app, sub)?;
-    let path = dir.join(format!("{}.md", id));
+    // 尝试直接使用 id 作为文件名，或补 .md
+    let path = if id.contains('.') {
+        dir.join(id)
+    } else {
+        dir.join(format!("{}.md", id))
+    };
     if !path.exists() {
         return Err(format!("文件 '{}' 不存在", id));
     }
@@ -191,23 +240,38 @@ pub fn read_file(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str) -> Result<
         .and_then(|s| s.to_str())
         .map(|s| s.to_string())
         .unwrap_or_default();
+    let actual_id = if id.contains('.') { id.to_string() } else { id.to_string() };
 
-    if let Some((meta, content)) = parse_md_file(&raw) {
+    // .md 文件尝试解析 frontmatter
+    if filename.ends_with(".md") {
+        if let Some((meta, content)) = parse_md_file(&raw) {
+            Ok(WorkspaceFile {
+                filename,
+                id: actual_id,
+                name: meta.name,
+                description: meta.description,
+                content,
+                created_at: meta.created_at,
+                updated_at: meta.updated_at,
+            })
+        } else {
+            // 无 frontmatter 的纯文本
+            Ok(WorkspaceFile {
+                filename,
+                id: actual_id.clone(),
+                name: actual_id,
+                description: String::new(),
+                content: raw,
+                created_at: 0,
+                updated_at: 0,
+            })
+        }
+    } else {
+        // 非 .md 文件直接返回内容
         Ok(WorkspaceFile {
             filename,
-            id: id.to_string(),
-            name: meta.name,
-            description: meta.description,
-            content,
-            created_at: meta.created_at,
-            updated_at: meta.updated_at,
-        })
-    } else {
-        // 没有 frontmatter 的纯文本文件也支持
-        Ok(WorkspaceFile {
-            filename: filename.clone(),
-            id: id.to_string(),
-            name: id.to_string(),
+            id: actual_id,
+            name: String::new(),
             description: String::new(),
             content: raw,
             created_at: 0,
@@ -219,7 +283,11 @@ pub fn read_file(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str) -> Result<
 /// 读取工作区文件的原始 Markdown 内容（用于导出）
 pub fn read_file_raw(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str) -> Result<String, String> {
     let dir = subdir_path(app, sub)?;
-    let path = dir.join(format!("{}.md", id));
+    let path = if id.contains('.') {
+        dir.join(id)
+    } else {
+        dir.join(format!("{}.md", id))
+    };
     if !path.exists() {
         return Err(format!("文件 '{}' 不存在", id));
     }
@@ -258,6 +326,7 @@ pub fn import_file_raw(app: &tauri::AppHandle, sub: WorkspaceDir, raw_content: &
 }
 
 /// 写入工作区文件（创建或更新）
+/// id 可包含扩展名（如 "1.js"），否则补 ".md"
 pub fn write_file(
     app: &tauri::AppHandle,
     sub: WorkspaceDir,
@@ -272,22 +341,37 @@ pub fn write_file(
         .unwrap_or_default()
         .as_secs();
 
-    let meta = WorkspaceFileMeta {
-        name: name.to_string(),
-        description: description.to_string(),
-        created_at: now,
-        updated_at: now,
-    };
-    let md_content = build_md_content(&meta, content);
-    let path = dir.join(format!("{}.md", id));
-    fs::write(&path, &md_content)
-        .map_err(|e| format!("写入文件失败: {}", e))
+    // 完全尊重传入的 id，不再自动补 .md
+    let filename = id.to_string();
+
+    let path = dir.join(&filename);
+    // 只有 .md 文件才写 frontmatter
+    if filename.ends_with(".md") {
+        let meta = WorkspaceFileMeta {
+            name: name.to_string(),
+            description: description.to_string(),
+            created_at: now,
+            updated_at: now,
+        };
+        let md_content = build_md_content(&meta, content);
+        fs::write(&path, &md_content)
+            .map_err(|e| format!("写入文件失败: {}", e))
+    } else {
+        // 非 .md 文件直接写内容
+        fs::write(&path, content)
+            .map_err(|e| format!("写入文件失败: {}", e))
+    }
 }
 
 /// 删除工作区文件
+/// id 可含扩展名（如 "1.js"），否则自动尝试 .md
 pub fn delete_file(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str) -> Result<(), String> {
     let dir = subdir_path(app, sub)?;
-    let path = dir.join(format!("{}.md", id));
+    let path = if id.contains('.') {
+        dir.join(id)
+    } else {
+        dir.join(format!("{}.md", id))
+    };
     if !path.exists() {
         return Err(format!("文件 '{}' 不存在", id));
     }
@@ -301,21 +385,26 @@ pub fn rename_file(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str, new_name
     if new_name.is_empty() {
         return Err("文件名不能为空".to_string());
     }
-    if new_name.contains('/') || new_name.contains('\\') || new_name.contains('\0') {
+    if new_name.contains('\\') || new_name.contains('\0') {
         return Err("文件名包含非法字符".to_string());
     }
     let dir = subdir_path(app, sub)?;
-    let old_path = dir.join(format!("{}.md", id));
-    // 如果 new_name 已有扩展名则直接使用，否则补 .md
-    let final_name = if new_name.contains('.') {
-        new_name.to_string()
-    } else {
-        format!("{}.md", new_name)
+    // 先尝试带 .md 后缀，再尝试原样路径
+    let old_path = {
+        let p = dir.join(format!("{}.md", id));
+        if p.exists() {
+            p
+        } else {
+            let p = dir.join(id);
+            if !p.exists() {
+                return Err(format!("文件 '{}' 不存在", id));
+            }
+            p
+        }
     };
+    // 完全尊重传入的 new_name
+    let final_name = new_name.to_string();
     let new_path = dir.join(&final_name);
-    if !old_path.exists() {
-        return Err(format!("文件 '{}' 不存在", id));
-    }
     if new_path.exists() {
         return Err(format!("文件 '{}' 已存在", final_name));
     }
@@ -345,6 +434,88 @@ pub fn create_subdir(app: &tauri::AppHandle, sub: WorkspaceDir, dir_name: &str) 
     let new_dir = dir.join(dir_name);
     fs::create_dir_all(&new_dir)
         .map_err(|e| format!("创建文件夹失败: {}", e))
+}
+
+/// 删除工作区子目录（递归删除）
+pub fn delete_subdir(app: &tauri::AppHandle, sub: WorkspaceDir, dir_name: &str) -> Result<(), String> {
+    if dir_name.is_empty() {
+        return Err("文件夹名不能为空".to_string());
+    }
+    if dir_name.contains('/') || dir_name.contains('\\') || dir_name.contains('\0') {
+        return Err("文件夹名包含非法字符".to_string());
+    }
+    let dir = subdir_path(app, sub)?;
+    let target = dir.join(dir_name);
+    if !target.exists() {
+        return Err(format!("文件夹 '{}' 不存在", dir_name));
+    }
+    fs::remove_dir_all(&target)
+        .map_err(|e| format!("删除文件夹失败: {}", e))
+}
+
+/// 将文件移动到目标目录
+/// target_dir 为相对 skills 根目录的路径（如 "subdir"），空字符串表示根目录
+pub fn move_file_to_dir(app: &tauri::AppHandle, sub: WorkspaceDir, file_id: &str, target_dir: &str) -> Result<(), String> {
+    let dir = subdir_path(app, sub)?;
+
+    // 判断是目录还是文件
+    let is_dir = file_id.ends_with('/');
+    let source_name = if is_dir {
+        // 去掉尾部的 /
+        file_id.trim_end_matches('/').to_string()
+    } else {
+        file_id.to_string()
+    };
+
+    // 原路径：先尝试原始名称，再尝试 .md 文件
+    let old_path = if is_dir {
+        let p = dir.join(&source_name);
+        if !p.is_dir() {
+            return Err(format!("目录 '{}' 不存在", source_name));
+        }
+        p
+    } else if file_id.contains('.') {
+        let p = dir.join(&source_name);
+        if !p.exists() {
+            return Err(format!("文件 '{}' 不存在", source_name));
+        }
+        p
+    } else {
+        let p = dir.join(format!("{}.md", source_name));
+        if p.exists() {
+            p
+        } else {
+            let p = dir.join(&source_name);
+            if !p.exists() {
+                return Err(format!("文件 '{}' 不存在", source_name));
+            }
+            p
+        }
+    };
+
+    // 获取文件名/目录名
+    let filename = old_path.file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    // 目标路径
+    let new_path = if target_dir.is_empty() {
+        dir.join(&filename)
+    } else {
+        let target = dir.join(target_dir);
+        if !target.is_dir() {
+            return Err(format!("目标目录 '{}' 不存在", target_dir));
+        }
+        target.join(&filename)
+    };
+
+    if new_path.exists() {
+        return Err(format!("目标位置已存在同名{}: {}", if is_dir { "目录" } else { "文件" }, filename));
+    }
+
+    fs::rename(&old_path, &new_path)
+        .map_err(|e| format!("移动{}失败: {}", if is_dir { "目录" } else { "文件" }, e))
 }
 
 // ─── 备份与恢复 ──────────────────────────────────────────
@@ -455,4 +626,52 @@ fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
     Ok(())
 }
 
-use std::io::Write;
+/// 启动文件系统监听，检测 changes 时通过 Tauri 事件通知前端。
+/// 放在后台线程运行，不阻塞启动。
+pub fn start_watcher(app: tauri::AppHandle, sub: WorkspaceDir) -> Result<(), String> {
+    let dir = subdir_path(&app, sub)?;
+    let event_name = format!("workspace:changed:{}", sub.as_str());
+
+    std::thread::spawn(move || {
+        use notify::{Event, RecursiveMode, Watcher};
+
+        let (tx, rx) = mpsc::channel::<Result<Event, notify::Error>>();
+        let mut watcher = match notify::recommended_watcher(tx) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("[workspace] 创建 watcher 失败: {}", e);
+                return;
+            }
+        };
+
+        if let Err(e) = watcher.watch(&dir, RecursiveMode::Recursive) {
+            eprintln!("[workspace] 监听目录失败: {}", e);
+            return;
+        }
+
+        // 防抖：1 秒内多次变更只发一次事件
+        let mut last_emit = std::time::Instant::now();
+        loop {
+            match rx.recv_timeout(Duration::from_secs(1)) {
+                Ok(Ok(_event)) => {
+                    let now = std::time::Instant::now();
+                    if now.duration_since(last_emit) > Duration::from_millis(500) {
+                        last_emit = now;
+                        let _ = app.emit(&event_name, serde_json::json!({}));
+                    }
+                }
+                Ok(Err(e)) => {
+                    eprintln!("[workspace] watcher 错误: {}", e);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    // 超时正常，继续循环
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    break;
+                }
+            }
+        }
+    });
+
+    Ok(())
+}

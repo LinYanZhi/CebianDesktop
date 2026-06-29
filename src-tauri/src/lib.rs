@@ -21,6 +21,14 @@ pub fn run() {
             // 窗口状态插件：记住窗口大小和位置
             #[cfg(desktop)]
             app.handle().plugin(tauri_plugin_window_state::Builder::default().build())?;
+
+            // 启动工作区文件监听
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let _ = workspace::start_watcher(handle, workspace::WorkspaceDir::Skills);
+            });
+
             Ok(())
         })
         .manage(McpServerState::new())
@@ -53,6 +61,8 @@ pub fn run() {
             commands::delete_workspace_file,
             commands::rename_workspace_file,
             commands::create_workspace_subdir,
+            commands::delete_workspace_subdir,
+            commands::move_workspace_file,
             commands::generate_workspace_id,
             commands::export_workspace_file,
             commands::import_workspace_file,

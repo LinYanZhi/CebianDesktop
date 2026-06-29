@@ -27,3 +27,4 @@ walkdir = "2"
 sysinfo = "0.32"
 notify-rust = "4"
 zip = "2"
+notify = { version = "8", features = ["macos_fsevent"] }
