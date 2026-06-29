@@ -1,8 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { FileText, Plus, Download, Upload, FolderOpen, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import {
-  listWorkspaceFiles,
+import { listWorkspaceFiles,
   writeWorkspaceFile,
   deleteWorkspaceFile,
   generateWorkspaceId,
@@ -10,6 +9,8 @@ import {
   importWorkspaceFileContent,
   openWorkspaceDir,
 } from "../../../lib/workspace";
+import { save, open } from "@tauri-apps/plugin-dialog";
+import { invoke } from "@tauri-apps/api/core";
 import type { WorkspaceFile } from "../../../lib/workspace";
 import { ContextMenu } from "../ContextMenu";
 
@@ -89,10 +90,12 @@ export function PromptsSection() {
       const raw = await exportWorkspaceFileContent("prompts", id);
       const file = prompts.find(p => p.id === id);
       const filename = file?.filename || `${id}.md`;
-      const blob = new Blob([raw], { type: "text/markdown" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
-      URL.revokeObjectURL(url);
+      const filePath = await save({
+        defaultPath: filename,
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      if (!filePath) return;
+      await invoke("write_file_to_path", { path: filePath, content: raw });
       toast.success("导出成功");
     } catch (e: any) {
       toast.error("导出失败: " + (e?.toString() || "未知错误"));
@@ -100,7 +103,18 @@ export function PromptsSection() {
   };
 
   const handleExportAll = async () => {
-    for (const p of prompts) await handleExportFile(p.id);
+    const dir = await open({ directory: true, multiple: false, title: "选择导出目录" });
+    if (!dir) return;
+    for (const p of prompts) {
+      try {
+        const raw = await exportWorkspaceFileContent("prompts", p.id);
+        const filename = p.filename || `${p.id}.md`;
+        await invoke("write_file_to_path", { path: `${dir}/${filename}`, content: raw });
+      } catch (e: any) {
+        toast.error(`导出 ${p.filename} 失败: ${e?.toString()}`);
+      }
+    }
+    toast.success("全部导出成功");
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
