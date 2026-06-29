@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   ArrowLeft, Bot, Key, MessageSquare, FileText, Puzzle, Plug,
-  DatabaseBackup, HardDrive, Sliders, Info, Eye, EyeOff, Save, Unplug, Plus, Trash2, Download, Upload
+  DatabaseBackup, HardDrive, Sliders, Info, Eye, EyeOff, Save, Unplug, Plus, Trash2, Download, Upload, Globe, Check
 } from "lucide-react";
 import { toast } from "sonner";
 import type { AIConfig, ProviderInfo } from "../../lib/types";
@@ -18,6 +18,7 @@ import {
   importBackup,
 } from "../../lib/workspace";
 import type { WorkspaceFile } from "../../lib/workspace";
+import { useI18n } from "../../lib/i18n";
 
 interface SettingsViewProps {
   config: AIConfig;
@@ -46,6 +47,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "backup", label: "备份与恢复", icon: DatabaseBackup },
   { id: "storage", label: "文件系统", icon: HardDrive },
   { id: "advanced", label: "高级", icon: Sliders },
+  { id: "language", label: "语言", icon: Globe },
   { id: "about", label: "关于", icon: Info },
 ];
 
@@ -854,6 +856,35 @@ function AppearanceSection({ config, onChange }: { config: AIConfig; onChange: (
   );
 }
 
+function LanguageSection() {
+  const { lang, setLang, t } = useI18n();
+
+  const langs = [
+    { id: "zh" as const, label: "中文" },
+    { id: "en" as const, label: "English" },
+  ];
+
+  return (
+    <section>
+      <h2 className="text-base font-semibold mb-4">{t("language.title")}</h2>
+      <p className="text-sm text-muted-foreground mb-4">{t("language.label")}</p>
+      <div className="flex flex-col gap-2 max-w-xs">
+        {langs.map((l) => (
+          <button key={l.id} onClick={() => setLang(l.id)}
+            className={`flex items-center justify-between px-4 py-3 rounded-lg border text-sm transition-colors ${
+              lang === l.id
+                ? "border-primary bg-primary/5 text-foreground"
+                : "border-input text-muted-foreground hover:text-foreground hover:border-ring"
+            }`}>
+            <span>{l.label}</span>
+            {lang === l.id && <Check size={16} className="text-primary" />}
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function AboutSection() {
   return (
     <section>
@@ -980,6 +1011,7 @@ export default function SettingsView(props: SettingsViewProps) {
       case "backup": return <BackupSection />;
       case "storage": return <StorageSection />;
       case "advanced": return <AdvancedSection />;
+      case "language": return <LanguageSection />;
       case "about": return <AboutSection />;
       default: return null;
     }
