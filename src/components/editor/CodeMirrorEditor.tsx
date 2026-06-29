@@ -10,15 +10,46 @@ import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirro
 import { markdown } from '@codemirror/lang-markdown';
 import { yaml } from '@codemirror/lang-yaml';
 import { javascript } from '@codemirror/lang-javascript';
-import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
+import { syntaxHighlighting, HighlightStyle } from '@codemirror/language';
+import { tags } from '@lezer/highlight';
 import { oneDark } from '@codemirror/theme-one-dark';
 
-// 亮色主题：覆盖编辑器内容区 + 行号区背景
+// 亮色主题：编辑器外观
 const lightTheme = EditorView.theme({
   '&': { backgroundColor: 'transparent' },
   '.cm-gutters': { backgroundColor: 'transparent', borderRight: '1px solid hsl(var(--border))' },
   '.cm-activeLineGutter': { backgroundColor: 'transparent' },
+  '.cm-cursor': { borderLeftColor: '#333' },
 });
+
+// 亮色语法高亮（对标 GitHub 风格，标题不加下划线）
+const lightHighlight = HighlightStyle.define([
+  { tag: tags.heading, fontWeight: 'bold', color: '#0550AE' },
+  { tag: tags.heading1, fontWeight: 'bold', color: '#0550AE' },
+  { tag: tags.heading2, fontWeight: 'bold', color: '#0550AE' },
+  { tag: tags.heading3, fontWeight: 'bold', color: '#0550AE' },
+  { tag: tags.strong, fontWeight: 'bold' },
+  { tag: tags.emphasis, fontStyle: 'italic' },
+  { tag: tags.strikethrough, textDecoration: 'line-through' },
+  { tag: tags.link, color: '#0969DA', textDecoration: 'underline' },
+  { tag: tags.url, color: '#0969DA', textDecoration: 'underline' },
+  { tag: tags.comment, color: '#6E7781', fontStyle: 'italic' },
+  { tag: tags.keyword, color: '#CF222E' },
+  { tag: tags.string, color: '#0A3069' },
+  { tag: tags.number, color: '#0550AE' },
+  { tag: tags.bool, color: '#0550AE' },
+  { tag: tags.typeName, color: '#116329' },
+  { tag: tags.function(tags.variableName), color: '#8250DF' },
+  { tag: tags.propertyName, color: '#116329' },
+  { tag: tags.atom, color: '#0550AE' },
+  { tag: tags.meta, color: '#6E7781' },
+  { tag: tags.monospace, fontFamily: 'var(--font-mono, monospace)' },
+  { tag: tags.list, color: '#0550AE' },
+  { tag: tags.quote, color: '#6E7781', fontStyle: 'italic' },
+  { tag: tags.inserted, color: '#116329' },
+  { tag: tags.deleted, color: '#CF222E' },
+  { tag: tags.changed, color: '#953800' },
+]);
 
 interface CodeMirrorEditorProps {
   value: string;
@@ -61,12 +92,13 @@ export function CodeMirrorEditor({
   const syncingRef = useRef(false);
 
   // 自动检测暗色/亮色主题
-  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
+  // CSS: :root 为暗色(默认)，.light 为亮色，无 dark 类
+  const [isDark, setIsDark] = useState(() => !document.documentElement.classList.contains('light'));
 
   useEffect(() => {
     const el = document.documentElement;
     const observer = new MutationObserver(() => {
-      setIsDark(el.classList.contains('dark'));
+      setIsDark(!el.classList.contains('light'));
     });
     observer.observe(el, { attributes: true, attributeFilter: ['class'] });
     return () => observer.disconnect();
@@ -109,10 +141,11 @@ export function CodeMirrorEditor({
         history(),
         lineNumbers(),
         EditorView.lineWrapping,
-        syntaxHighlighting(defaultHighlightStyle),
         cmPlaceholder(placeholder),
         updateListener,
-        themeComp.of(isDark ? oneDark : lightTheme),
+        themeComp.of(isDark
+          ? oneDark
+          : [lightTheme, syntaxHighlighting(lightHighlight)]),
         readOnlyComp.of(EditorState.readOnly.of(readOnly)),
         langComp.of(getLanguageExtension(resolvedLang)),
         fontSizeComp.of(EditorView.theme({ '&': { fontSize: fontSizeStrRef.current } })),
@@ -137,7 +170,9 @@ export function CodeMirrorEditor({
   // Sync theme
   useEffect(() => {
     if (!viewRef.current) return;
-    const effective = isDark ? oneDark : lightTheme;
+    const effective = isDark
+      ? oneDark
+      : [lightTheme, syntaxHighlighting(lightHighlight)];
     viewRef.current.dispatch({
       effects: themeComp.reconfigure(effective),
     });
