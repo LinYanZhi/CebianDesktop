@@ -1,16 +1,18 @@
 import { useRef, useEffect, useState, memo, useCallback } from "react";
 import {
   Bot, Mic, Brain, ChevronDown, Settings, ChevronRight, Lightbulb,
-  Copy, Check, Paperclip, Globe, Search, X, Image, FileText,
+  Copy, Check, Paperclip, Globe, Search, X, Image, FileText, Square,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage, AIConfig, ThinkingLevel, SendAttachment } from "../../lib/types";
-import { getActiveConfig } from "../../lib/types";
+import { getActiveConfig, hasUsableModel } from "../../lib/types";
+import { toast } from "sonner";
 
 interface ChatViewProps {
   messages: ChatMessage[];
   onSend: (content: string, attachments?: SendAttachment[]) => void;
+  onStop: () => void;
   loading: boolean;
   aiConfig: AIConfig;
   onConfigChange: (c: AIConfig) => void;
@@ -376,10 +378,10 @@ function AttachmentChips({
 // ═══════════════════════════════════════════════════════════
 
 function ChatInput({
-  inputValue, setInputValue, onSend, loading, aiConfig, onConfigChange, onNavigateSettings,
+  inputValue, setInputValue, onSend, onStop, loading, aiConfig, onConfigChange, onNavigateSettings,
 }: {
   inputValue: string; setInputValue: (v: string) => void;
-  onSend: (attachments: SendAttachment[]) => void; loading: boolean;
+  onSend: (attachments: SendAttachment[]) => void; onStop: () => void; loading: boolean;
   aiConfig: AIConfig; onConfigChange: (c: AIConfig) => void; onNavigateSettings: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -536,11 +538,19 @@ function ChatInput({
               >
                 <Mic size={15} />
               </button>
-              <button onClick={handleSend} disabled={!inputValue.trim() || loading}
-                className="px-4 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-              >
-                {loading ? "停止" : "发送"}
-              </button>
+              {loading ? (
+                <button onClick={onStop}
+                  className="px-4 py-1.5 bg-destructive text-destructive-foreground rounded-lg text-xs font-medium hover:bg-destructive/90 transition-colors"
+                >
+                  <Square size={12} fill="currentColor" />
+                </button>
+              ) : (
+                <button onClick={handleSend} disabled={!inputValue.trim()}
+                  className="px-4 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                >
+                  发送
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -561,7 +571,7 @@ function ChatInput({
 // ═══════════════════════════════════════════════════════════
 
 export default function ChatView({
-  messages, onSend, loading, aiConfig, onConfigChange, onNavigateSettings
+  messages, onSend, onStop, loading, aiConfig, onConfigChange, onNavigateSettings
 }: ChatViewProps) {
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -576,6 +586,12 @@ export default function ChatView({
 
   const send = (attachments?: SendAttachment[]) => {
     if (!inputValue.trim() || loading) return;
+    if (!hasUsableModel(aiConfig)) {
+      toast.error("请先配置 AI 提供商", {
+        action: { label: "前往设置", onClick: onNavigateSettings },
+      });
+      return;
+    }
     onSend(inputValue, attachments);
     setInputValue("");
   };
@@ -588,9 +604,11 @@ export default function ChatView({
           <div className="text-center px-8 max-w-sm">
             <Bot size={48} className="mx-auto mb-4 text-primary/30" />
             <h2 className="text-lg font-semibold mb-1">开始新的对话</h2>
-            <p className="text-sm text-muted-foreground mb-6">选择模型并输入消息开始交流</p>
+            <p className="text-sm text-muted-foreground mb-6">
+              {hasUsableModel(aiConfig) ? "选择模型并输入消息开始交流" : "配置 AI 提供商后即可开始对话"}
+            </p>
             <div className="flex flex-wrap justify-center gap-2 text-xs text-muted-foreground">
-              {aiConfig.providers.filter(p => p.connected).length > 0 ? (
+              {hasUsableModel(aiConfig) ? (
                 aiConfig.providers.filter(p => p.connected).slice(0, 3).map(p => (
                   <span key={p.id} className="px-2 py-1 rounded-full bg-accent/50 border border-border">
                     {p.name} · {p.selectedModel}
@@ -609,6 +627,7 @@ export default function ChatView({
         </div>
         <ChatInput inputValue={inputValue} setInputValue={setInputValue}
           onSend={(atts) => send(atts)}
+          onStop={onStop}
           loading={loading} aiConfig={aiConfig}
           onConfigChange={onConfigChange} onNavigateSettings={onNavigateSettings} />
       </div>
@@ -644,6 +663,7 @@ export default function ChatView({
       </div>
       <ChatInput inputValue={inputValue} setInputValue={setInputValue}
         onSend={(atts) => send(atts)}
+        onStop={onStop}
         loading={loading} aiConfig={aiConfig}
         onConfigChange={onConfigChange} onNavigateSettings={onNavigateSettings} />
     </div>

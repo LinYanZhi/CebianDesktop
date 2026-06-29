@@ -6,6 +6,7 @@ import { startMcpServer, stopMcpServer } from "./lib/commands";
 import { loadAIConfig, saveAIConfig, loadConversationsFromStorage, saveConversationsToStorage, loadTheme, saveTheme } from "./lib/db";
 import type { Conversation, ChatMessage, AIConfig, SendAttachment } from "./lib/types";
 import { DEFAULT_PROVIDERS, getActiveConfig } from "./lib/types";
+import { toast } from "sonner";
 
 function generateId(): string {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
@@ -50,7 +51,7 @@ export default function App() {
   const [serverRunning, setServerRunning] = useState(false);
   const [serverPort, setServerPort] = useState(8080);
   const [showHistory, setShowHistory] = useState(false);
-  const [darkMode, setDarkMode] = useState(true);
+  const [darkMode, setDarkMode] = useState(window.matchMedia('(prefers-color-scheme: dark)').matches);
   const [historyWidth, setHistoryWidth] = useState(280);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
@@ -289,6 +290,10 @@ export default function App() {
 
       try {
         const active = getActiveConfig(aiConfig);
+        if (!active.api_key.trim() || !active.endpoint.trim()) {
+          toast.error("请先配置 AI 提供商");
+          throw new Error("未配置 API");
+        }
         console.log("[handleSend] calling streaming:", {
           endpoint: active.endpoint,
           model: active.model,
@@ -460,6 +465,16 @@ export default function App() {
       updateCurrentConversation, persistSessionMessages, cleanupListeners,
     ]
   );
+
+  // 停止当前会话的流式输出
+  const handleStop = useCallback(() => {
+    if (!currentSessionId) return;
+    const streamState = activeStreamsRef.current.get(currentSessionId);
+    if (streamState) {
+      streamState.controller.abort();
+      cleanupStream(currentSessionId);
+    }
+  }, [currentSessionId, cleanupStream]);
 
   // 选择对话 — 不再 abort 其他会话的流，只是切换视图
   const handleSelectSession = useCallback(
@@ -706,6 +721,7 @@ export default function App() {
             <ChatView
               messages={messages}
               onSend={handleSend}
+              onStop={handleStop}
               loading={isCurrentStreaming}
               aiConfig={aiConfig}
               onConfigChange={setAiConfig}
