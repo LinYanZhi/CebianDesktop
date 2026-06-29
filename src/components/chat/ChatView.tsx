@@ -1,6 +1,6 @@
 import { useRef, useEffect, useState, memo, useCallback } from "react";
 import {
-  Bot, Mic, Brain, ChevronDown, Settings, ChevronRight, Lightbulb,
+  Bot, Mic, ChevronDown, Settings, ChevronRight, Lightbulb,
   Copy, Check, Paperclip, Globe, Search, X, Image, FileText, Square, RefreshCw, Undo2, ArrowUp,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -1013,7 +1013,7 @@ function ModelSelector({
 }
 
 // ═══════════════════════════════════════════════════════════
-//  思考级别选择器（Popover 下拉，仿 CeBian）
+//  思考级别选择器（仿 Cebian：无图标，纯文字 + 下拉箭头）
 // ═══════════════════════════════════════════════════════════
 
 function ThinkingLevelSelector({
@@ -1036,10 +1036,9 @@ function ThinkingLevelSelector({
     <div className="relative" ref={ref}>
       <button
         onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+        className="flex items-center gap-1 px-2 py-1 rounded-md text-[0.7rem] text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
       >
-        <Brain size={12} className="shrink-0" />
-        <span>{current?.label ?? level}</span>
+        <span>思考：{current?.label ?? level}</span>
         <ChevronDown size={12} className="shrink-0" />
       </button>
 
