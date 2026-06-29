@@ -105,3 +105,6 @@ html, body, #root {
 /* 隐藏滚动条（WebKit） */
 .scrollbar-hidden::-webkit-scrollbar { display: none; }
 .scrollbar-hidden { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* highlight.js 语法高亮：背景透明，由外层容器控制 */
+.hljs { background: transparent !important; }

@@ -5,6 +5,7 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import rehypeHighlight from "rehype-highlight";
 import type { ChatMessage, AIConfig, ThinkingLevel, SendAttachment, ToolCall } from "../../lib/types";
 import { getActiveConfig, hasUsableModel } from "../../lib/types";
 import { listPrompts, replaceTemplateVars } from "../../lib/prompts";
@@ -821,8 +822,48 @@ function ThinkingBlock({ content, isLive }: { content: string; isLive?: boolean 
 }
 
 // ═══════════════════════════════════════════════════════════
-//  Markdown 渲染
+//  Markdown 渲染（语法高亮 + 代码块头部）
 // ═══════════════════════════════════════════════════════════
+
+/** 从 hast 节点中递归提取纯文本 */
+function hastToText(nodes: any[] | undefined): string {
+  if (!nodes) return '';
+  let out = '';
+  for (const n of nodes) {
+    if (n.type === 'text') out += n.value;
+    else if (n.type === 'element') out += hastToText(n.children);
+  }
+  return out;
+}
+
+/** 代码块容器：语言标签 + 复制按钮 + 语法高亮 */
+function CodeBlock({ node, children }: { node?: any; children?: React.ReactNode }) {
+  const codeNode = node?.children?.find(
+    (c: any) => c.type === 'element' && c.tagName === 'code'
+  );
+  const lang = (() => {
+    const cls = codeNode?.properties?.className;
+    if (Array.isArray(cls)) {
+      for (const c of cls) {
+        if (typeof c === 'string' && c.startsWith('language-')) return c.slice(9);
+      }
+    }
+    return '';
+  })();
+  const text = hastToText(codeNode?.children);
+
+  return (
+    <div className="my-3 overflow-hidden rounded-lg border border-border bg-background/50">
+      <div className="flex items-center justify-between pl-3 pr-1 py-1 text-xs text-muted-foreground/70 border-b border-border/40">
+        <span className="font-mono">{lang || 'code'}</span>
+        <CopyButton text={text} />
+      </div>
+      <pre className="overflow-x-auto p-3 text-sm font-mono leading-relaxed !bg-transparent !border-0 !my-0">
+        {children}
+      </pre>
+    </div>
+  );
+}
 
 const MarkdownRenderer = memo(function MarkdownRenderer({ content }: { content: string }) {
   if (!content) return null;
@@ -830,12 +871,9 @@ const MarkdownRenderer = memo(function MarkdownRenderer({ content }: { content: 
     <div className="max-w-none wrap-break-word text-sm leading-relaxed space-y-3">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[rehypeHighlight]}
         components={{
-          pre: ({ children }) => (
-            <pre className="bg-background/50 border border-border rounded-lg p-3 overflow-x-auto text-sm font-mono leading-relaxed my-2">
-              {children}
-            </pre>
-          ),
+          pre: ({ node, children }) => <CodeBlock node={node}>{children}</CodeBlock>,
           code: ({ className, children, ...props }) => {
             const isBlock = className?.startsWith("language-");
             if (isBlock) return <code className={className} {...props}>{children}</code>;

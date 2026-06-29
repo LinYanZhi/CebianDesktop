@@ -2,6 +2,8 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Settings, MessageSquarePlus, Bot, History, Server, X, Trash2, Sun, Moon } from "lucide-react";
 import ChatView from "./components/chat/ChatView";
 import SettingsView from "./components/settings/SettingsView";
+// highlight.js 语法高亮主题（暗色模式默认）
+import "highlight.js/styles/github-dark-dimmed.css";
 import { getTools, executeTool, startMcpServer, stopMcpServer } from "./lib/commands";
 import { loadAIConfig, saveAIConfig, loadConversationsFromStorage, saveConversationsToStorage, loadTheme, saveTheme } from "./lib/db";
 import type { Conversation, ChatMessage, AIConfig, SendAttachment, ToolCall } from "./lib/types";
