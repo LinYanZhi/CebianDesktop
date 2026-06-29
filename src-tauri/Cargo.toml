@@ -22,3 +22,6 @@ axum = "0.8"
 ureq = { version = "2.12", features = ["json"] }
 winreg = "0.50"
 clipboard-win = "5.4"
+walkdir = "2"
+sysinfo = "0.32"
+notify-rust = "4"
