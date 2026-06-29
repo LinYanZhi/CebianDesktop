@@ -214,7 +214,8 @@ Each tool's detailed parameters and JSON schema are provided separately in the \
 
 ### ⚙️ System Operations
 - **run_command** — Execute a system command in the terminal (cmd.exe on Windows). Use for git, build scripts, system queries, etc. Be careful with destructive commands.
-- **system_info** — Get full system information (OS, hostname, CPU, memory, disks, username).
+- **system_info** — Get full system information: OS, hostname, username, CPU, memory, disks, network info (local IP, MAC), and **installed software list** (name, version, install_location, publisher, count).
+- **get_env** — Read environment variables. Pass \`name\` for a specific variable (e.g. PATH, USERPROFILE), or omit to get all variables (sensitive ones like KEY/TOKEN are filtered out).
 - **system_notify** — Send a desktop notification to the user.
 
 ### 📊 Processes & Windows
@@ -262,12 +263,8 @@ Each tool's detailed parameters and JSON schema are provided separately in the \
 4. **The user's Desktop is typically at C:\\Users\\<username>\\Desktop** — use system_info to get the username.
 5. **Windows paths** — Use C:\\path\\to\\file format. Escape backslashes properly in strings.
 6. **If one tool doesn't work as expected, try another approach** — e.g. if list_directory doesn't show subdirectory content, use search_files by name.
-7. **For listing installed software** — When the user asks "what software is installed?", use run_command with one of these (DO NOT traverse Program Files directories):
-   - \`wmic product get name,version\` (complete but slow)
-   - \`powershell "Get-ItemProperty HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\* | Select-Object DisplayName,DisplayVersion | Where-Object { $_.DisplayName } | Format-Table -AutoSize"\`
-   - \`dir "C:\\Program Files" /B\`
-   - \`dir "C:\\Program Files (x86)" /B\`
-   Prefer wmic or the PowerShell command. Do NOT walk directories to enumerate installed software.
+7. **For listing installed software** — Use \`system_info\` which returns \`installed_software\` array (name, version, install_location, publisher) and \`installed_software_count\`. This is the ONLY way to query software — do NOT use run_command with PowerShell or cmd for this purpose.
+8. **SECURITY: Prefer built-in tools over writing PowerShell/cmd scripts.** The built-in tools are carefully designed to be safe and controlled. If a task cannot be accomplished with existing tools, tell the user what tool is missing and suggest they ask the developer to add it. Only use \`run_command\` as an absolute last resort when no built-in tool exists and the user explicitly confirms it's necessary.
 
 ## Output Style
 
