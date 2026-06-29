@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import type { AIConfig, ProviderInfo } from "../../lib/types";
 import { listPrompts, savePrompt, deletePrompt, createPromptTemplate } from "../../lib/prompts";
 import type { Prompt } from "../../lib/prompts";
+import { loadMcpConfig, saveMcpConfig, connectMcpServer, disconnectMcpServer } from "../../lib/mcp";
+import type { McpServerConfig } from "../../lib/mcp";
 
 interface SettingsViewProps {
   config: AIConfig;
@@ -390,10 +392,72 @@ function MCPSection({ port, running, onStart, onStop, onPortChange }: {
   port: number; running: boolean;
   onStart: () => void; onStop: () => void; onPortChange: (p: number) => void;
 }) {
+  const [mcpServers, setMcpServers] = useState<McpServerConfig[]>([]);
+  const [connectedServers, setConnectedServers] = useState<string[]>([]);
+  const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  // 加载配置
+  useEffect(() => {
+    loadMcpConfig().then(setMcpServers).catch(() => {});
+    // 查询已连接的服务
+    import("../../lib/mcp").then(m => m.listMcpConnections().then(setConnectedServers).catch(() => {}));
+  }, []);
+
+  const handleAddServer = () => {
+    setEditingServer({ name: "", command: "", args: [], auto_start: false });
+  };
+
+  const handleSaveConfig = async () => {
+    await saveMcpConfig(mcpServers);
+    toast.success("MCP 配置已保存");
+  };
+
+  const handleConnect = async (s: McpServerConfig) => {
+    setLoading(true);
+    try {
+      await connectMcpServer(s.name, s.command, s.args);
+      setConnectedServers(prev => [...prev.filter(n => n !== s.name), s.name]);
+      toast.success(`已连接 ${s.name}`);
+    } catch (e: any) {
+      toast.error("连接失败: " + (e?.toString() || "未知错误"));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDisconnect = async (name: string) => {
+    try {
+      await disconnectMcpServer(name);
+      setConnectedServers(prev => prev.filter(n => n !== name));
+      toast.success(`已断开 ${name}`);
+    } catch (e: any) {
+      toast.error("断开失败: " + (e?.toString() || "未知错误"));
+    }
+  };
+
+  const addServerToList = () => {
+    if (!editingServer) return;
+    if (!editingServer.name.trim() || !editingServer.command.trim()) return;
+    setMcpServers(prev => {
+      const filtered = prev.filter(s => s.name !== editingServer.name);
+      return [...filtered, { ...editingServer }];
+    });
+    setEditingServer(null);
+  };
+
+  const removeServer = (name: string) => {
+    handleDisconnect(name).catch(() => {});
+    setMcpServers(prev => prev.filter(s => s.name !== name));
+  };
+
   return (
     <section>
-      <h2 className="text-base font-semibold mb-4">MCP 服务器</h2>
-      <div className="bg-card border border-border rounded-lg p-4 space-y-4">
+      <h2 className="text-base font-semibold mb-4">MCP</h2>
+
+      {/* ── 内置 MCP 服务器（本应用对外提供工具） ── */}
+      <h3 className="text-sm font-medium text-muted-foreground mb-3">内置 MCP 服务器</h3>
+      <div className="bg-card border border-border rounded-lg p-4 space-y-4 mb-6">
         <div className="flex items-center gap-3">
           <label className="text-sm text-muted-foreground">端口:</label>
           <input type="number" value={port}
@@ -408,6 +472,78 @@ function MCPSection({ port, running, onStart, onStop, onPortChange }: {
           <span className={`w-2 h-2 rounded-full ${running ? 'bg-emerald-500' : 'bg-muted-foreground'}`} />
           <span className="text-muted-foreground">{running ? `服务运行中 (端口 ${port})` : '服务未启动'}</span>
         </div>
+      </div>
+
+      {/* ── 外部 MCP 服务器客户端 ── */}
+      <h3 className="text-sm font-medium text-muted-foreground mb-3">外部 MCP 服务器</h3>
+      <div className="space-y-3">
+        {mcpServers.map(s => {
+          const isConnected = connectedServers.includes(s.name);
+          return (
+            <div key={s.name} className="bg-card border border-border rounded-lg p-4 space-y-2">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">{s.name}</p>
+                  <p className="text-xs text-muted-foreground">{s.command} {s.args.join(" ")}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  {isConnected ? (
+                    <>
+                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      <button onClick={() => handleDisconnect(s.name)} disabled={loading}
+                        className="text-xs text-destructive hover:underline">断开</button>
+                    </>
+                  ) : (
+                    <button onClick={() => handleConnect(s)} disabled={loading}
+                      className="px-3 py-1 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90">连接</button>
+                  )}
+                  <button onClick={() => removeServer(s.name)}
+                    className="text-xs text-muted-foreground hover:text-destructive">删除</button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        {/* 添加新服务器表单 */}
+        {editingServer ? (
+          <div className="bg-card border border-border rounded-lg p-4 space-y-3">
+            <input type="text" value={editingServer.name}
+              onChange={(e) => setEditingServer({ ...editingServer, name: e.target.value })}
+              placeholder="服务器名称（如 my-filesystem）"
+              className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring" />
+            <input type="text" value={editingServer.command}
+              onChange={(e) => setEditingServer({ ...editingServer, command: e.target.value })}
+              placeholder="启动命令（如 npx）"
+              className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring" />
+            <input type="text" value={editingServer.args.join(" ")}
+              onChange={(e) => setEditingServer({ ...editingServer, args: e.target.value.split(/\s+/) })}
+              placeholder="参数（用空格分隔，如 -y @modelcontextprotocol/server-filesystem C:\\path）"
+              className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring" />
+            <div className="flex gap-2">
+              <button onClick={addServerToList}
+                disabled={!editingServer.name.trim() || !editingServer.command.trim()}
+                className="px-4 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50">添加</button>
+              <button onClick={() => setEditingServer(null)}
+                className="px-4 py-1.5 bg-background border border-input rounded-lg text-xs text-muted-foreground hover:border-ring">取消</button>
+            </div>
+          </div>
+        ) : (
+          <button onClick={handleAddServer}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-dashed border-input text-sm text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
+            <Plug size={14} />
+            添加 MCP 服务器
+          </button>
+        )}
+
+        {/* 保存配置 */}
+        {mcpServers.length > 0 && (
+          <button onClick={handleSaveConfig}
+            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90">
+            <Save size={14} />
+            保存 MCP 配置
+          </button>
+        )}
       </div>
     </section>
   );

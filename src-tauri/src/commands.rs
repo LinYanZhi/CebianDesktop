@@ -10,9 +10,10 @@ use tauri::State;
 
 use crate::ai::{call_llm, AIConfig, ChatMessage};
 use crate::config_storage::{
-    save_config, load_config, AppConfig, Conversation, Prompt,
+    save_config, load_config, AppConfig, Conversation, Prompt, McpServerConfig,
     save_conversations as storage_save_convs, load_conversations as storage_load_convs,
 };
+use crate::mcp_client::McpClientManager;
 use crate::server;
 use crate::tools;
 
@@ -34,9 +35,19 @@ impl McpServerState {
 /// 获取 MCP 工具列表
 ///
 /// 返回所有可用工具的 JSON 定义列表，供前端或 MCP 客户端使用
+/// 同时合并外部 MCP 服务器提供的工具
 #[tauri::command]
-pub fn get_tools() -> Vec<Value> {
-    tools::get_tool_definitions()
+pub fn get_tools(mcp: State<'_, McpClientManager>) -> Vec<Value> {
+    let mut tools = tools::get_tool_definitions();
+    // 合并外部 MCP 工具
+    for mcp_tool in mcp.get_tools() {
+        tools.push(serde_json::json!({
+            "name": mcp_tool.prefixed_name,
+            "description": mcp_tool.description,
+            "inputSchema": mcp_tool.input_schema,
+        }));
+    }
+    tools
 }
 
 /// 执行指定的工具
@@ -48,8 +59,13 @@ pub fn get_tools() -> Vec<Value> {
 /// # 返回
 /// 工具执行结果（JSON 格式）
 #[tauri::command]
-pub async fn execute_tool(name: String, args: Value) -> Value {
-    // 使用 spawn_blocking 避免长时间运行的工具阻塞 IPC 线程
+pub async fn execute_tool(name: String, args: Value, mcp: State<'_, McpClientManager>) -> Result<Value, String> {
+    // MCP 工具（前缀 mcp:）路由到 MCP 客户端
+    if name.starts_with("mcp:") {
+        return mcp.call_tool(&name, &args).or_else(|e| Ok(json!({ "error": e })));
+    }
+
+    // 内置工具
     let name_clone = name.clone();
     let result = tokio::task::spawn_blocking(move || {
         tools::execute_tool(&name_clone, &args)
@@ -57,9 +73,9 @@ pub async fn execute_tool(name: String, args: Value) -> Value {
     .await;
 
     match result {
-        Ok(Ok(val)) => val,
-        Ok(Err(e)) => json!({"error": e}),
-        Err(e) => json!({"error": format!("工具执行线程崩溃: {}", e)}),
+        Ok(Ok(val)) => Ok(val),
+        Ok(Err(e)) => Ok(json!({"error": e})),
+        Err(e) => Ok(json!({"error": format!("工具执行线程崩溃: {}", e)})),
     }
 }
 
@@ -243,4 +259,69 @@ pub fn delete_prompt(
     id: String,
 ) -> Result<(), String> {
     crate::config_storage::delete_prompt(&app_handle, &id)
+}
+
+// ─── MCP 客户端管理 ────────────────────────────────────────
+
+/// 连接（启动）一个 MCP 服务器
+#[tauri::command]
+pub fn connect_mcp_server(
+    mcp: State<'_, McpClientManager>,
+    name: String,
+    command: String,
+    args: Vec<String>,
+) -> Result<(), String> {
+    mcp.connect(&name, &command, &args)
+}
+
+/// 断开一个 MCP 服务器
+#[tauri::command]
+pub fn disconnect_mcp_server(
+    mcp: State<'_, McpClientManager>,
+    name: String,
+) -> Result<(), String> {
+    mcp.disconnect(&name)
+}
+
+/// 列出所有已连接的 MCP 服务器
+#[tauri::command]
+pub fn list_mcp_connections(
+    mcp: State<'_, McpClientManager>,
+) -> Vec<String> {
+    mcp.list_connections()
+}
+
+/// 获取所有 MCP 工具定义
+#[tauri::command]
+pub fn get_mcp_tools(
+    mcp: State<'_, McpClientManager>,
+) -> Vec<crate::mcp_client::McpToolDef> {
+    mcp.get_tools()
+}
+
+/// 调用一个 MCP 工具
+#[tauri::command]
+pub fn call_mcp_tool(
+    mcp: State<'_, McpClientManager>,
+    name: String,
+    args: Value,
+) -> Result<Value, String> {
+    mcp.call_tool(&name, &args)
+}
+
+/// 保存 MCP 服务器配置列表
+#[tauri::command]
+pub fn save_mcp_config(
+    app_handle: tauri::AppHandle,
+    servers: Vec<McpServerConfig>,
+) -> Result<(), String> {
+    crate::config_storage::save_mcp_servers(&app_handle, &servers)
+}
+
+/// 加载 MCP 服务器配置列表
+#[tauri::command]
+pub fn load_mcp_config(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<McpServerConfig>, String> {
+    crate::config_storage::load_mcp_servers(&app_handle)
 }

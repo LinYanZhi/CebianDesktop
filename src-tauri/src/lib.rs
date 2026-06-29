@@ -5,10 +5,12 @@
 mod ai;
 mod commands;
 mod config_storage;
+mod mcp_client;
 mod server;
 mod tools;
 
 use commands::McpServerState;
+use mcp_client::McpClientManager;
 
 /// 运行 Tauri 桌面应用
 pub fn run() {
@@ -21,6 +23,7 @@ pub fn run() {
             Ok(())
         })
         .manage(McpServerState::new())
+        .manage(McpClientManager::new())
         .invoke_handler(tauri::generate_handler![
             commands::get_tools,
             commands::execute_tool,
@@ -36,6 +39,13 @@ pub fn run() {
             commands::list_prompts,
             commands::save_prompt,
             commands::delete_prompt,
+            commands::connect_mcp_server,
+            commands::disconnect_mcp_server,
+            commands::list_mcp_connections,
+            commands::get_mcp_tools,
+            commands::call_mcp_tool,
+            commands::save_mcp_config,
+            commands::load_mcp_config,
         ])
         .run(tauri::generate_context!())
         .expect("启动应用时出错");

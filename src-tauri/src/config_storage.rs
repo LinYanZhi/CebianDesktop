@@ -175,3 +175,39 @@ pub fn delete_prompt(app: &tauri::AppHandle, id: &str) -> Result<(), String> {
     }
     save_prompts(app, &prompts)
 }
+
+// ─── MCP 服务器配置存储 ──────────────────────────────────────
+
+/// MCP 服务器配置
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct McpServerConfig {
+    pub name: String,
+    pub command: String,
+    pub args: Vec<String>,
+    /// 是否自动启动
+    #[serde(default)]
+    pub auto_start: bool,
+}
+
+fn mcp_servers_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    Ok(ensure_data_dir(app)?.join("mcp_servers.json"))
+}
+
+pub fn save_mcp_servers(app: &tauri::AppHandle, servers: &[McpServerConfig]) -> Result<(), String> {
+    let path = mcp_servers_path(app)?;
+    let json = serde_json::to_string_pretty(servers)
+        .map_err(|e| format!("序列化 MCP 配置失败: {}", e))?;
+    fs::write(&path, &json)
+        .map_err(|e| format!("写入 MCP 配置文件失败: {}", e))
+}
+
+pub fn load_mcp_servers(app: &tauri::AppHandle) -> Result<Vec<McpServerConfig>, String> {
+    let path = mcp_servers_path(app)?;
+    if !path.exists() {
+        return Ok(vec![]);
+    }
+    let json = fs::read_to_string(&path)
+        .map_err(|e| format!("读取 MCP 配置文件失败: {}", e))?;
+    serde_json::from_str(&json)
+        .map_err(|e| format!("解析 MCP 配置文件失败: {}", e))
+}
