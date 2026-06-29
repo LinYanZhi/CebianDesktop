@@ -71,6 +71,13 @@ pub fn run() {
             commands::export_backup,
             commands::import_backup,
             commands::write_file_to_path,
+            commands::export_workspace_zip,
+            commands::import_workspace_zip,
+            commands::import_workspace_directory,
+            commands::export_workspace_zip_to_path,
+            commands::import_workspace_zip_path,
+            commands::open_file_location,
+            commands::get_workspace_file_path,
         ])
         .run(tauri::generate_context!())
         .expect("启动应用时出错");

@@ -605,6 +605,84 @@ pub fn import_workspace_file(
     workspace::import_file_raw(&app_handle, dir, &content)
 }
 
+/// 将工作区子目录下指定文件导出为 ZIP（base64 编码）
+#[tauri::command]
+pub fn export_workspace_zip(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    ids: Vec<String>,
+) -> Result<String, String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    let data = workspace::export_files_as_zip(&app_handle, dir, &ids)?;
+    Ok(base64_encode(&data))
+}
+
+/// 从 ZIP 导入文件到工作区子目录
+#[tauri::command]
+pub fn import_workspace_zip(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    data: String,
+) -> Result<usize, String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    let bytes = base64_decode(&data)?;
+    workspace::import_files_from_zip(&app_handle, dir, bytes)
+}
+
+/// 从本地目录导入文件到工作区子目录
+#[tauri::command]
+pub fn import_workspace_directory(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    dir_path: String,
+) -> Result<usize, String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    workspace::import_files_from_directory(&app_handle, dir, &dir_path)
+}
+
+/// 将工作区子目录下指定文件导出为 ZIP 并写入到指定路径
+#[tauri::command]
+pub fn export_workspace_zip_to_path(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    ids: Vec<String>,
+    path: String,
+) -> Result<usize, String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    workspace::export_files_as_zip_to_path(&app_handle, dir, &ids, &path)
+}
+
+/// 从 ZIP 文件路径导入文件到工作区子目录
+#[tauri::command]
+pub fn import_workspace_zip_path(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    zip_path: String,
+) -> Result<usize, String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    workspace::import_files_from_zip_path(&app_handle, dir, &zip_path)
+}
+
 // ─── 打开文件管理器 ─────────────────────────────────────────
 
 /// 在文件管理器中打开工作区子目录
@@ -622,6 +700,36 @@ pub fn open_workspace_dir(app_handle: tauri::AppHandle, sub: String) -> Result<S
         .spawn()
         .map_err(|e| format!("打开目录失败: {}", e))?;
     Ok(path_str)
+}
+
+/// 在文件管理器中打开并定位到工作区中指定文件
+#[tauri::command]
+pub fn open_file_location(app_handle: tauri::AppHandle, sub: String, id: String) -> Result<String, String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    let path = workspace::get_file_path(&app_handle, dir, &id)?;
+    let path_str = path.to_string_lossy().to_string();
+    // Windows: explorer /select,<path> 会打开目录并选中文件
+    std::process::Command::new("explorer")
+        .args(["/select,", &path_str])
+        .spawn()
+        .map_err(|e| format!("打开文件位置失败: {}", e))?;
+    Ok(path_str)
+}
+
+/// 获取工作区文件的绝对路径（不打开资源管理器）
+#[tauri::command]
+pub fn get_workspace_file_path(app_handle: tauri::AppHandle, sub: String, id: String) -> Result<String, String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    let path = workspace::get_file_path(&app_handle, dir, &id)?;
+    Ok(path.to_string_lossy().to_string())
 }
 
 // ─── 备份与恢复 ─────────────────────────────────────────────
