@@ -16,6 +16,7 @@ use crate::config_storage::{
 use crate::mcp_client::McpClientManager;
 use crate::server;
 use crate::tools;
+use crate::workspace;
 
 /// MCP 服务器运行时状态
 pub struct McpServerState {
@@ -324,4 +325,160 @@ pub fn load_mcp_config(
     app_handle: tauri::AppHandle,
 ) -> Result<Vec<McpServerConfig>, String> {
     crate::config_storage::load_mcp_servers(&app_handle)
+}
+
+// ─── 工作区文件管理 ─────────────────────────────────────────
+
+/// 列出工作区子目录下的所有文件
+#[tauri::command]
+pub fn list_workspace_files(
+    app_handle: tauri::AppHandle,
+    sub: String,
+) -> Result<Vec<workspace::WorkspaceFile>, String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    workspace::list_files(&app_handle, dir)
+}
+
+/// 读取工作区文件
+#[tauri::command]
+pub fn read_workspace_file(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    id: String,
+) -> Result<workspace::WorkspaceFile, String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    workspace::read_file(&app_handle, dir, &id)
+}
+
+/// 写入工作区文件（创建或更新）
+#[tauri::command]
+pub fn write_workspace_file(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    id: String,
+    name: String,
+    description: String,
+    content: String,
+) -> Result<(), String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    workspace::write_file(&app_handle, dir, &id, &name, &description, &content)
+}
+
+/// 删除工作区文件
+#[tauri::command]
+pub fn delete_workspace_file(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    id: String,
+) -> Result<(), String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    workspace::delete_file(&app_handle, dir, &id)
+}
+
+/// 生成工作区文件 ID
+#[tauri::command]
+pub fn generate_workspace_id() -> String {
+    workspace::generate_id()
+}
+
+// ─── 备份与恢复 ─────────────────────────────────────────────
+
+/// 导出备份为 base64 字符串（供前端下载）
+#[tauri::command]
+pub fn export_backup(
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    let data = workspace::export_backup(&app_handle)?;
+    Ok(base64_encode(&data))
+}
+
+/// 从 base64 字符串导入备份
+#[tauri::command]
+pub fn import_backup(
+    app_handle: tauri::AppHandle,
+    data: String,
+) -> Result<(), String> {
+    let bytes = base64_decode(&data)?;
+    workspace::import_backup(&app_handle, bytes)
+}
+
+// base64 辅助
+fn base64_encode(data: &[u8]) -> String {
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut result = String::new();
+    for chunk in data.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        result.push(CHARS[((triple >> 18) & 0x3F) as usize] as char);
+        result.push(CHARS[((triple >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            result.push(CHARS[((triple >> 6) & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+        if chunk.len() > 2 {
+            result.push(CHARS[(triple & 0x3F) as usize] as char);
+        } else {
+            result.push('=');
+        }
+    }
+    result
+}
+
+fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
+    const DECODE: [i8; 256] = {
+        let mut table = [-1i8; 256];
+        let chars = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut i = 0;
+        while i < 64 {
+            table[chars[i] as usize] = i as i8;
+            i += 1;
+        }
+        table
+    };
+
+    let input = input.trim();
+    let mut output = Vec::with_capacity(input.len() * 3 / 4);
+    let bytes = input.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i] != b'=' {
+        let mut sextets = [0i8; 4];
+        for j in 0..4 {
+            if i + j >= bytes.len() || bytes[i + j] == b'=' {
+                sextets[j] = -1;
+            } else {
+                let b = bytes[i + j] as usize;
+                if b >= 256 { return Err("无效 base64 字符".into()); }
+                sextets[j] = DECODE[b];
+                if sextets[j] == -1 { return Err(format!("无效 base64 字符: {}", bytes[i + j] as char)); }
+            }
+        }
+        let triple = ((sextets[0] as u32) << 18)
+            | ((sextets[1] as u32) << 12)
+            | (if sextets[2] >= 0 { (sextets[2] as u32) << 6 } else { 0 })
+            | (if sextets[3] >= 0 { sextets[3] as u32 } else { 0 });
+        output.push((triple >> 16) as u8);
+        if sextets[2] >= 0 { output.push((triple >> 8) as u8); }
+        if sextets[3] >= 0 { output.push(triple as u8); }
+        i += 4;
+    }
+    Ok(output)
 }

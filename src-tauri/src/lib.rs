@@ -8,6 +8,7 @@ mod config_storage;
 mod mcp_client;
 mod server;
 mod tools;
+mod workspace;
 
 use commands::McpServerState;
 use mcp_client::McpClientManager;
@@ -46,6 +47,13 @@ pub fn run() {
             commands::call_mcp_tool,
             commands::save_mcp_config,
             commands::load_mcp_config,
+            commands::list_workspace_files,
+            commands::read_workspace_file,
+            commands::write_workspace_file,
+            commands::delete_workspace_file,
+            commands::generate_workspace_id,
+            commands::export_backup,
+            commands::import_backup,
         ])
         .run(tauri::generate_context!())
         .expect("启动应用时出错");

@@ -1,8 +1,8 @@
 /**
  * Slash Prompts — 斜杠提示词管理
  *
- * 提示词存储在 app_data_dir/prompts.json，每个 Prompt 包含：
- *   id, name（显示名）, description（说明）, content（正文）
+ * 提示词存储在 app_data_dir/workspace/prompts/ 下，每个文件是 .md 格式
+ * 用 workspace.ts 进行文件 CRUD。
  *
  * 模板变量（在 ChatInput 中使用时替换）：
  *   {{date}} — 当前日期
@@ -10,58 +10,48 @@
  *   {{clipboard}} — 剪贴板内容
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import {
+  listWorkspaceFiles,
+  writeWorkspaceFile,
+  deleteWorkspaceFile,
+  generateWorkspaceId,
+} from "./workspace";
+import type { WorkspaceFile } from "./workspace";
 
-export interface Prompt {
-  id: string;
-  name: string;
-  description: string;
-  content: string;
-  created_at: number;
-  updated_at: number;
-}
-
-function generateId(): string {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
-}
+export type { WorkspaceFile };
+export type Prompt = WorkspaceFile;
 
 /** 创建空提示词模板 */
-export function createPromptTemplate(): Prompt {
-  const now = Date.now();
+export async function createPromptTemplate(): Promise<Prompt> {
+  const id = await generateWorkspaceId();
   return {
-    id: generateId(),
+    id,
+    filename: `${id}.md`,
     name: "",
     description: "",
     content: "",
-    created_at: now,
-    updated_at: now,
+    created_at: Date.now(),
+    updated_at: Date.now(),
   };
 }
 
 /** 列出所有提示词 */
 export async function listPrompts(): Promise<Prompt[]> {
-  try {
-    return await invoke<Prompt[]>("list_prompts");
-  } catch (e) {
-    console.error("listPrompts 失败:", e);
-    return [];
-  }
+  return listWorkspaceFiles("prompts");
 }
 
 /** 保存单个提示词（创建或更新） */
 export async function savePrompt(prompt: Prompt): Promise<void> {
-  return invoke("save_prompt", { prompt: { ...prompt, updated_at: Date.now() } });
+  return writeWorkspaceFile("prompts", prompt.id, prompt.name, prompt.description, prompt.content);
 }
 
 /** 删除一个提示词 */
 export async function deletePrompt(id: string): Promise<void> {
-  return invoke("delete_prompt", { id });
+  return deleteWorkspaceFile("prompts", id);
 }
 
 /**
  * 替换 prompt content 中的模板变量。
- * CebianDesktop 的变量比 Cebian 少（没有页面相关变量），
- * 只保留本地可用的。
  */
 export function replaceTemplateVars(content: string): Promise<string> {
   const now = new Date();
@@ -74,7 +64,6 @@ export function replaceTemplateVars(content: string): Promise<string> {
     .replace(/\{\{time\}\}/g, timeStr)
     .replace(/\{\{weekday\}\}/g, weekday);
 
-  // {{clipboard}} 需要异步读取
   if (result.includes("{{clipboard}}")) {
     return navigator.clipboard.readText()
       .then((clipText) => result.replace(/\{\{clipboard\}\}/g, clipText))

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import {
   ArrowLeft, Bot, Key, MessageSquare, FileText, Puzzle, Plug,
-  DatabaseBackup, HardDrive, Sliders, Info, Eye, EyeOff, Save, Unplug, Plus, Trash2
+  DatabaseBackup, HardDrive, Sliders, Info, Eye, EyeOff, Save, Unplug, Plus, Trash2, Download, Upload
 } from "lucide-react";
 import { toast } from "sonner";
 import type { AIConfig, ProviderInfo } from "../../lib/types";
@@ -9,6 +9,15 @@ import { listPrompts, savePrompt, deletePrompt, createPromptTemplate } from "../
 import type { Prompt } from "../../lib/prompts";
 import { loadMcpConfig, saveMcpConfig, connectMcpServer, disconnectMcpServer } from "../../lib/mcp";
 import type { McpServerConfig } from "../../lib/mcp";
+import {
+  listWorkspaceFiles,
+  writeWorkspaceFile,
+  deleteWorkspaceFile,
+  generateWorkspaceId,
+  exportBackup,
+  importBackup,
+} from "../../lib/workspace";
+import type { WorkspaceFile } from "../../lib/workspace";
 
 interface SettingsViewProps {
   config: AIConfig;
@@ -223,12 +232,12 @@ function PromptsSection() {
   };
 
   // 新建
-  const handleNew = () => {
+  const handleNew = async () => {
     if (dirty) {
       toast.warning("请先保存当前编辑的提示词");
       return;
     }
-    const blank = createPromptTemplate();
+    const blank = await createPromptTemplate();
     setEditing(blank);
     setSelectedId(blank.id);
     setDirty(true);
@@ -380,10 +389,132 @@ function PromptsSection() {
 }
 
 function SkillsSection() {
+  const [skills, setSkills] = useState<WorkspaceFile[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<WorkspaceFile | null>(null);
+  const [dirty, setDirty] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const load = async () => {
+    const list = await listWorkspaceFiles("skills");
+    setSkills(list);
+  };
+  useEffect(() => { load(); }, []);
+
   return (
     <section>
       <h2 className="text-base font-semibold mb-4">技能</h2>
-      <p className="text-sm text-muted-foreground">暂无可用技能。技能可以扩展 AI 的能力。</p>
+      <p className="text-sm text-muted-foreground mb-4">
+        技能是可以让 AI 按需调用的能力模块。每个技能是一个 .md 文件，存放在工作区的 skills/ 目录。
+      </p>
+
+      <div className="flex gap-4 h-[400px]">
+        <div className="w-56 shrink-0 flex flex-col gap-2">
+          <button onClick={async () => {
+            if (dirty) { toast.warning("请先保存当前编辑的技能"); return; }
+            const id = await generateWorkspaceId();
+            const blank: WorkspaceFile = {
+              id, filename: `${id}.md`, name: "", description: "", content: "",
+              created_at: Date.now(), updated_at: Date.now(),
+            };
+            setEditing(blank);
+            setSelectedId(blank.id);
+            setDirty(true);
+          }}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-input text-sm text-muted-foreground hover:text-foreground hover:border-ring transition-colors"
+          >
+            <Plus size={14} /> 新建技能
+          </button>
+          <div className="flex-1 overflow-y-auto space-y-0.5 border border-border rounded-lg p-1">
+            {skills.length === 0 ? (
+              <p className="text-xs text-muted-foreground text-center py-8">暂无技能</p>
+            ) : (
+              skills.map(s => (
+                <button key={s.id}
+                  onClick={() => {
+                    if (dirty) { toast.warning("请先保存当前编辑"); return; }
+                    setSelectedId(s.id);
+                    setEditing({ ...s });
+                    setDirty(false);
+                  }}
+                  className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
+                    selectedId === s.id
+                      ? "bg-accent text-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                  }`}
+                >
+                  <div className="truncate">{s.name || "(未命名)"}</div>
+                  {s.description && (
+                    <div className="text-[10px] text-muted-foreground truncate mt-0.5">{s.description}</div>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+
+        <div className="flex-1 flex flex-col border border-border rounded-lg p-4 overflow-y-auto">
+          {!editing ? (
+            <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
+              请选择或创建一个技能
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">名称</label>
+                <input type="text" value={editing.name}
+                  onChange={(e) => { setEditing({ ...editing, name: e.target.value }); setDirty(true); }}
+                  placeholder="如 web-researcher" className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">描述</label>
+                <input type="text" value={editing.description}
+                  onChange={(e) => { setEditing({ ...editing, description: e.target.value }); setDirty(true); }}
+                  placeholder="简短描述这个技能的用途" className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring" />
+              </div>
+              <div>
+                <label className="text-xs font-medium text-muted-foreground block mb-1">内容</label>
+                <textarea value={editing.content}
+                  onChange={(e) => { setEditing({ ...editing, content: e.target.value }); setDirty(true); }}
+                  placeholder="技能定义内容（Markdown 格式）" rows={10}
+                  className="w-full bg-background border border-input rounded-lg p-3 text-sm outline-none focus:border-ring resize-none font-mono" />
+              </div>
+              <div className="flex items-center gap-3 pt-2">
+                <button onClick={async () => {
+                  if (!editing.name.trim()) { toast.error("请输入技能名称"); return; }
+                  setLoading(true);
+                  try {
+                    await writeWorkspaceFile("skills", editing.id, editing.name, editing.description, editing.content);
+                    toast.success("保存成功");
+                    setDirty(false);
+                    await load();
+                    setSelectedId(editing.id);
+                  } catch (e: any) {
+                    toast.error("保存失败: " + (e?.toString() || "未知错误"));
+                  } finally { setLoading(false); }
+                }} disabled={loading || !dirty}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50">
+                  <Save size={14} /> {loading ? "保存中..." : "保存"}
+                </button>
+                <button onClick={async () => {
+                  try {
+                    await deleteWorkspaceFile("skills", editing.id);
+                    toast.success("已删除");
+                    setSelectedId(null); setEditing(null); setDirty(false);
+                    await load();
+                  } catch (e: any) {
+                    toast.error("删除失败: " + (e?.toString() || "未知错误"));
+                  }
+                }}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-destructive/10 text-destructive rounded-lg text-xs font-medium hover:bg-destructive/20 border border-destructive/30">
+                  <Trash2 size={14} /> 删除
+                </button>
+                {dirty && <span className="text-xs text-amber-500 ml-2">有未保存的修改</span>}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
     </section>
   );
 }
@@ -550,12 +681,75 @@ function MCPSection({ port, running, onStart, onStop, onPortChange }: {
 }
 
 function BackupSection() {
+  const [backingUp, setBackingUp] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleExport = async () => {
+    setBackingUp(true);
+    try {
+      const base64 = await exportBackup();
+      // 创建下载链接
+      const byteChars = atob(base64);
+      const bytes = new Uint8Array(byteChars.length);
+      for (let i = 0; i < byteChars.length; i++) {
+        bytes[i] = byteChars.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: "application/zip" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `cebiandesktop-backup-${new Date().toISOString().slice(0, 10)}.zip`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("备份下载完成");
+    } catch (e: any) {
+      toast.error("导出失败: " + (e?.toString() || "未知错误"));
+    } finally {
+      setBackingUp(false);
+    }
+  };
+
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      const arrayBuf = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuf);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64 = btoa(binary);
+      await importBackup(base64);
+      toast.success("备份恢复成功，请重启应用以生效");
+    } catch (e: any) {
+      toast.error("导入失败: " + (e?.toString() || "未知错误"));
+    } finally {
+      setImporting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   return (
     <section>
       <h2 className="text-base font-semibold mb-4">备份与恢复</h2>
-      <div className="flex gap-2">
-        <button className="px-4 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90">导出备份</button>
-        <button className="px-4 py-2 bg-background border border-input rounded-lg text-xs font-medium text-muted-foreground hover:border-ring">导入恢复</button>
+      <p className="text-sm text-muted-foreground mb-4">
+        导出备份包含：工作区文件（提示词、技能）、对话记录、AI 配置、MCP 配置。
+      </p>
+      <div className="flex gap-3">
+        <button onClick={handleExport} disabled={backingUp}
+          className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50">
+          <Download size={14} />
+          {backingUp ? "导出中..." : "导出备份"}
+        </button>
+        <button onClick={() => fileInputRef.current?.click()} disabled={importing}
+          className="flex items-center gap-1.5 px-4 py-2 bg-background border border-input rounded-lg text-xs font-medium text-muted-foreground hover:border-ring disabled:opacity-50">
+          <Upload size={14} />
+          {importing ? "导入中..." : "导入恢复"}
+        </button>
+        <input ref={fileInputRef} type="file" accept=".zip" onChange={handleImport} className="hidden" />
       </div>
     </section>
   );
