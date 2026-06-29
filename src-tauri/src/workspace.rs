@@ -144,6 +144,37 @@ pub fn get_subdir_path(app: &tauri::AppHandle, sub: WorkspaceDir) -> Result<Path
     subdir_path(app, sub)
 }
 
+/// 将技能名转换为安全的文件名（仅保留 ASCII 字母、数字、下划线、连字符）
+fn sanitize_to_filename(name: &str) -> String {
+    let s: String = name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect();
+    let s = s.trim_matches('_').to_string();
+    if s.is_empty() { "unnamed".to_string() } else { s }
+}
+
+/// 基于技能名生成安全的 .md 文件名，自动处理冲突（追加 _1, _2, …）
+pub fn resolve_skill_filename(app: &tauri::AppHandle, sub: WorkspaceDir, name: &str) -> Result<String, String> {
+    let dir = subdir_path(app, sub)?;
+    let base = sanitize_to_filename(name);
+    let candidate = format!("{}.md", base);
+    if !dir.join(&candidate).exists() {
+        return Ok(candidate);
+    }
+    // 同名文件已存在，追加数字后缀
+    for i in 1..100 {
+        let candidate = format!("{}_{}.md", base, i);
+        if !dir.join(&candidate).exists() {
+            return Ok(candidate);
+        }
+    }
+    // 极端情况：100+ 个同名，用时间戳后缀
+    let ts = generate_id();
+    let suffix = &ts[..6];
+    Ok(format!("{}_{}.md", base, suffix))
+}
+
 /// 列出工作区子目录下的所有文件和子目录（递归）
 pub fn list_files(app: &tauri::AppHandle, sub: WorkspaceDir) -> Result<Vec<WorkspaceFile>, String> {
     let dir = subdir_path(app, sub)?;

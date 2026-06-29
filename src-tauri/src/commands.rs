@@ -81,11 +81,11 @@ pub async fn execute_tool(name: String, args: Value, mcp: State<'_, McpClientMan
             let name_val = args.get("name").and_then(|v| v.as_str()).ok_or("缺少 name 参数")?;
             let description = args.get("description").and_then(|v| v.as_str()).unwrap_or("");
             let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let id = workspace::generate_id();
-            let file_id = format!("{}.md", id);
+            let file_id = workspace::resolve_skill_filename(&app_handle, workspace::WorkspaceDir::Skills, name_val)?;
+            let skill_id = file_id.strip_suffix(".md").unwrap_or(&file_id).to_string();
             workspace::write_file(&app_handle, workspace::WorkspaceDir::Skills, &file_id, name_val, description, content)?;
             return Ok(json!({
-                "id": id,
+                "id": skill_id,
                 "name": name_val,
                 "filename": file_id,
                 "message": format!("技能「{}」已创建成功。AI 现在可以通过 skill_{} 工具调用此技能。", name_val, name_val.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect::<String>()),
@@ -162,11 +162,11 @@ pub fn execute_tool_internal(name: &str, args: &Value, app_handle: &tauri::AppHa
             let name_val = args.get("name").and_then(|v| v.as_str()).ok_or("缺少 name 参数")?;
             let description = args.get("description").and_then(|v| v.as_str()).unwrap_or("");
             let content = args.get("content").and_then(|v| v.as_str()).unwrap_or("");
-            let id = workspace::generate_id();
-            let file_id = format!("{}.md", id);
+            let file_id = workspace::resolve_skill_filename(app_handle, workspace::WorkspaceDir::Skills, name_val)?;
+            let skill_id = file_id.strip_suffix(".md").unwrap_or(&file_id).to_string();
             workspace::write_file(app_handle, workspace::WorkspaceDir::Skills, &file_id, name_val, description, content)?;
             Ok(json!({
-                "id": id,
+                "id": skill_id,
                 "name": name_val,
                 "filename": file_id,
                 "message": format!("技能「{}」已创建成功。AI 现在可以通过 skill_{} 工具调用此技能。", name_val, name_val.chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect::<String>()),
