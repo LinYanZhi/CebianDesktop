@@ -618,8 +618,12 @@ function AgentMessageBlock({ msg, isStreaming, isLast, onRetry }: {
         <div className="flex items-center gap-2 mt-1">
           <CopyButton text={msg.content} />
           {msg.usage && (
-            <span className="text-[0.65rem] text-muted-foreground/60 tabular-nums">
-              {msg.usage.input}↑{msg.usage.output}↓
+            <span className="inline-flex items-center gap-1 text-[0.6rem] text-muted-foreground/70 tabular-nums bg-muted/50 px-1.5 py-0.5 rounded-md">
+              <span title="输入 token">↑{msg.usage.input}</span>
+              <span className="text-muted-foreground/30">·</span>
+              <span title="输出 token">↓{msg.usage.output}</span>
+              <span className="text-muted-foreground/30">·</span>
+              <span title="总计 token" className="font-medium">∑{msg.usage.input + msg.usage.output}</span>
             </span>
           )}
           {isLast && onRetry && (
@@ -1287,6 +1291,25 @@ export default function ChatView({
   return (
     <div className="flex-1 w-full min-w-0 flex flex-col h-full">
       <div ref={containerRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
+        {/* 累计 Token 用量 */}
+        {(() => {
+          const total = messages.reduce((acc, m) => {
+            if (m.role === "assistant" && m.usage) {
+              return acc + m.usage.input + m.usage.output;
+            }
+            return acc;
+          }, 0);
+          if (total <= 0) return null;
+          return (
+            <div className="sticky top-0 z-10 flex justify-center pt-2 pb-1 bg-gradient-to-b from-background to-transparent pointer-events-none">
+              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-[0.55rem] text-muted-foreground/60 tabular-nums">
+                <span>累计消耗</span>
+                <span className="font-medium">{total.toLocaleString()}</span>
+                <span>tokens</span>
+              </div>
+            </div>
+          );
+        })()}
         <div className="flex flex-col gap-4 py-4 px-5">
           {messages.map((msg, i) =>
             msg.role === "user" ? (
