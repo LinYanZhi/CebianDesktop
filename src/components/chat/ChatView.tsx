@@ -9,6 +9,7 @@ import type { ChatMessage, AIConfig, ThinkingLevel, SendAttachment, ToolCall } f
 import { getActiveConfig, hasUsableModel } from "../../lib/types";
 import { listPrompts, replaceTemplateVars } from "../../lib/prompts";
 import type { Prompt } from "../../lib/prompts";
+import { useSpeechRecognition } from "../../lib/useSpeechRecognition";
 import { toast } from "sonner";
 
 interface ChatViewProps {
@@ -869,6 +870,16 @@ function ChatInput({
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [selectedPromptIdx, setSelectedPromptIdx] = useState(0);
 
+  // ── Speech Recognition ──
+  const inputValueRef = useRef(inputValue);
+  inputValueRef.current = inputValue;
+  const speech = useSpeechRecognition(
+    (text) => {
+      setInputValue(inputValueRef.current + text);
+    },
+    "zh-CN",
+  );
+
   // 扫描提示词（输入 / 时触发）
   useEffect(() => {
     if (!showSlash) return;
@@ -1113,11 +1124,34 @@ function ChatInput({
             </div>
 
             <div className="flex items-center gap-2">
-              <button className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-30"
-                disabled title="语音输入"
-              >
-                <Mic size={15} />
-              </button>
+              {speech.listening ? (
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/10 text-primary text-xs">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
+                  </span>
+                  <span className="text-[10px]">{speech.interimText || "语音输入中..."}</span>
+                  <button onClick={speech.stop}
+                    className="ml-1 p-0.5 rounded hover:bg-primary/20">
+                    <X size={12} />
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => {
+                    if (!speech.supported) {
+                      toast.error("浏览器不支持语音识别");
+                      return;
+                    }
+                    speech.start();
+                  }}
+                  disabled={loading}
+                  className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-30"
+                  title="语音输入"
+                >
+                  <Mic size={15} />
+                </button>
+              )}
               {loading ? (
                 <button onClick={onStop}
                   className="p-2 bg-destructive text-destructive-foreground rounded-lg hover:bg-destructive/90 transition-colors flex items-center justify-center"
