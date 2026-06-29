@@ -36,6 +36,12 @@ function parseAskUserArgs(args: any): {
   title?: string;
   description?: string;
   submit_label?: string;
+  pagination?: {
+    type: "wizard";
+    show_progress?: boolean;
+    allow_skip?: boolean;
+    allow_review?: boolean;
+  };
   questions: Array<{
     id: string;
     type: string;
@@ -47,6 +53,8 @@ function parseAskUserArgs(args: any): {
     allow_free_text?: boolean;
     min_select?: number;
     max_select?: number;
+    step?: number;
+    step_title?: string;
   }>;
 } {
   // 新版：questions JSON 数组
@@ -58,6 +66,7 @@ function parseAskUserArgs(args: any): {
           title: args.title,
           description: args.description,
           submit_label: args.submit_label,
+          pagination: args.pagination,
           questions: qs.map((q: any) => ({
             id: q.id || `q_${Math.random().toString(36).slice(2, 6)}`,
             type: q.type || "text",
@@ -69,6 +78,8 @@ function parseAskUserArgs(args: any): {
             allow_free_text: q.allow_free_text,
             min_select: q.min_select,
             max_select: q.max_select,
+            step: q.step,
+            step_title: q.step_title,
           })),
         };
       }
@@ -198,7 +209,7 @@ Each tool's detailed parameters and JSON schema are provided separately in the \
 
 ### 💬 Interactive (ask_user)
 - **ask_user** \u2014 Present a dynamic form or question to the user and wait for their response. This is your PRIMARY way to interact with the user when you need information, decisions, or confirmations.
-  - **Single question**: Use \`question\` + \`type\` (text/confirm/select) for simple cases.
+  - **Single question (compact)**: Use \`question\` + \`type\` (text/confirm/select) for simple cases. Single field with no title renders compact.
   - **Multi-field form**: Use the \`questions\` JSON array for complex forms. Each question has:
     - \`id\` (required): Unique key for the answer
     - \`question\` (required): The text shown to the user
@@ -209,10 +220,12 @@ Each tool's detailed parameters and JSON schema are provided separately in the \
     - \`placeholder\`: Placeholder text for text/textarea fields
     - \`allow_free_text\`: Allow custom input alongside predefined options
     - \`min_select\` / \`max_select\`: Selection limits for multi_select
+  - **Wizard (multi-step)**: Add \`pagination: { type: "wizard" }\` + assign each question a \`step\` number (1-based) and optional \`step_title\`. Supports \`show_progress\`, \`allow_skip\`, \`allow_review\`.
   - **Form options**: \`title\` (form heading), \`description\` (form-level helper text), \`submit_label\` (custom button text)
   - **Examples**:
     - Simple confirm: \`{question: "Delete file?", type: "confirm"}\`
     - Multi-field form: \`{title: "New Project", questions: [{id:"name", question:"Project name", required:true}, {id:"type", question:"Project type", type:"single_select", options:[{label:"Web",value:"web"},{label:"Desktop",value:"desktop"}]}]}\`
+    - Wizard: \`{title: "Setup", pagination: {type:"wizard"}, questions: [{id:"step1", question:"...", step:1, step_title:"Basic"}, {id:"step2", question:"...", step:2}]}\`
   - Do NOT ask questions in plain text \u2014 always use this tool for structured interaction.
 
 ## Important Rules
@@ -364,6 +377,12 @@ export default function App() {
     title?: string;
     description?: string;
     submit_label?: string;
+    pagination?: {
+      type: "wizard";
+      show_progress?: boolean;
+      allow_skip?: boolean;
+      allow_review?: boolean;
+    };
     questions: Array<{
       id: string;
       type: string;
@@ -375,6 +394,8 @@ export default function App() {
       allow_free_text?: boolean;
       min_select?: number;
       max_select?: number;
+      step?: number;
+      step_title?: string;
     }>;
   } | null>(null);
   const interactiveResolveRef = useRef<((value: string | null) => void) | null>(null);

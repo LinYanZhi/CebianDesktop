@@ -176,18 +176,30 @@ pub fn get_tool_definitions() -> Vec<Value> {
              \n- single_select: 单选（radio 按钮）\
              \n- multi_select: 多选（checkbox）\
              \n- dropdown: 下拉选择\
+             \n\n三种展示模式：\
+             \n1. 紧凑模式（Compact）：单字段 + 无 title + 无 description 时自动使用，\
+             \n   选项直接显示为可点击按钮，点选即返回，无需额外提交。\
+             \n2. 表单模式（Form）：多字段或设置了 title/description 时使用，\
+             \n   显示完整表单，用户填完后点「提交」。\
+             \n3. 分步向导模式（Wizard）：使用 pagination.type=\"wizard\" 启用，\
+             \n   配合 step 字段分页展示，适合多步配置场景。\
+             \n   - show_progress: 是否显示进度条（默认 true）\
+             \n   - allow_skip: 是否允许跳过非必填步骤（默认 false）\
+             \n   - allow_review: 是否显示最终确认步骤（默认 true）\
              \n\n你可以：\
              \n- 一次展示多个字段（questions 数组），构成完整表单\
              \n- 为表单添加 title 和 description\
              \n- 为每个字段设置 required、placeholder、message 辅助文字\
              \n- 为选择字段设置 options（每个含 label、value、description、recommended）\
+             \n- 多步表单给每个字段设置 step（1-based）和 step_title（步骤标题）\
              \n\nquestion 是旧版单字段模式的参数，新用法请使用 questions 数组。\
              \n每个 question 对象需要 id（唯一键名）和 question（显示文本）。",
             &[
                 ("title", "string", "（可选）表单标题，多字段时建议提供"),
                 ("description", "string", "（可选）表单说明文字"),
                 ("submit_label", "string", "（可选）提交按钮文字，默认「提交」"),
-                ("questions", "string", "（推荐）JSON 字符串，字段数组。每个元素包含 id（唯一键名）、question（问题文本）、type（可选，text/textarea/confirm/single_select/multi_select/dropdown）、options（可选，选择类型的选项数组）、required（可选，是否必填）、placeholder（可选）、message（可选，辅助说明）、allow_free_text（可选）、min_select（可选）、max_select（可选）"),
+                ("pagination", "string", "（可选）JSON 字符串，分页配置。仅支持 type: wizard。字段：show_progress（是否显示进度条）、allow_skip（是否允许跳过）、allow_review（是否显示确认步骤）"),
+                ("questions", "string", "（推荐）JSON 字符串，字段数组。每个元素包含 id（唯一键名）、question（问题文本）、type（可选，text/textarea/confirm/single_select/multi_select/dropdown）、options（可选，选择类型的选项数组，每项含 label、value、description、recommended）、required（可选，是否必填）、placeholder（可选）、message（可选，辅助说明）、allow_free_text（可选）、min_select（可选）、max_select（可选）、step（可选，分步骤号，1-based）、step_title（可选，步骤标题）"),
                 ("question", "string", "（旧版，单字段时使用）向用户提出的问题"),
                 ("type", "string", "（旧版，仅配合 question 使用）问题类型：text / confirm / select"),
                 ("options", "string", "（旧版，仅配合 question+select 使用）JSON 选项数组"),
