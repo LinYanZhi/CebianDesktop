@@ -2,11 +2,12 @@ import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowLeft, Bot, Key, MessageSquare, FileText, Puzzle, Plug,
-  DatabaseBackup, HardDrive, Sliders, Info, Eye, EyeOff, Save, Unplug, Plus, Trash2, Download, Upload, FolderOpen
+  DatabaseBackup, HardDrive, Sliders, Info, Eye, EyeOff, Save, Unplug, Plus, Trash2, Download, Upload, FolderOpen,
+  Search, FilePlus, FileCode, MoreHorizontal, Pencil,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { AIConfig, ProviderInfo } from "../../lib/types";
-import { loadMcpConfig, saveMcpConfig, connectMcpServer, disconnectMcpServer } from "../../lib/mcp";
+import { loadMcpConfig, connectMcpServer, disconnectMcpServer } from "../../lib/mcp";
 import type { McpServerConfig } from "../../lib/mcp";
 import {
   listWorkspaceFiles,
@@ -20,6 +21,7 @@ import {
   openWorkspaceDir,
 } from "../../lib/workspace";
 import type { WorkspaceFile } from "../../lib/workspace";
+import { CodeMirrorEditor } from "../editor/CodeMirrorEditor";
 
 interface SettingsViewProps {
   config: AIConfig;
@@ -51,6 +53,38 @@ const NAV_ITEMS: NavItem[] = [
   { id: "about", label: "关于", icon: Info },
 ];
 
+// ─── ContextMenu 组件 ──────────────────────────────────
+
+interface ContextMenuItem {
+  label: string;
+  icon?: React.ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+}
+
+function ContextMenu({ x, y, items, onClose }: { x: number; y: number; items: ContextMenuItem[]; onClose: () => void }) {
+  useEffect(() => {
+    const handler = () => onClose();
+    window.addEventListener("scroll", handler, true);
+    return () => window.removeEventListener("scroll", handler, true);
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-[9999]" onClick={onClose} onContextMenu={(e) => e.preventDefault()}>
+      <div className="absolute bg-popover border border-border rounded-lg shadow-xl py-1 min-w-[140px] z-50"
+        style={{ left: x, top: y }}>
+        {items.map((item, i) => (
+          <button key={i} onClick={() => { item.onClick(); onClose(); }}
+            className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors ${item.danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-accent"}`}>
+            {item.icon && <span className="shrink-0">{item.icon}</span>}
+            {item.label}
+          </button>
+        ))}
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
 // ─── 各 Section 组件 ───────────────────────────────────
 
 function ProvidersSection({ config, onChange }: { config: AIConfig; onChange: (c: AIConfig) => void }) {
@@ -72,7 +106,6 @@ function ProvidersSection({ config, onChange }: { config: AIConfig; onChange: (c
     setSaving(s => ({ ...s, [provider.id]: true }));
 
     try {
-      // 发送一条测试消息验证 API Key
       const verifyModel = provider.selectedModel || provider.models[0];
       const endpoint = provider.endpoint.trim().replace(/\/$/, "");
 
@@ -95,9 +128,6 @@ function ProvidersSection({ config, onChange }: { config: AIConfig; onChange: (c
         throw new Error(`HTTP ${resp.status}${body ? ` - ${body.slice(0, 200)}` : ""}`);
       }
 
-      // HTTP 200 即验证通过，不需要检查回复内容
-
-      // 验证通过
       onChange({
         ...config,
         providers: config.providers.map(p =>
@@ -109,7 +139,6 @@ function ProvidersSection({ config, onChange }: { config: AIConfig; onChange: (c
       });
       toast.success(`${provider.name} 连接成功`);
     } catch (err: any) {
-      // 验证失败，但仍保存 key（下次可重试）
       const reason = err instanceof Error ? err.message : "未知错误";
       console.error(`[Verify] ${provider.name}:`, reason);
       onChange({
@@ -151,13 +180,10 @@ function ProvidersSection({ config, onChange }: { config: AIConfig; onChange: (c
       <div className="space-y-5">
         {config.providers.map((provider) => (
           <div key={provider.id}>
-            {/* 提供商名称 + 状态标签 */}
             <div className="flex items-center gap-2 mb-2">
               <span className="text-sm font-medium">{provider.name}</span>
               {statusBadge(provider)}
             </div>
-
-            {/* API Key 输入 + 保存 + 断开 */}
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
                 <input type={showKeys[provider.id] ? "text" : "password"}
@@ -170,7 +196,6 @@ function ProvidersSection({ config, onChange }: { config: AIConfig; onChange: (c
                   {showKeys[provider.id] ? <EyeOff size={14} /> : <Eye size={14} />}
                 </button>
               </div>
-
               <button onClick={() => handleSave(provider)}
                 disabled={saving[provider.id] || !provider.api_key.trim()}
                 className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
@@ -179,7 +204,6 @@ function ProvidersSection({ config, onChange }: { config: AIConfig; onChange: (c
                   ? <span className="inline-block w-3.5 h-3.5 border-2 border-muted-foreground/30 border-t-primary rounded-full animate-spin" />
                   : <Save size={14} />}
               </button>
-
               <button onClick={() => handleDisconnect(provider)}
                 disabled={!provider.connected}
                 className="p-1.5 rounded-md text-destructive hover:bg-destructive/10 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
@@ -441,12 +465,6 @@ function PromptsSection() {
                   className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-input text-[10px] text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
                   <Download size={11} /> 导出
                 </button>
-                <button onClick={() => {
-                  if (window.confirm(`确认删除「${editing.name || editing.id}」？`)) handleDelete(editing.id);
-                }}
-                  className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-destructive/30 text-[10px] text-destructive hover:bg-destructive/10 transition-colors">
-                  <Trash2 size={11} /> 删除
-                </button>
               </div>
               {dirty && <span className="text-[10px] text-amber-500 ml-auto">● 未保存</span>}
             </div>
@@ -477,36 +495,7 @@ function PromptsSection() {
   );
 }
 
-// ── 自定义右键菜单（使用 Portal 避免祖先 CSS transform 干扰 fixed 定位） ──
-function ContextMenu({ x, y, items, onClose }: {
-  x: number; y: number;
-  items: { label: string; icon?: React.ReactNode; danger?: boolean; onClick: () => void }[];
-  onClose: () => void;
-}) {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [onClose]);
-
-  return createPortal(
-    <div ref={ref}
-      className="fixed z-[9999] min-w-[140px] bg-popover border border-border rounded-lg shadow-xl py-1"
-      style={{ left: x, top: y }}>
-      {items.map((item, i) => (
-        <button key={i} onClick={() => { item.onClick(); onClose(); }}
-          className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors ${item.danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-accent"}`}>
-          {item.icon && <span className="shrink-0">{item.icon}</span>}
-          {item.label}
-        </button>
-      ))}
-    </div>,
-    document.body,
-  );
-}
+// ─── SkillsSection ─────────────────────────────────────
 
 function SkillsSection() {
   const [skills, setSkills] = useState<WorkspaceFile[]>([]);
@@ -516,9 +505,13 @@ function SkillsSection() {
   const [loading, setLoading] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [search, setSearch] = useState("");
 
-  // 右键菜单
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; fileId?: string } | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+
+  const [leftWidth, setLeftWidth] = useState(240);
+  const draggingRef = useRef(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -528,25 +521,26 @@ function SkillsSection() {
   };
   useEffect(() => { load(); }, []);
 
-  // 选中文件时加载完整内容
-  const selectFile = async (id: string) => {
+  const filtered = skills.filter(s =>
+    !search || s.name.toLowerCase().includes(search.toLowerCase()) || s.id.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const selectFile = (id: string) => {
     setSelectedId(id);
     const file = skills.find(s => s.id === id);
-    if (file) setEditing({ ...file });
-    setDirty(false);
+    if (file) { setEditing({ ...file }); setDirty(false); }
   };
 
   const handleNew = async () => {
     if (dirty) { toast.warning("请先保存当前编辑"); return; }
     const id = await generateWorkspaceId();
+    await writeWorkspaceFile("skills", id, "新技能", "", "");
+    await load();
+    setSelectedId(id);
     const blank: WorkspaceFile = {
       id, filename: `${id}.md`, name: "新技能", description: "", content: "",
       created_at: Date.now(), updated_at: Date.now(),
     };
-    // 写入初始文件
-    await writeWorkspaceFile("skills", id, "新技能", "", "");
-    await load();
-    setSelectedId(id);
     setEditing(blank);
     setDirty(false);
   };
@@ -566,6 +560,14 @@ function SkillsSection() {
     } finally { setLoading(false); }
   };
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); handleSave(); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  });
+
   const handleDelete = async (id: string) => {
     try {
       await deleteWorkspaceFile("skills", id);
@@ -583,13 +585,10 @@ function SkillsSection() {
     if (!file) return;
     await writeWorkspaceFile("skills", id, newName.trim(), file.description, file.content);
     await load();
-    if (editing?.id === id) {
-      setEditing({ ...editing, name: newName.trim() });
-    }
+    if (editing?.id === id) { setEditing({ ...editing, name: newName.trim() }); }
     setDirty(true);
   };
 
-  // 导出单个文件
   const handleExportFile = async (id: string) => {
     try {
       const raw = await exportWorkspaceFileContent("skills", id);
@@ -597,10 +596,7 @@ function SkillsSection() {
       const filename = file?.filename || `${id}.md`;
       const blob = new Blob([raw], { type: "text/markdown" });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      a.click();
+      const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
       URL.revokeObjectURL(url);
       toast.success("导出成功");
     } catch (e: any) {
@@ -608,18 +604,10 @@ function SkillsSection() {
     }
   };
 
-  // 导出全部（逐个下载为 zip 不便，批量导出为一个 zip 更合理——复用已有备份功能）
   const handleExportAll = async () => {
-    try {
-      // 利用已有的 exportBackup，但只为 skills 生成 zip
-      // 简单方式：逐个下载
-      for (const s of skills) {
-        await handleExportFile(s.id);
-      }
-    } catch {}
+    for (const s of skills) await handleExportFile(s.id);
   };
 
-  // 导入文件
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -634,60 +622,95 @@ function SkillsSection() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
+  // 拖拽分割条
+  const handleMouseDown = () => {
+    draggingRef.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    const settingsContent = document.querySelector('.settings-content');
+    const containerLeft = settingsContent?.getBoundingClientRect().left ?? 0;
+    const onMove = (e: MouseEvent) => {
+      if (!draggingRef.current) return;
+      setLeftWidth(Math.max(160, Math.min(400, e.clientX - containerLeft)));
+    };
+    const onUp = () => {
+      draggingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  };
+
   return (
     <section className="flex flex-col flex-1 min-h-0">
-      <h2 className="text-base font-semibold mb-4">技能</h2>
+      <h2 className="text-base font-semibold mb-3 shrink-0">技能</h2>
 
-      {/* 工具栏 */}
-      <div className="flex items-center gap-2 mb-4">
-        <button onClick={handleNew}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-input text-xs text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
-          <Plus size={13} /> 新建
-        </button>
-        <div className="w-px h-4 bg-border" />
-        <button onClick={handleExportAll} disabled={skills.length === 0}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-input text-xs text-muted-foreground hover:text-foreground hover:border-ring transition-colors disabled:opacity-30">
-          <Download size={13} /> 导出全部
-        </button>
-        <button onClick={() => fileInputRef.current?.click()}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-input text-xs text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
-          <Upload size={13} /> 导入
-        </button>
-        <input ref={fileInputRef} type="file" accept=".md" onChange={handleImport} className="hidden" />
-      </div>
-
-      <div className="flex gap-0 flex-1 min-h-0 border border-border rounded-lg overflow-hidden">
-        {/* ── 左侧：文件列表 ── */}
-        <div className="w-52 shrink-0 border-r border-border bg-card flex flex-col">
-          <div className="flex items-center gap-1 px-3 py-2 border-b border-border">
-            <FileText size={12} className="text-muted-foreground" />
-            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">skills/</span>
-            <span className="text-[10px] text-muted-foreground/60">({skills.length})</span>
+      <div className="flex-1 flex min-h-0 bg-card border border-border rounded-lg overflow-hidden">
+        {/* ── 左侧：搜索 + 文件树 ── */}
+        <div className="flex flex-col shrink-0 border-r border-border" style={{ width: leftWidth }}>
+          {/* 搜索 + 操作按钮 */}
+          <div className="flex items-center gap-1 px-2 py-1.5 border-b border-border shrink-0">
+            <div className="relative flex-1">
+              <Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground/50" />
+              <input type="text" value={search} onChange={(e) => setSearch(e.target.value)}
+                placeholder="搜索..."
+                className="w-full h-7 pl-7 pr-2 text-[11px] bg-background border border-input rounded outline-none focus:border-ring transition-colors placeholder:text-muted-foreground/40" />
+            </div>
+            <button onClick={handleNew}
+              className="flex items-center justify-center w-7 h-7 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0"
+              title="新建技能文件">
+              <FilePlus size={14} />
+            </button>
+            <div className="relative">
+              <button onClick={() => setMoreOpen(!moreOpen)}
+                className="flex items-center justify-center w-7 h-7 rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                title="更多操作">
+                <MoreHorizontal size={14} />
+              </button>
+              {moreOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setMoreOpen(false)} />
+                  <div className="absolute right-0 top-full mt-1 z-50 w-36 bg-popover border border-border rounded-lg shadow-lg py-1 text-xs">
+                    <button onClick={() => { setMoreOpen(false); handleExportAll(); }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors text-left">
+                      <Download size={12} /> 导出全部
+                    </button>
+                    <button onClick={() => { setMoreOpen(false); fileInputRef.current?.click(); }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors text-left">
+                      <Upload size={12} /> 导入文件
+                    </button>
+                    <button onClick={() => { setMoreOpen(false); openWorkspaceDir("skills"); }}
+                      className="w-full flex items-center gap-2 px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors text-left">
+                      <FolderOpen size={12} /> 打开位置
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           </div>
+
+          {/* 文件树 */}
           <div className="flex-1 overflow-y-auto p-1 space-y-0.5"
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setCtxMenu({ x: e.clientX, y: e.clientY });
-            }}>
-            {skills.length === 0 ? (
-              <p className="text-[11px] text-muted-foreground text-center py-8">空目录</p>
+            onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}>
+            {filtered.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground text-center py-8">{search ? "无匹配" : "空目录"}</p>
             ) : (
-              skills.map(s => (
+              filtered.map(s => (
                 <div key={s.id}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    setCtxMenu({ x: e.clientX, y: e.clientY, fileId: s.id });
-                  }}>
+                  onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCtxMenu({ x: e.clientX, y: e.clientY, fileId: s.id }); }}>
                   <button onClick={() => selectFile(s.id)}
-                    className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs transition-colors text-left ${
+                    className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs transition-colors text-left group ${
                       selectedId === s.id
                         ? "bg-accent text-foreground"
                         : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
                     }`}
                     title={s.filename}>
-                    <FileText size={12} className="shrink-0 opacity-60" />
-                    <span className="truncate">{s.name || s.id}</span>
+                    <FileCode size={13} className="shrink-0 opacity-60" />
+                    <span className="truncate flex-1">{s.name || s.id}</span>
+                    <span className="text-[9px] text-muted-foreground/30 opacity-0 group-hover:opacity-100 transition-opacity">{s.id.slice(0, 6)}</span>
                   </button>
                 </div>
               ))
@@ -695,89 +718,92 @@ function SkillsSection() {
           </div>
         </div>
 
+        {/* 拖拽手柄 */}
+        <div onMouseDown={handleMouseDown}
+          className="w-[3px] shrink-0 cursor-col-resize hover:bg-primary/40 active:bg-primary/60 transition-colors relative z-10">
+          <div className="absolute inset-y-0 -left-1 -right-1" />
+        </div>
+
         {/* ── 右侧：编辑器 ── */}
         {!editing ? (
-          <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground bg-background">
-            <div className="text-center">
-              <FileText size={32} className="mx-auto mb-2 opacity-20" />
-              <p>选择或新建一个技能文件</p>
-            </div>
+          <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground bg-background min-w-0">
+            <div className="text-center"><FileCode size={36} className="mx-auto mb-2 opacity-20" /><p>选择一个技能文件开始编辑</p></div>
           </div>
         ) : (
           <div className="flex-1 flex flex-col bg-background min-w-0">
-            {/* 文件名标签栏 */}
-            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border bg-muted/30 shrink-0">
-              <FileText size={12} className="text-primary shrink-0" />
+            {/* 面包屑 + 文件路径 */}
+            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border bg-muted/20 shrink-0">
+              <div className="flex items-center gap-1 text-[11px] text-muted-foreground/70 font-mono truncate">
+                <span className="text-muted-foreground/40">workspace/skills/</span>
+                <span className="text-foreground/80">{editing.filename}</span>
+              </div>
+              <div className="flex-1" />
               {renaming === editing.id ? (
-                <input type="text" value={renameValue}
-                  autoFocus
-                  onBlur={() => { setRenaming(null); }}
+                <input type="text" value={renameValue} autoFocus
+                  onBlur={() => setRenaming(null)}
                   onKeyDown={async (e) => {
-                    if (e.key === "Enter") {
-                      await handleRename(editing.id, renameValue);
-                      setRenaming(null);
-                    }
+                    if (e.key === "Enter") { await handleRename(editing.id, renameValue); setRenaming(null); }
                     if (e.key === "Escape") setRenaming(null);
                   }}
                   onChange={(e) => setRenameValue(e.target.value)}
-                  className="flex-1 text-xs bg-background border border-input rounded px-1.5 py-0.5 outline-none focus:border-ring" />
+                  className="text-[11px] bg-background border border-input rounded px-1.5 py-0.5 w-28 outline-none focus:border-ring" />
               ) : (
-                <span className="text-xs font-medium text-foreground truncate">{editing.filename}</span>
+                <button onClick={() => { setRenaming(editing.id); setRenameValue(editing.name || editing.id); }}
+                  className="text-[10px] text-muted-foreground/50 hover:text-foreground transition-colors shrink-0">
+                  <Pencil size={11} />
+                </button>
               )}
-              <span className="text-[10px] text-muted-foreground/60 ml-auto shrink-0">
-                {editing.name ? `${editing.name} — ` : ""}{editing.description ? editing.description : "无描述"}
+              <span className="text-[9px] uppercase text-muted-foreground/30 font-mono border border-border/30 rounded px-1.5 py-0.5">
+                {editing.filename.endsWith('.md') ? 'md' : editing.filename.split('.').pop() || 'txt'}
               </span>
             </div>
 
-            {/* 编辑区域 */}
-            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-              {/* Frontmatter 行（直接编辑的样子，用 inline 样式伪装成代码） */}
-              <div className="flex items-center gap-2 px-4 pt-3 pb-1">
-                <input type="text" value={editing.name}
-                  onChange={(e) => { setEditing({ ...editing, name: e.target.value }); setDirty(true); }}
-                  placeholder="name: 技能名称"
-                  className="flex-1 text-xs bg-muted/50 border border-border/50 rounded px-2 py-1 font-mono outline-none focus:border-ring/50 placeholder:text-muted-foreground/30" />
-                <input type="text" value={editing.description}
-                  onChange={(e) => { setEditing({ ...editing, description: e.target.value }); setDirty(true); }}
-                  placeholder="description: 简短描述"
-                  className="flex-1 text-xs bg-muted/50 border border-border/50 rounded px-2 py-1 font-mono outline-none focus:border-ring/50 placeholder:text-muted-foreground/30" />
-              </div>
-              <div className="px-4 pb-1">
-                <div className="text-[10px] text-muted-foreground/40 font-mono border-b border-border/30 pb-1">--- frontmatter end ---</div>
-              </div>
+            {/* Frontmatter 编辑行 */}
+            <div className="flex items-center gap-2 px-4 pt-2 pb-1 shrink-0">
+              <input type="text" value={editing.name}
+                onChange={(e) => { setEditing({ ...editing, name: e.target.value }); setDirty(true); }}
+                placeholder="name: 技能名称"
+                className="flex-1 text-[11px] bg-transparent border border-border/30 rounded px-2 py-1 font-mono outline-none focus:border-ring/50 placeholder:text-muted-foreground/30" />
+              <input type="text" value={editing.description}
+                onChange={(e) => { setEditing({ ...editing, description: e.target.value }); setDirty(true); }}
+                placeholder="description: 简短描述"
+                className="flex-1 text-[11px] bg-transparent border border-border/30 rounded px-2 py-1 font-mono outline-none focus:border-ring/50 placeholder:text-muted-foreground/30" />
+            </div>
+            <div className="px-4 pb-1 shrink-0">
+              <div className="text-[9px] text-muted-foreground/30 font-mono border-b border-border/20 pb-1">--- frontmatter ---</div>
+            </div>
 
-              {/* 编辑器主体 */}
-              <div className="flex-1 min-h-0 px-4 pb-3">
-                <textarea value={editing.content}
-                  onChange={(e) => { setEditing({ ...editing, content: e.target.value }); setDirty(true); }}
-                  placeholder="在此编写技能定义（Markdown 格式）..."
-                  className="w-full h-full bg-muted/20 border border-border/30 rounded-lg p-3 text-xs font-mono leading-relaxed outline-none focus:border-ring/50 resize-none placeholder:text-muted-foreground/20" />
+            {/* CodeMirror 编辑器 */}
+            <div className="flex-1 min-h-0 px-4 pb-3">
+              <div className="h-full border border-border/20 rounded overflow-hidden">
+                <CodeMirrorEditor
+                  value={editing.content}
+                  onChange={(val) => { setEditing({ ...editing, content: val }); setDirty(true); }}
+                  language={editing.filename.endsWith('.js') || editing.filename.endsWith('.ts') ? 'javascript' : editing.filename.endsWith('.yaml') || editing.filename.endsWith('.yml') ? 'yaml' : 'markdown'}
+                  placeholder="在此编写技能定义（Markdown/代码格式）..."
+                />
               </div>
             </div>
 
-            {/* 状态栏 */}
-            <div className="flex items-center gap-2 px-4 py-1.5 border-t border-border bg-muted/30 shrink-0">
+            {/* 底部状态栏 */}
+            <div className="flex items-center gap-2 px-4 py-1 border-t border-border bg-muted/20 shrink-0">
               <div className="flex items-center gap-2">
                 <button onClick={handleSave} disabled={loading || !dirty}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors">
                   <Save size={11} /> {loading ? "保存中..." : "保存"}
                 </button>
-                <button onClick={async () => {
-                  try { await handleExportFile(editing.id); } catch {}
-                }}
+                <button onClick={() => handleExportFile(editing.id)}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-input text-[10px] text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
                   <Download size={11} /> 导出
                 </button>
-                <button onClick={() => {
-                  if (window.confirm(`确认删除「${editing.name || editing.id}」？`)) {
-                    handleDelete(editing.id);
-                  }
-                }}
+                <button onClick={() => { if (window.confirm(`确认删除「${editing.name || editing.id}」？`)) handleDelete(editing.id); }}
                   className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-destructive/30 text-[10px] text-destructive hover:bg-destructive/10 transition-colors">
                   <Trash2 size={11} /> 删除
                 </button>
               </div>
-              {dirty && <span className="text-[10px] text-amber-500 ml-auto">● 未保存</span>}
+              <div className="flex-1" />
+              {dirty && <span className="text-[10px] text-amber-500">● 未保存</span>}
+              <span className="text-[9px] text-muted-foreground/40">{(editing.content.match(/\n/g) || []).length + 1} 行</span>
             </div>
           </div>
         )}
@@ -789,10 +815,7 @@ function SkillsSection() {
           items={
             ctxMenu.fileId
               ? [
-                  { label: "重命名", icon: <FileText size={12} />, onClick: () => {
-                    const f = skills.find(s => s.id === ctxMenu.fileId);
-                    if (f) { setRenaming(f.id); setRenameValue(f.name || f.id); }
-                  }},
+                  { label: "重命名", icon: <FileText size={12} />, onClick: () => { const f = skills.find(s => s.id === ctxMenu.fileId); if (f) { setRenaming(f.id); setRenameValue(f.name || f.id); } } },
                   { label: "导出文件", icon: <Download size={12} />, onClick: () => handleExportFile(ctxMenu.fileId!) },
                   { label: "删除文件", icon: <Trash2 size={12} />, danger: true, onClick: () => handleDelete(ctxMenu.fileId!) },
                 ]
@@ -803,9 +826,13 @@ function SkillsSection() {
           }
           onClose={() => setCtxMenu(null)} />
       )}
+
+      <input ref={fileInputRef} type="file" accept=".md" onChange={handleImport} className="hidden" />
     </section>
   );
 }
+
+// ─── MCP Section ───────────────────────────────────────
 
 function MCPSection({ port, running, onStart, onStop, onPortChange }: {
   port: number; running: boolean;
@@ -816,20 +843,13 @@ function MCPSection({ port, running, onStart, onStop, onPortChange }: {
   const [editingServer, setEditingServer] = useState<McpServerConfig | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // 加载配置
   useEffect(() => {
     loadMcpConfig().then(setMcpServers).catch(() => {});
-    // 查询已连接的服务
     import("../../lib/mcp").then(m => m.listMcpConnections().then(setConnectedServers).catch(() => {}));
   }, []);
 
   const handleAddServer = () => {
     setEditingServer({ name: "", command: "", args: [], auto_start: false });
-  };
-
-  const handleSaveConfig = async () => {
-    await saveMcpConfig(mcpServers);
-    toast.success("MCP 配置已保存");
   };
 
   const handleConnect = async (s: McpServerConfig) => {
@@ -840,9 +860,7 @@ function MCPSection({ port, running, onStart, onStop, onPortChange }: {
       toast.success(`已连接 ${s.name}`);
     } catch (e: any) {
       toast.error("连接失败: " + (e?.toString() || "未知错误"));
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
   const handleDisconnect = async (name: string) => {
@@ -874,7 +892,6 @@ function MCPSection({ port, running, onStart, onStop, onPortChange }: {
     <section>
       <h2 className="text-base font-semibold mb-4">MCP</h2>
 
-      {/* ── 内置 MCP 服务器（本应用对外提供工具） ── */}
       <h3 className="text-sm font-medium text-muted-foreground mb-3">内置 MCP 服务器</h3>
       <div className="bg-card border border-border rounded-lg p-4 space-y-4 mb-6">
         <div className="flex items-center gap-3">
@@ -893,7 +910,6 @@ function MCPSection({ port, running, onStart, onStop, onPortChange }: {
         </div>
       </div>
 
-      {/* ── 外部 MCP 服务器客户端 ── */}
       <h3 className="text-sm font-medium text-muted-foreground mb-3">外部 MCP 服务器</h3>
       <div className="space-y-3">
         {mcpServers.map(s => {
@@ -924,49 +940,39 @@ function MCPSection({ port, running, onStart, onStop, onPortChange }: {
           );
         })}
 
-        {/* 添加新服务器表单 */}
         {editingServer ? (
           <div className="bg-card border border-border rounded-lg p-4 space-y-3">
             <input type="text" value={editingServer.name}
               onChange={(e) => setEditingServer({ ...editingServer, name: e.target.value })}
-              placeholder="服务器名称（如 my-filesystem）"
+              placeholder="服务器名称"
               className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring" />
             <input type="text" value={editingServer.command}
               onChange={(e) => setEditingServer({ ...editingServer, command: e.target.value })}
-              placeholder="启动命令（如 npx）"
+              placeholder="启动命令"
               className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring" />
             <input type="text" value={editingServer.args.join(" ")}
-              onChange={(e) => setEditingServer({ ...editingServer, args: e.target.value.split(/\s+/) })}
-              placeholder="参数（用空格分隔，如 -y @modelcontextprotocol/server-filesystem C:\\path）"
+              onChange={(e) => setEditingServer({ ...editingServer, args: e.target.value.split(/\s+/).filter(Boolean) })}
+              placeholder="参数（空格分隔）"
               className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring" />
             <div className="flex gap-2">
               <button onClick={addServerToList}
-                disabled={!editingServer.name.trim() || !editingServer.command.trim()}
-                className="px-4 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50">添加</button>
+                className="px-4 py-1.5 bg-primary text-primary-foreground rounded-lg text-xs font-medium">添加</button>
               <button onClick={() => setEditingServer(null)}
-                className="px-4 py-1.5 bg-background border border-input rounded-lg text-xs text-muted-foreground hover:border-ring">取消</button>
+                className="px-4 py-1.5 border border-input rounded-lg text-xs text-muted-foreground">取消</button>
             </div>
           </div>
         ) : (
           <button onClick={handleAddServer}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg border border-dashed border-input text-sm text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
-            <Plug size={14} />
-            添加 MCP 服务器
-          </button>
-        )}
-
-        {/* 保存配置 */}
-        {mcpServers.length > 0 && (
-          <button onClick={handleSaveConfig}
-            className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90">
-            <Save size={14} />
-            保存 MCP 配置
+            className="w-full py-2 border border-dashed border-input rounded-lg text-xs text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
+            + 添加 MCP 服务器
           </button>
         )}
       </div>
     </section>
   );
 }
+
+// ─── BackupSection ─────────────────────────────────────
 
 function BackupSection() {
   const [backingUp, setBackingUp] = useState(false);
@@ -977,25 +983,17 @@ function BackupSection() {
     setBackingUp(true);
     try {
       const base64 = await exportBackup();
-      // 创建下载链接
       const byteChars = atob(base64);
       const bytes = new Uint8Array(byteChars.length);
-      for (let i = 0; i < byteChars.length; i++) {
-        bytes[i] = byteChars.charCodeAt(i);
-      }
+      for (let i = 0; i < byteChars.length; i++) bytes[i] = byteChars.charCodeAt(i);
       const blob = new Blob([bytes], { type: "application/zip" });
       const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `cebiandesktop-backup-${new Date().toISOString().slice(0, 10)}.zip`;
-      a.click();
+      const a = document.createElement("a"); a.href = url; a.download = `cebian-backup-${Date.now()}.zip`; a.click();
       URL.revokeObjectURL(url);
-      toast.success("备份下载完成");
+      toast.success("备份导出成功");
     } catch (e: any) {
       toast.error("导出失败: " + (e?.toString() || "未知错误"));
-    } finally {
-      setBackingUp(false);
-    }
+    } finally { setBackingUp(false); }
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1006,9 +1004,7 @@ function BackupSection() {
       const arrayBuf = await file.arrayBuffer();
       const bytes = new Uint8Array(arrayBuf);
       let binary = "";
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
       const base64 = btoa(binary);
       await importBackup(base64);
       toast.success("备份恢复成功，请重启应用以生效");
@@ -1023,19 +1019,15 @@ function BackupSection() {
   return (
     <section>
       <h2 className="text-base font-semibold mb-4">备份与恢复</h2>
-      <p className="text-sm text-muted-foreground mb-4">
-        导出备份包含：工作区文件（提示词、技能）、对话记录、AI 配置、MCP 配置。
-      </p>
+      <p className="text-sm text-muted-foreground mb-4">导出备份包含：工作区文件（提示词、技能）、对话记录、AI 配置、MCP 配置。</p>
       <div className="flex gap-3">
         <button onClick={handleExport} disabled={backingUp}
           className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50">
-          <Download size={14} />
-          {backingUp ? "导出中..." : "导出备份"}
+          <Download size={14} />{backingUp ? "导出中..." : "导出备份"}
         </button>
         <button onClick={() => fileInputRef.current?.click()} disabled={importing}
           className="flex items-center gap-1.5 px-4 py-2 bg-background border border-input rounded-lg text-xs font-medium text-muted-foreground hover:border-ring disabled:opacity-50">
-          <Upload size={14} />
-          {importing ? "导入中..." : "导入恢复"}
+          <Upload size={14} />{importing ? "导入中..." : "导入恢复"}
         </button>
         <input ref={fileInputRef} type="file" accept=".zip" onChange={handleImport} className="hidden" />
       </div>
@@ -1045,23 +1037,15 @@ function BackupSection() {
 
 function StorageSection() {
   return (
-    <section>
-      <h2 className="text-base font-semibold mb-4">文件系统</h2>
-      <p className="text-sm text-muted-foreground">对话数据存储于应用本地目录。</p>
-    </section>
+    <section><h2 className="text-base font-semibold mb-4">文件系统</h2><p className="text-sm text-muted-foreground">对话数据存储于应用本地目录。</p></section>
   );
 }
 
 function AdvancedSection() {
   return (
-    <section>
-      <h2 className="text-base font-semibold mb-4">高级设置</h2>
-      <p className="text-sm text-muted-foreground">暂无高级设置项。</p>
-    </section>
+    <section><h2 className="text-base font-semibold mb-4">高级设置</h2><p className="text-sm text-muted-foreground">暂无高级设置项。</p></section>
   );
 }
-
-// ─── 外观（主题色自定义） ───────────────────────────────
 
 const PRESET_COLORS = [
   { hue: 24,  label: "橙色", class: "bg-[hsl(24,95%,53%)]" },
@@ -1076,65 +1060,46 @@ const PRESET_COLORS = [
 
 function AppearanceSection({ config, onChange }: { config: AIConfig; onChange: (c: AIConfig) => void }) {
   const currentHue = config.primary_hue ?? 24;
-
   return (
     <section>
       <h2 className="text-base font-semibold mb-4">外观</h2>
-
-      {/* 预设颜色 */}
       <div className="mb-5">
         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">预设主题色</p>
         <div className="flex flex-wrap gap-2.5">
           {PRESET_COLORS.map(({ hue, label, class: bgClass }) => (
             <button key={hue} onClick={() => onChange({ ...config, primary_hue: hue })}
-              className="flex flex-col items-center gap-1.5 group"
-              title={label}>
+              className="flex flex-col items-center gap-1.5 group" title={label}>
               <div className={`w-8 h-8 rounded-full border-2 transition-all ${currentHue === hue ? 'border-foreground scale-110' : 'border-transparent group-hover:border-muted-foreground/50'} ${bgClass}`} />
               <span className="text-[0.6rem] text-muted-foreground">{label}</span>
             </button>
           ))}
         </div>
       </div>
-
-      {/* 色相滑块 */}
       <div className="mb-5">
         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">自定义色相</p>
         <div className="flex items-center gap-3">
           <input type="range" min="0" max="360" value={currentHue}
             onChange={(e) => onChange({ ...config, primary_hue: parseInt(e.target.value) })}
             className="flex-1 h-2 rounded-full appearance-none cursor-pointer"
-            style={{
-              background: `linear-gradient(to right, 
-                hsl(0,95%,53%), hsl(30,95%,53%), hsl(60,95%,53%), 
-                hsl(120,95%,53%), hsl(180,95%,53%), hsl(240,95%,53%), 
-                hsl(300,95%,53%), hsl(360,95%,53%))`,
-            }} />
+            style={{ background: `linear-gradient(to right, hsl(0,95%,53%), hsl(30,95%,53%), hsl(60,95%,53%), hsl(120,95%,53%), hsl(180,95%,53%), hsl(240,95%,53%), hsl(300,95%,53%), hsl(360,95%,53%))` }} />
           <span className="text-xs font-mono tabular-nums text-muted-foreground w-10 text-right">{currentHue}°</span>
         </div>
       </div>
-
-      {/* 实时预览 */}
       <div>
         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-3">预览</p>
         <div className="bg-card border border-border rounded-lg p-4 space-y-3">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 rounded-lg shrink-0" style={{ background: `hsl(${currentHue}, 95%, 53%)` }} />
             <div>
-              <p className="text-sm font-medium" style={{ color: `hsl(${currentHue}, 95%, 40%)` }}>
-                主色调 {currentHue}°
-              </p>
+              <p className="text-sm font-medium" style={{ color: `hsl(${currentHue}, 95%, 40%)` }}>主色调 {currentHue}°</p>
               <p className="text-xs text-muted-foreground">按钮、链接、图标等元素将使用此颜色</p>
             </div>
           </div>
           <div className="flex gap-2">
             <button style={{ background: `hsl(${currentHue}, 95%, 53%)`, color: currentHue > 60 && currentHue < 200 ? '#000' : '#fff' }}
-              className="px-4 py-1.5 rounded-lg text-xs font-medium">
-              主要按钮
-            </button>
+              className="px-4 py-1.5 rounded-lg text-xs font-medium">主要按钮</button>
             <button style={{ borderColor: `hsl(${currentHue}, 95%, 53%)`, color: `hsl(${currentHue}, 95%, 53%)` }}
-              className="px-4 py-1.5 rounded-lg text-xs font-medium border">
-              次要按钮
-            </button>
+              className="px-4 py-1.5 rounded-lg text-xs font-medium border">次要按钮</button>
           </div>
         </div>
       </div>
@@ -1147,54 +1112,21 @@ function AboutSection() {
     <section>
       <h2 className="text-base font-semibold mb-4">关于</h2>
       <div className="bg-card border border-border rounded-lg p-4 space-y-4">
-        {/* 应用信息 */}
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center shrink-0">
-            <Bot size={22} className="text-primary" />
-          </div>
-          <div>
-            <p className="text-sm font-semibold">CebianDesktop</p>
-            <p className="text-xs text-muted-foreground">版本 0.1.0</p>
-          </div>
+          <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center shrink-0"><Bot size={22} className="text-primary" /></div>
+          <div><p className="text-sm font-semibold">CebianDesktop</p><p className="text-xs text-muted-foreground">版本 0.1.0</p></div>
         </div>
-        <p className="text-sm text-muted-foreground leading-relaxed">
-          CebianDesktop 是 CeBian 浏览器扩展的桌面伴侣应用，提供原生的 AI 对话体验、文件操作、MCP 工具集成等能力。
-        </p>
-
-        {/* 分隔线 */}
+        <p className="text-sm text-muted-foreground leading-relaxed">CebianDesktop 是 CeBian 浏览器扩展的桌面伴侣应用。</p>
         <div className="border-t border-border" />
-
-        {/* 作者信息 */}
         <div className="space-y-2">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">作者</p>
           <div className="inline-flex items-center gap-2.5 text-sm">
-            <a href="https://github.com/LinYanZhi" target="_blank" rel="noopener noreferrer" className="shrink-0">
-              <img src="https://github.com/LinYanZhi.png" alt="LinYanZhi"
-                className="w-8 h-8 rounded-full ring-2 ring-border hover:ring-primary/50 transition-all" />
-            </a>
+            <a href="https://github.com/LinYanZhi" target="_blank" rel="noopener noreferrer">
+              <img src="https://github.com/LinYanZhi.png" alt="LinYanZhi" className="w-8 h-8 rounded-full ring-2 ring-border" /></a>
             <div>
-              <a href="https://github.com/LinYanZhi" target="_blank" rel="noopener noreferrer"
-                className="block font-medium text-primary hover:underline">
-                LinYanZhi
-              </a>
-              <a href="https://github.com/LinYanZhi/CebianDesktop" target="_blank" rel="noopener noreferrer"
-                className="block text-xs text-muted-foreground hover:underline transition-colors">
-                github.com/LinYanZhi/CebianDesktop
-              </a>
+              <a href="https://github.com/LinYanZhi" target="_blank" rel="noopener noreferrer" className="block font-medium text-primary hover:underline">LinYanZhi</a>
+              <a href="https://github.com/LinYanZhi/CebianDesktop" target="_blank" rel="noopener noreferrer" className="block text-xs text-muted-foreground hover:underline">github.com/LinYanZhi/CebianDesktop</a>
             </div>
-          </div>
-        </div>
-
-        {/* 技术栈 */}
-        <div className="space-y-2">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">当前项目技术栈</p>
-          <div className="flex flex-wrap gap-1.5">
-            {["Tauri v2", "React", "TypeScript", "Tailwind CSS", "Rust"].map((tech) => (
-              <span key={tech}
-                className="px-2 py-0.5 rounded-md bg-accent/50 border border-border text-[0.65rem] text-muted-foreground">
-                {tech}
-              </span>
-            ))}
           </div>
         </div>
       </div>
@@ -1211,50 +1143,25 @@ export default function SettingsView(props: SettingsViewProps) {
   const navRef = useRef<HTMLDivElement>(null);
   const fullWidthRef = useRef(0);
 
-  // 1. 测量所有项（图标+文字）的实际总宽度（仅一次）
   useEffect(() => {
-    if (measureRef.current) {
-      fullWidthRef.current = measureRef.current.scrollWidth;
-    }
+    if (measureRef.current) fullWidthRef.current = measureRef.current.scrollWidth;
   }, []);
 
-  // 2. 响应式：用 ResizeObserver 监测 nav 容器，window 宽度决定竖向
   useEffect(() => {
     const fullWidth = fullWidthRef.current || 450;
     const check = (entry?: ResizeObserverEntry) => {
       const windowW = window.innerWidth;
       const availableW = entry?.contentBoxSize?.[0]?.inlineSize ?? navRef.current?.clientWidth ?? windowW;
-
-      // 竖向：窗口宽度足够放侧栏（w-44=176px）+ 内容区（至少 fullWidth）
       const wideThreshold = fullWidth + 276;
-      if (windowW >= wideThreshold) {
-        setNavMode("wide");
-        return;
-      }
-      // 横向：nav 容器宽度能否放下所有项（有 8px 滞后缓冲）
-      if (availableW >= fullWidth - 8) {
-        setNavMode("medium");
-      } else {
-        setNavMode("compact");
-      }
+      if (windowW >= wideThreshold) { setNavMode("wide"); return; }
+      if (availableW >= fullWidth - 8) { setNavMode("medium"); } else { setNavMode("compact"); }
     };
-
-    // 立即执行一次
     check();
-
-    // ResizeObserver 监测 nav 容器
-    const ro = new ResizeObserver((entries) => {
-      check(entries[0]);
-    });
+    const ro = new ResizeObserver((entries) => check(entries[0]));
     if (navRef.current) ro.observe(navRef.current);
-
-    // window resize 也触发（影响竖向判定）
-    const onResize = () => { check(); };
+    const onResize = () => check();
     window.addEventListener("resize", onResize);
-    return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", onResize);
-    };
+    return () => { ro.disconnect(); window.removeEventListener("resize", onResize); };
   }, []);
 
   const renderSection = () => {
@@ -1275,72 +1182,43 @@ export default function SettingsView(props: SettingsViewProps) {
 
   return (
     <div className="w-full h-full flex flex-col min-w-0">
-      {/* 顶部栏 */}
       <div className="flex items-center gap-2 px-4 py-3 border-b border-border shrink-0">
-        <button onClick={props.onBack} className="p-1 rounded-md hover:bg-accent text-muted-foreground">
-          <ArrowLeft size={18} />
-        </button>
+        <button onClick={props.onBack} className="p-1 rounded-md hover:bg-accent text-muted-foreground"><ArrowLeft size={18} /></button>
         <h1 className="text-sm font-semibold">设置</h1>
       </div>
 
-      {/* 测量容器（始终渲染，用于预测量图标+文字宽度） */}
-      <div ref={measureRef}
-        className="flex gap-1 px-3 py-2 invisible absolute pointer-events-none overflow-hidden"
-        aria-hidden="true">
-        {NAV_ITEMS.map((item) => {
-          const Icon = item.icon;
-          return (
-            <button key={item.id}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap shrink-0">
-              <Icon size={14} />
-              <span>{item.label}</span>
-            </button>
-          );
-        })}
+      <div ref={measureRef} className="flex gap-1 px-3 py-2 invisible absolute pointer-events-none overflow-hidden" aria-hidden="true">
+        {NAV_ITEMS.map((item) => { const Icon = item.icon; return <button key={item.id} className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap shrink-0"><Icon size={14} /><span>{item.label}</span></button>; })}
       </div>
 
-      {/* 竖向导航 */}
       {navMode === "wide" ? (
-        <div className="flex-1 flex min-h-0 h-full">
+        <div className="flex-1 flex min-h-0">
           <nav className="w-44 border-r border-border bg-card p-2 flex flex-col gap-1 shrink-0 self-stretch overflow-y-auto">
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button key={item.id} onClick={() => setActive(item.id)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${active === item.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"}`}>
-                  <Icon size={16} />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
+            {NAV_ITEMS.map((item) => { const Icon = item.icon; return (
+              <button key={item.id} onClick={() => setActive(item.id)}
+                className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${active === item.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"}`}>
+                <Icon size={16} /><span>{item.label}</span>
+              </button>
+            ); })}
           </nav>
-          <div className="flex-1 overflow-y-auto overflow-x-hidden p-6 min-w-0 flex flex-col">
-            {renderSection()}
+          <div className="flex-1 overflow-y-auto p-6 min-w-0 flex flex-col min-h-0">
+            <div className="settings-content flex-1 flex flex-col min-h-0">{renderSection()}</div>
           </div>
         </div>
       ) : (
         <div className="flex-1 flex flex-col min-h-0">
-          {/* 横向导航 */}
-          <nav ref={navRef}
-            className="flex gap-1 px-3 py-2 border-b border-border bg-card shrink-0 overflow-x-auto scrollbar-hidden">
-            {NAV_ITEMS.map((item) => {
-              const Icon = item.icon;
-              const isActive = active === item.id;
-              return (
-                <button key={item.id} onClick={() => setActive(item.id)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap transition-colors shrink-0 ${
-                    isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"
-                  }`}
-                  title={navMode === "compact" ? item.label : undefined}>
-                  <Icon size={14} />
-                  {/* medium: 显示文字 / compact: 仅图标 */}
-                  {navMode === "medium" && <span>{item.label}</span>}
-                </button>
-              );
-            })}
+          <nav ref={navRef} className="flex gap-1 px-3 py-2 border-b border-border bg-card shrink-0 overflow-x-auto scrollbar-hidden">
+            {NAV_ITEMS.map((item) => { const Icon = item.icon; const isActive = active === item.id; return (
+              <button key={item.id} onClick={() => setActive(item.id)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap transition-colors shrink-0 ${isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"}`}
+                title={navMode === "compact" ? item.label : undefined}>
+                <Icon size={14} />
+                {navMode === "medium" && <span>{item.label}</span>}
+              </button>
+            ); })}
           </nav>
-          <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 min-w-0">
-            {renderSection()}
+          <div className="flex-1 overflow-y-auto p-4 min-w-0 flex flex-col min-h-0">
+            <div className="settings-content flex-1 flex flex-col min-h-0">{renderSection()}</div>
           </div>
         </div>
       )}
