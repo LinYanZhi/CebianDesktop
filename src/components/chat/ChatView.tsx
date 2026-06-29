@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, memo, useCallback } from "react";
 import {
   Bot, Mic, Brain, ChevronDown, Settings, ChevronRight, Lightbulb,
-  Copy, Check, Paperclip, Globe, Search, X, Image, FileText, Square,
+  Copy, Check, Paperclip, Globe, Search, X, Image, FileText, Square, RefreshCw,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -13,6 +13,7 @@ interface ChatViewProps {
   messages: ChatMessage[];
   onSend: (content: string, attachments?: SendAttachment[]) => void;
   onStop: () => void;
+  onRetry: () => void;
   loading: boolean;
   aiConfig: AIConfig;
   onConfigChange: (c: AIConfig) => void;
@@ -137,7 +138,9 @@ const MarkdownRenderer = memo(function MarkdownRenderer({ content }: { content: 
 //  AI 消息
 // ═══════════════════════════════════════════════════════════
 
-function AgentMessageBlock({ msg, isStreaming }: { msg: ChatMessage; isStreaming?: boolean }) {
+function AgentMessageBlock({ msg, isStreaming, isLast, onRetry }: {
+  msg: ChatMessage; isStreaming?: boolean; isLast?: boolean; onRetry?: () => void;
+}) {
   return (
     <div className="self-start w-full">
       <div className="flex items-center gap-2 mb-1.5">
@@ -157,6 +160,13 @@ function AgentMessageBlock({ msg, isStreaming }: { msg: ChatMessage; isStreaming
       {!isStreaming && msg.content && (
         <div className="flex items-center gap-1 mt-1">
           <CopyButton text={msg.content} />
+          {isLast && onRetry && (
+            <button onClick={onRetry}
+              className="p-1 rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+              title="重试">
+              <RefreshCw size={14} />
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -574,7 +584,7 @@ function ChatInput({
 // ═══════════════════════════════════════════════════════════
 
 export default function ChatView({
-  messages, onSend, onStop, loading, aiConfig, onConfigChange, onNavigateSettings
+  messages, onSend, onStop, onRetry, loading, aiConfig, onConfigChange, onNavigateSettings
 }: ChatViewProps) {
   const [inputValue, setInputValue] = useState("");
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -649,7 +659,8 @@ export default function ChatView({
                 </div>
               </div>
             ) : (
-              <AgentMessageBlock key={i} msg={msg} isStreaming={loading && i === messages.length - 1} />
+              <AgentMessageBlock key={i} msg={msg} isStreaming={loading && i === messages.length - 1}
+                isLast={i === messages.length - 1} onRetry={onRetry} />
             )
           )}
           {loading && messages[messages.length - 1]?.role !== "assistant" && (

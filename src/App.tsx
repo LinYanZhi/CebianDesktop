@@ -489,6 +489,25 @@ export default function App() {
     }
   }, [currentSessionId, cleanupStream]);
 
+  // 重试：删除最后一条助手消息，重新发送最后一条用户消息
+  const handleRetry = useCallback(() => {
+    if (!currentSessionId) return;
+    if (activeStreamsRef.current.has(currentSessionId)) return;
+    setMessages((prev) => {
+      // 找到最后一条 user 消息
+      let lastUserIdx = -1;
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i].role === "user") { lastUserIdx = i; break; }
+      }
+      if (lastUserIdx === -1) return prev;
+      const lastUserMsg = prev[lastUserIdx];
+      const truncated = prev.slice(0, lastUserIdx + 1);
+      // 异步发送
+      setTimeout(() => handleSend(lastUserMsg.content), 0);
+      return truncated;
+    });
+  }, [currentSessionId, handleSend]);
+
   // 选择对话 — 不再 abort 其他会话的流，只是切换视图
   const handleSelectSession = useCallback(
     (id: string) => {
@@ -735,6 +754,7 @@ export default function App() {
               messages={messages}
               onSend={handleSend}
               onStop={handleStop}
+              onRetry={handleRetry}
               loading={isCurrentStreaming}
               aiConfig={aiConfig}
               onConfigChange={setAiConfig}
