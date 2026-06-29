@@ -759,8 +759,15 @@ pub fn get_skill_tools(app_handle: &tauri::AppHandle) -> Result<Vec<Value>, Stri
         }
 
         tools.push(json!({
-            "name": format!("skill:{}", safe_name),
-            "description": format!("[技能] {} — {}", tool_name, skill.description),
+            "name": format!("skill_{}", safe_name),
+            "description": {
+                let desc = if skill.description.is_empty() {
+                    format!("执行技能「{}」", tool_name)
+                } else {
+                    format!("[技能] {} — {}", tool_name, skill.description)
+                };
+                desc
+            },
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -781,8 +788,8 @@ pub fn get_skill_tools(app_handle: &tauri::AppHandle) -> Result<Vec<Value>, Stri
 ///
 /// 读取技能文件内容，将用户的 input 与技能定义合并返回给 AI。
 pub fn execute_skill(app_handle: &tauri::AppHandle, name: &str, args: &Value) -> Result<Value, String> {
-    // name 格式：skill:xxx 或直接 xxx
-    let skill_name = name.strip_prefix("skill:").unwrap_or(name);
+    // name 格式：skill_xxx 或直接 xxx
+    let skill_name = name.strip_prefix("skill_").unwrap_or(name);
 
     let skills = workspace::list_files(app_handle, workspace::WorkspaceDir::Skills)?;
     let skill = skills.iter().find(|s| {

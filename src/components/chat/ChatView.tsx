@@ -1206,7 +1206,7 @@ function UserMessageBlock({ msg, index, onRollback }: {
           </button>
         )}
         <div className="bg-card border border-border px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap break-words">
-          {msg.content}
+          {msg.content.trim()}
         </div>
       </div>
     </div>

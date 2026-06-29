@@ -70,8 +70,8 @@ pub async fn execute_tool(name: String, args: Value, mcp: State<'_, McpClientMan
         return mcp.call_tool(&name, &args).or_else(|e| Ok(json!({ "error": e })));
     }
 
-    // 技能工具（前缀 skill:）直接路由到技能执行
-    if name.starts_with("skill:") {
+    // 技能工具（前缀 skill_）直接路由到技能执行
+    if name.starts_with("skill_") {
         return tools::execute_skill(&app_handle, &name, &args);
     }
 
