@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, memo, useCallback } from "react";
 import {
   Bot, Mic, ChevronDown, Settings, ChevronRight, Lightbulb,
-  Copy, Check, Paperclip, Globe, Search, X, Image, FileText, Square, RefreshCw, Undo2, ArrowUp,
+  Copy, Check, Paperclip, Search, X, Image, FileText, Square, RefreshCw, Undo2, ArrowUp,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -1108,7 +1108,6 @@ function ChatInput({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const [attachments, setAttachments] = useState<SendAttachment[]>([]);
-  const [webSearch, setWebSearch] = useState(false);
 
   // ── Slash Prompts ──
   const [showSlash, setShowSlash] = useState(false);
@@ -1322,17 +1321,6 @@ function ChatInput({
             </button>
             <input ref={fileInputRef} type="file" multiple accept="image/*,.txt,.md,.js,.ts,.py,.json,.csv,.xml,.yaml,.yml"
               onChange={handleFileChange} className="hidden" />
-            <button
-              onClick={() => setWebSearch(!webSearch)}
-              className={`p-1.5 rounded-md transition-colors ${
-                webSearch
-                  ? "text-primary bg-primary/10 hover:bg-primary/20"
-                  : "text-muted-foreground hover:text-foreground hover:bg-accent"
-              }`}
-              title={webSearch ? "联网搜索已开启" : "联网搜索"}
-            >
-              <Globe size={14} />
-            </button>
           </div>
 
           {/* Textarea */}
@@ -1415,13 +1403,6 @@ function ChatInput({
             </div>
           </div>
         </div>
-
-        {webSearch && (
-          <div className="text-[10px] text-primary/70 mt-1.5 flex items-center gap-1">
-            <Globe size={10} />
-            <span>联网搜索已开启，AI 将自动获取最新信息</span>
-          </div>
-        )}
       </div>
     </footer>
   );
