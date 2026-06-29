@@ -385,6 +385,7 @@ export default function App() {
   const [serverRunning, setServerRunning] = useState(false);
   const [serverPort, setServerPort] = useState(8080);
   const [showHistory, setShowHistory] = useState(false);
+  const historyBeforeSettingsRef = useRef(false); // 进入设置前保存历史状态
   const [darkMode, setDarkMode] = useState(window.matchMedia('(prefers-color-scheme: dark)').matches);
   const [historyWidth, setHistoryWidth] = useState(280);
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -1317,8 +1318,14 @@ export default function App() {
             {darkMode ? <Sun size={16} /> : <Moon size={16} />}
           </button>
           <button onClick={() => {
-            setCurrentView(currentView === "settings" ? "chat" : "settings");
-            setShowHistory(false);
+            if (currentView !== "settings") {
+              historyBeforeSettingsRef.current = showHistory;
+              setShowHistory(false);
+              setCurrentView("settings");
+            } else {
+              setCurrentView("chat");
+              setShowHistory(historyBeforeSettingsRef.current);
+            }
           }}
             className={`p-1.5 rounded-md transition-colors ${currentView === "settings" ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent"}`}
             title="设置">
