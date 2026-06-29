@@ -9,6 +9,14 @@ export async function executeTool(name: string, args: any): Promise<any> {
   return invoke("execute_tool", { name, args });
 }
 
+export async function confirmExecution(token: string): Promise<any> {
+  return invoke("confirm_tool_execution", { token });
+}
+
+export async function cancelExecution(token: string): Promise<any> {
+  return invoke("cancel_tool_execution", { token });
+}
+
 export async function callAI(config: any, messages: any[]): Promise<any> {
   return invoke("call_ai", { config, messages });
 }

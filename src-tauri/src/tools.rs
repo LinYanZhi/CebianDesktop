@@ -6,9 +6,77 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 use std::process::Command;
+use std::sync::OnceLock;
 
 use serde_json::{json, Value};
 use walkdir::WalkDir;
+
+/// 允许 AI 进行文件写/删操作的安全目录列表
+/// 由 init_allowed_dirs() 在应用启动时初始化
+static ALLOWED_DIRS: OnceLock<Vec<String>> = OnceLock::new();
+
+/// 初始化 AI 文件操作的安全目录列表。
+/// 应在应用启动时（setup 阶段）调用一次。
+pub fn init_allowed_dirs(workspace_dir: &str) {
+    let mut dirs = vec![workspace_dir.to_string()];
+    // 系统临时目录（用于导入/导出等操作）
+    if let Ok(temp) = std::env::temp_dir().canonicalize() {
+        dirs.push(temp.to_string_lossy().to_string());
+    }
+    let _ = ALLOWED_DIRS.set(dirs);
+}
+
+/// 校验路径是否在安全目录范围内。
+/// 返回 Err 表示路径不在允许范围内。
+fn validate_path(path: &str, allow_read: bool) -> Result<(), String> {
+    let p = Path::new(path);
+    
+    // 如果路径不存在，检查父目录
+    let check_path = if p.exists() {
+        // canonicalize 解析符号链接和 ..，获得真实路径
+        p.canonicalize().map_err(|_| format!("路径无效: {}", path))?
+    } else if let Some(parent) = p.parent() {
+        if parent.as_os_str().is_empty() || parent == Path::new(".") || parent == Path::new("/") {
+            return Err(format!("路径无效: {}", path));
+        }
+        if !parent.exists() {
+            return Err(format!("父目录不存在: {}", parent.display()));
+        }
+        parent.canonicalize().map_err(|_| format!("父目录无效: {}", parent.display()))?
+    } else {
+        return Err(format!("路径无效: {}", path));
+    };
+
+    let allowed = ALLOWED_DIRS.get().ok_or("安全目录未初始化")?;
+
+    // 只读操作允许更宽松的路径（用户目录下的文件）
+    if allow_read {
+        if let Some(home) = std::env::var("USERPROFILE").ok().or_else(|| std::env::var("HOME").ok()) {
+            let home_path = Path::new(&home);
+            if home_path.exists() {
+                if let Ok(home_canonical) = home_path.canonicalize() {
+                    if check_path.starts_with(&home_canonical) {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+    }
+
+    // 检查是否在任何一个安全目录下
+    for dir_str in allowed {
+        let dir = Path::new(dir_str);
+        let dir_canonical = dir.canonicalize().map_err(|_| format!("安全目录无效: {}", dir_str))?;
+        if check_path.starts_with(&dir_canonical) {
+            return Ok(());
+        }
+    }
+
+    Err(format!(
+        "路径不在允许范围内（仅允许工作区目录和临时目录）: {}",
+        path
+    ))
+}
 
 macro_rules! td {
     ($name:expr, $desc:expr, $props:expr, [$($req:expr),* $(,)?]) => {
@@ -33,13 +101,14 @@ pub fn get_tool_definitions() -> Vec<Value> {
 
         td!("write_new_file",
             "写入内容到文件。如果文件已存在，会被覆盖；如果目录不存在，会自动创建。\
-             \n\n注意：路径必须是绝对路径。写入文本内容，适合创建新文件或完全替换文件内容。如需部分修改请使用 edit_file 工具。\
+             \n\n安全限制：仅允许在工作区目录和临时目录下写入文件。路径必须是绝对路径。\
              \n\n适合场景：创建新文件、保存 AI 生成的内容、写入代码文件等。",
             &[("path", "string", "文件绝对路径，例如 C:\\Users\\用户名\\Documents\\report.md"), ("content", "string", "要写入的文件内容")], ["path", "content"]),
 
         td!("edit_file",
             "精确查找并替换文件中的指定文本。这是部分修改文件内容的工具，不会影响文件的其他部分。\
-             \n\n注意：old_text 必须完全匹配文件中的内容（区分大小写）。如果有多处匹配，会全部替换。\
+             \n\n安全限制：仅允许编辑工作区目录和临时目录下的文件。\
+             \n注意：old_text 必须完全匹配文件中的内容（区分大小写）。如果有多处匹配，会全部替换。\
              \n\n适合场景：修改配置文件中的某个值、替换代码中的变量名、更新版本号等局部修改。如需整体重写请使用 write_new_file。",
             &[("path", "string", "文件绝对路径"), ("old_text", "string", "要被替换的现有文本（区分大小写，需完全匹配）"), ("new_text", "string", "替换后的新文本")], ["path", "old_text", "new_text"]),
 
@@ -49,29 +118,35 @@ pub fn get_tool_definitions() -> Vec<Value> {
         td!("list_directory",
             "列出指定目录下的文件和子目录。返回每个条目的名称、类型（文件/目录），按目录优先、名称排序。\
              \n\n注意：不会递归列出子目录的内容。如需递归搜索请使用 search_files 工具。路径必须是绝对目录路径。\
+             \n安全限制：仅允许列出工作区、临时目录或用户目录下的内容。\
              \n\n适合场景：查看文件夹内容、浏览目录结构、确认文件是否存在等。",
             &[("path", "string", "要列出的目录绝对路径，例如 C:\\Users\\用户名\\Desktop")], ["path"]),
 
         td!("create_directory",
             "创建一个或多个目录。会递归创建所有不存在的父目录。\
-             \n\n注意：如果目录已存在，不会报错（幂等操作）。路径必须是绝对路径。\
+             \n\n安全限制：仅允许在工作区目录和临时目录下创建目录。\
+             \n注意：如果目录已存在，不会报错（幂等操作）。路径必须是绝对路径。\
              \n\n适合场景：为项目创建目录结构、创建输出文件夹等。",
             &[("path", "string", "要创建的目录绝对路径，例如 D:\\Projects\\my-app\\src")], ["path"]),
 
         td!("rename_path",
             "重命名或移动文件/目录。可以用于重命名文件，或将文件/目录移动到新位置。\
-             \n\n注意：如果目标位置的父目录不存在，会自动创建。如果目标已存在，行为取决于操作系统（可能覆盖或报错）。\
+             \n\n安全限制：仅允许在工作区目录和临时目录下操作。\
+             \n注意：如果目标位置的父目录不存在，会自动创建。如果目标已存在，行为取决于操作系统（可能覆盖或报错）。\
              \n\n适合场景：重命名文件、整理文件夹、移动项目文件到新位置。",
             &[("old_path", "string", "原路径（文件或目录的当前绝对路径）"), ("new_path", "string", "新路径（目标绝对路径）")], ["old_path", "new_path"]),
 
         td!("delete_path",
             "删除文件或目录。如果是目录，会递归删除其所有内容。\
-             \n\n警告：此操作不可撤销！删除目录会一并删除其所有子文件和子目录。\
-             \n\n适合场景：清理不需要的文件、删除临时目录、移除旧项目等。",
+             \n\n安全限制：仅允许删除工作区目录和临时目录下的文件和目录。\
+             \n无法删除系统关键路径或用户工作区之外的路径。\
+             \n警告：此操作不可撤销！删除目录会一并删除其所有子文件和子目录。\
+             \n\n适合场景：清理不再需要的文件和目录、删除项目中的临时文件等。",
             &[("path", "string", "要删除的文件或目录的绝对路径")], ["path"]),
 
         td!("search_files",
             "按文件名或文件内容搜索文件。支持递归搜索子目录，最大深度 10 层，最多返回 50 条结果。\
+             \n\n安全限制：仅允许搜索工作区、临时目录或用户目录下的文件。\
              \n\n搜索模式 (mode 参数)：\
              \n- \"name\"：按文件名匹配（不区分大小写）\
              \n- \"content\"：按文件内容关键词匹配（不区分大小写，会返回匹配的行）\
@@ -209,8 +284,10 @@ pub fn get_tool_definitions() -> Vec<Value> {
         //  技能管理
         // ═══════════════════════════════════════════════════════════
         td!("skill_list",
-            "列出工作区中所有已安装的技能。返回每个技能的名称、描述、文件名和更新时间。\
-             \n\n适合场景：查看有哪些可用技能、获取技能列表供用户选择。",
+            "列出工作区中所有已安装的技能。返回每个技能的名称、描述、文件名、是否为目录（is_dir），\
+             \n以及技能工作区的绝对路径（workspace_dir）。\
+             \n\n当需要直接操作文件系统中的技能文件或目录时，可以使用 workspace_dir + filename 拼接出完整路径。\
+             \n\n适合场景：查看有哪些可用技能、获取技能列表供用户选择、了解技能文件路径用于其他文件操作。",
             &[], []),
 
         td!("skill_create",
@@ -233,7 +310,9 @@ pub fn get_tool_definitions() -> Vec<Value> {
             ], ["name"]),
 
         td!("skill_delete",
-            "从工作区中彻底删除一个技能文件。注意：此操作不可撤销。",
+            "从工作区中彻底删除一个技能文件。注意：此操作不可撤销，且只支持删除技能文件（.md），不支持删除技能目录。\
+             \n如果需要删除技能目录（is_dir 为 true），请先用 skill_list 获取 workspace_dir，\
+             \n再使用 delete_path 工具拼接完整路径进行删除。",
             &[
                 ("name", "string", "要删除的技能名称"),
             ], ["name"]),
@@ -267,16 +346,19 @@ pub fn execute_tool(name: &str, args: &Value) -> Result<Value, String> {
     match name {
         "read_local_file" => {
             let path = arg_str(args, "path")?;
+            validate_path(path, true)?;
             Ok(json!({"content": read_local_file(path)?}))
         }
         "write_new_file" => {
             let path = arg_str(args, "path")?;
+            validate_path(path, false)?;
             let content = arg_str(args, "content")?;
             write_new_file(path, content)?;
             Ok(json!({"message": format!("文件已写入: {}", path)}))
         }
         "edit_file" => {
             let path = arg_str(args, "path")?;
+            validate_path(path, false)?;
             let old_text = arg_str(args, "old_text")?;
             let new_text = arg_str(args, "new_text")?;
             let replacements = edit_file(path, old_text, new_text)?;
@@ -284,26 +366,32 @@ pub fn execute_tool(name: &str, args: &Value) -> Result<Value, String> {
         }
         "create_directory" => {
             let path = arg_str(args, "path")?;
+            validate_path(path, false)?;
             create_directory(path)?;
             Ok(json!({"message": format!("目录已创建: {}", path)}))
         }
         "list_directory" => {
             let path = arg_str(args, "path")?;
+            validate_path(path, true)?;
             Ok(json!({"entries": list_directory(path)?}))
         }
         "rename_path" => {
             let old_path = arg_str(args, "old_path")?;
+            validate_path(old_path, false)?;
             let new_path = arg_str(args, "new_path")?;
+            validate_path(new_path, false)?;
             rename_path(old_path, new_path)?;
             Ok(json!({"message": format!("已重命名: {} -> {}", old_path, new_path)}))
         }
         "delete_path" => {
             let path = arg_str(args, "path")?;
+            validate_path(path, false)?;
             fs_delete(path)?;
             Ok(json!({"message": format!("已删除: {}", path)}))
         }
         "search_files" => {
             let directory = arg_str(args, "directory")?;
+            validate_path(directory, true)?;
             let pattern = arg_str(args, "pattern")?;
             let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("name");
             let results = search_files(directory, pattern, mode)?;
@@ -312,17 +400,20 @@ pub fn execute_tool(name: &str, args: &Value) -> Result<Value, String> {
         "download_file" => {
             let url = arg_str(args, "url")?;
             let destination = arg_str(args, "destination")?;
+            validate_path(destination, false)?;
             let result = download_file(url, destination)?;
             Ok(json!({"message": result}))
         }
         "open_path" => {
             let path = arg_str(args, "path")?;
+            validate_path(path, true)?;
             let result = open_path(path)?;
             Ok(json!({"message": result}))
         }
         "open_file" => {
             // 兼容旧名称
             let path = arg_str(args, "path")?;
+            validate_path(path, true)?;
             let result = open_path(path)?;
             Ok(json!({"message": result}))
         }
@@ -363,6 +454,7 @@ pub fn execute_tool(name: &str, args: &Value) -> Result<Value, String> {
         }
         "capture_screen" => {
             let save_path = arg_str(args, "save_path")?;
+            validate_path(save_path, false)?;
             capture_screen(save_path)?;
             Ok(json!({"message": format!("截图已保存: {}", save_path)}))
         }

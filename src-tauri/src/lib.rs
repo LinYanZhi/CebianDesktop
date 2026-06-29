@@ -23,6 +23,13 @@ pub fn run() {
             #[cfg(desktop)]
             app.handle().plugin(tauri_plugin_window_state::Builder::default().build())?;
 
+            // 初始化 AI 文件操作的路径沙箱（工作区根目录）
+            if let Ok(skills_dir) = workspace::get_subdir_path(app.handle(), workspace::WorkspaceDir::Skills) {
+                if let Some(parent) = skills_dir.parent() {
+                    tools::init_allowed_dirs(&parent.to_string_lossy());
+                }
+            }
+
             // 启动工作区文件监听
             let handle = app.handle().clone();
             std::thread::spawn(move || {
@@ -37,6 +44,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::get_tools,
             commands::execute_tool,
+            commands::confirm_tool_execution,
+            commands::cancel_tool_execution,
             commands::call_ai,
             commands::call_ai_streaming,
             commands::start_mcp_server,

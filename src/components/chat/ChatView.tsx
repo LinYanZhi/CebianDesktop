@@ -53,6 +53,19 @@ interface ChatViewProps {
   } | null;
   /** 用户对交互式工具的响应（传入 JSON 字符串或 null 取消） */
   onInteractiveResolve?: (value: string | null) => void;
+  /** 待响应的危险操作二次确认 */
+  pendingConfirmation?: {
+    details: {
+      action: string;
+      target: string;
+      risk: string;
+      description: string;
+      args_detail: string;
+    };
+    token: string;
+  } | null;
+  /** 用户对二次确认的响应 */
+  onConfirmResolve?: (confirmed: boolean) => void;
 }
 
 const THINKING_OPTIONS: { key: ThinkingLevel; label: string }[] = [
@@ -88,6 +101,23 @@ function CopyButton({ text }: { text: string }) {
 //  工具调用卡片
 // ═══════════════════════════════════════════════════════════
 
+/** 工具类型分类 */
+type ToolCategory = "builtin" | "skill" | "mcp";
+
+/** 工具类型信息 */
+const TOOL_CATEGORY_META: Record<ToolCategory, { label: string; color: string; bg: string }> = {
+  builtin: { label: "系统", color: "text-blue-500", bg: "bg-blue-500/10" },
+  skill: { label: "技能", color: "text-purple-500", bg: "bg-purple-500/10" },
+  mcp: { label: "MCP", color: "text-amber-500", bg: "bg-amber-500/10" },
+};
+
+/** 根据工具名判断类型 */
+function getToolCategory(name: string): ToolCategory {
+  if (name.startsWith("mcp:")) return "mcp";
+  if (name.startsWith("skill_")) return "skill";
+  return "builtin";
+}
+
 const TOOL_LABELS: Record<string, { label: string; color: string; desc: string }> = {
   read_local_file: { label: "读取文件", color: "text-blue-400", desc: "读取本地文件内容" },
   write_new_file: { label: "写入文件", color: "text-emerald-400", desc: "创建新文件并写入内容" },
@@ -109,6 +139,11 @@ const TOOL_LABELS: Record<string, { label: string; color: string; desc: string }
   clipboard_read: { label: "读取剪贴板", color: "text-stone-400", desc: "读取系统剪贴板内容" },
   clipboard_write: { label: "写入剪贴板", color: "text-neutral-400", desc: "写入内容到系统剪贴板" },
   ask_user: { label: "询问用户", color: "text-sky-400", desc: "向用户提问并等待回复" },
+  // 技能管理工具
+  skill_list: { label: "技能列表", color: "text-purple-400", desc: "列出所有已安装的技能" },
+  skill_create: { label: "创建技能", color: "text-purple-400", desc: "创建一个新的技能" },
+  skill_read: { label: "读取技能", color: "text-purple-400", desc: "读取技能的详细内容" },
+  skill_delete: { label: "删除技能", color: "text-red-400", desc: "删除一个技能" },
 };
 
 function getToolLabel(name: string): string {
@@ -138,19 +173,21 @@ function ToolCallCards({ tool_calls, results }: {
             return JSON.stringify(JSON.parse(tc.function.arguments), null, 2);
           } catch { return tc.function.arguments; }
         })();
-        return <ToolCardItem key={tc.id || i} label={getToolLabel(tc.function.name)} toolName={tc.function.name} color={getToolColor(tc.function.name)} status={status} args={argsStr} result={resultContent} />;
+        const category = getToolCategory(tc.function.name);
+        return <ToolCardItem key={tc.id || i} category={category} label={getToolLabel(tc.function.name)} toolName={tc.function.name} color={getToolColor(tc.function.name)} status={status} args={argsStr} result={resultContent} />;
       })}
     </div>
   );
 }
 
 /** 单个工具卡片（可折叠） */
-function ToolCardItem({ label, color, toolName, status, args, result }: {
-  label: string; color: string; toolName: string; status: 'running' | 'done'; args: string; result?: string;
+function ToolCardItem({ label, color, toolName, category, status, args, result }: {
+  label: string; color: string; toolName: string; category: ToolCategory; status: 'running' | 'done'; args: string; result?: string;
 }) {
   const [open, setOpen] = useState(false);
   const desc = getToolDesc(toolName);
   const hasArgs = args !== "{}" && args !== "{\n}";
+  const catMeta = TOOL_CATEGORY_META[category];
   return (
     <div className="border border-border rounded-lg overflow-hidden text-[0.8rem] min-w-0">
       {/* Header */}
@@ -170,7 +207,12 @@ function ToolCardItem({ label, color, toolName, status, args, result }: {
           </svg>
         )}
         <div className="flex-1 min-w-0">
-          <span className={`truncate block ${color}`}>{label}</span>
+          <div className="flex items-center gap-2">
+            <span className={`truncate ${color}`}>{label}</span>
+            <span className={`shrink-0 text-[0.55rem] font-medium px-1.5 py-0.5 rounded-full ${catMeta.color} ${catMeta.bg}`}>
+              {catMeta.label}
+            </span>
+          </div>
           {!hasArgs && desc && (
             <span className="text-[0.6rem] text-muted-foreground/60 truncate block">{desc}</span>
           )}
@@ -1215,9 +1257,11 @@ function ChatInput({
   // ── Speech Recognition ──
   const inputValueRef = useRef(inputValue);
   inputValueRef.current = inputValue;
+  const baseTextRef = useRef(""); // 开始录音时的输入框内容，用于拼接语音识别结果
   const speech = useSpeechRecognition(
+    undefined,
     (text) => {
-      setInputValue(inputValueRef.current + text);
+      setInputValue(baseTextRef.current + text);
     },
     "zh-CN",
   );
@@ -1360,6 +1404,7 @@ function ChatInput({
   // 发送
   const handleSend = () => {
     if (!inputValue.trim() || loading) return;
+    if (speech.listening) speech.stop();
     onSend(attachments);
     setAttachments([]);
   };
@@ -1455,32 +1500,32 @@ function ChatInput({
             </div>
 
             <div className="flex items-center gap-2">
-              {speech.listening ? (
-                <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-primary/10 text-primary text-xs">
-                  <span className="relative flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-primary" />
-                  </span>
-                  <span className="text-[10px]">{speech.interimText || "语音输入中..."}</span>
-                  <button onClick={speech.stop}
-                    className="ml-1 p-0.5 rounded hover:bg-primary/20">
-                    <X size={12} />
-                  </button>
-                </div>
-              ) : (
+              {speech.supported && (
                 <button
                   onClick={() => {
-                    if (!speech.supported) {
-                      toast.error("浏览器不支持语音识别");
-                      return;
+                    if (speech.listening) {
+                      speech.stop();
+                    } else {
+                      baseTextRef.current = inputValueRef.current;
+                      speech.start();
                     }
-                    speech.start();
                   }}
                   disabled={loading}
-                  className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors disabled:opacity-30"
-                  title="语音输入"
+                  className={`p-1.5 rounded-md transition-colors disabled:opacity-30 ${
+                    speech.listening
+                      ? "text-primary bg-primary/10"
+                      : "text-muted-foreground hover:text-foreground hover:bg-accent"
+                  }`}
+                  title={speech.listening ? "停止语音输入" : "语音输入"}
                 >
-                  <Mic size={15} />
+                  {speech.listening ? (
+                    <span className="relative flex">
+                      <Mic size={15} />
+                      <span className="animate-ping absolute inset-0 m-auto w-full h-full rounded-full bg-primary/40" />
+                    </span>
+                  ) : (
+                    <Mic size={15} />
+                  )}
                 </button>
               )}
               {loading ? (
@@ -1599,7 +1644,7 @@ function useStickToBottom(containerRef: React.RefObject<HTMLDivElement | null>) 
 
 export default function ChatView({
   messages, onSend, onStop, onRetry, loading, aiConfig, onConfigChange, onNavigateSettings, onRollback,
-  pendingInteractive, onInteractiveResolve,
+  pendingInteractive, onInteractiveResolve, pendingConfirmation, onConfirmResolve,
 }: ChatViewProps) {
   const [inputValue, setInputValue] = useState("");
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1738,6 +1783,69 @@ export default function ChatView({
               questions={pendingInteractive.questions}
               onResolve={onInteractiveResolve!}
             />
+          )}
+          {/* ═══ 危险操作二次确认对话框 ═══ */}
+          {pendingConfirmation && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+              <div className="w-full max-w-md mx-4 bg-background border border-border rounded-xl shadow-2xl overflow-hidden">
+                {/* 头部 */}
+                <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
+                  <div className={`size-10 rounded-full flex items-center justify-center text-lg font-bold ${
+                    pendingConfirmation.details.risk === "high"
+                      ? "bg-red-500/10 text-red-500"
+                      : "bg-amber-500/10 text-amber-500"
+                  }`}>
+                    {pendingConfirmation.details.risk === "high" ? "⚠" : "!"}
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-semibold">确认{pendingConfirmation.details.action}</h3>
+                    <p className="text-xs text-muted-foreground">
+                      风险等级：{pendingConfirmation.details.risk === "high" ? "高" : "中"}
+                    </p>
+                  </div>
+                </div>
+                {/* 内容 */}
+                <div className="px-5 py-4 space-y-3">
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">操作描述</p>
+                    <p className="text-sm">{pendingConfirmation.details.description}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">目标对象</p>
+                    <pre className="text-sm font-mono bg-muted rounded-md px-3 py-2 break-all whitespace-pre-wrap">
+                      {pendingConfirmation.details.target}
+                    </pre>
+                  </div>
+                  {pendingConfirmation.details.args_detail && (
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">详细参数</p>
+                      <pre className="text-[0.75rem] font-mono bg-muted rounded-md px-3 py-2 whitespace-pre-wrap" style={{ scrollbarWidth: 'thin', overflowX: 'auto' }}>
+                        {pendingConfirmation.details.args_detail}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+                {/* 操作按钮 */}
+                <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border bg-muted/30">
+                  <button
+                    onClick={() => onConfirmResolve?.(false)}
+                    className="px-4 py-1.5 text-sm rounded-lg border border-border bg-background hover:bg-accent transition-colors text-muted-foreground"
+                  >
+                    取消
+                  </button>
+                  <button
+                    onClick={() => onConfirmResolve?.(true)}
+                    className={`px-4 py-1.5 text-sm rounded-lg text-white transition-colors ${
+                      pendingConfirmation.details.risk === "high"
+                        ? "bg-red-500 hover:bg-red-600"
+                        : "bg-amber-500 hover:bg-amber-600"
+                    }`}
+                  >
+                    运行
+                  </button>
+                </div>
+              </div>
+            </div>
           )}
           {loading && messages[messages.length - 1]?.role !== "assistant" && !pendingInteractive && (
             <div className="self-start w-full">

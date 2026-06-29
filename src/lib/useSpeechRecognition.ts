@@ -30,10 +30,12 @@ export interface SpeechRecognitionActions {
 /**
  * 语音识别 Hook
  * @param onResult 识别完成后的回调（最终文本）
+ * @param onInterim 实时识别回调，语音期间持续推送当前识别的文本（final + interim）
  * @param lang 语言（默认 zh-CN）
  */
 export function useSpeechRecognition(
   onResult?: (text: string) => void,
+  onInterim?: (text: string) => void,
   lang = "zh-CN",
 ): SpeechRecognitionState & SpeechRecognitionActions {
   const [listening, setListening] = useState(false);
@@ -103,6 +105,10 @@ export function useSpeechRecognition(
         finalTextRef.current += final;
       }
       setInterimText(interim);
+      // 实时推送识别的文本（final + interim），让调用方实时填入输入框
+      if (onInterim) {
+        onInterim(finalTextRef.current + interim);
+      }
     };
 
     recognition.onerror = (event: any) => {
@@ -137,7 +143,7 @@ export function useSpeechRecognition(
     } catch (e: any) {
       setError("启动语音识别失败: " + (e.message || ""));
     }
-  }, [supported, lang, onResult]);
+  }, [supported, lang, onResult, onInterim]);
 
   const reset = useCallback(() => {
     finalTextRef.current = "";

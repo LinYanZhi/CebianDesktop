@@ -227,18 +227,21 @@ fn build_openai_tools(app_handle: Option<&tauri::AppHandle>) -> Vec<Value> {
         })
         .collect();
 
-    // 追加动态技能工具
+    // 追加动态技能工具（去重，避免与内置工具重名）
     if let Some(handle) = app_handle {
         if let Ok(skill_tools) = tools::get_skill_tools(handle) {
             for st in skill_tools {
-                result.push(json!({
-                    "type": "function",
-                    "function": {
-                        "name": st["name"],
-                        "description": st["description"],
-                        "parameters": st["inputSchema"],
-                    }
-                }));
+                let name = st["name"].as_str().unwrap_or("");
+                if !result.iter().any(|r| r["function"]["name"].as_str() == Some(name)) {
+                    result.push(json!({
+                        "type": "function",
+                        "function": {
+                            "name": st["name"],
+                            "description": st["description"],
+                            "parameters": st["inputSchema"],
+                        }
+                    }));
+                }
             }
         }
     }

@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Settings, MessageSquarePlus, Bot, History, Server, X, Trash2, Sun, Moon } from "lucide-react";
 import ChatView from "./components/chat/ChatView";
 import SettingsView from "./components/settings/SettingsView";
-import { getTools, executeTool, startMcpServer, stopMcpServer } from "./lib/commands";
+import { getTools, executeTool, confirmExecution, cancelExecution, startMcpServer, stopMcpServer } from "./lib/commands";
 import { loadAIConfig, saveAIConfig, loadConversationsFromStorage, saveConversationsToStorage, loadTheme, saveTheme } from "./lib/db";
 import type { Conversation, ChatMessage, AIConfig, SendAttachment, ToolCall } from "./lib/types";
 import { DEFAULT_PROVIDERS, getActiveConfig } from "./lib/types";
@@ -161,20 +161,21 @@ async function askUserInteractive(
 }
 
 /**
- * 危险操作确认 —— 通过 ask_user 的 confirm 类型实现内嵌确认框。
+ * 危险操作二次确认 —— 暂停流程，展示确认对话框等待用户决策。
+ * 返回 true 表示用户点击「运行」，false 表示用户点击「取消」。
  */
-async function confirmDangerousAction(
-  title: string,
-  message: string,
+async function askConfirmation(
+  details: any,
+  token: string,
   setPending: (p: any) => void,
-  resolveRef: { current: ((value: string | null) => void) | null },
+  resolveRef: { current: ((value: boolean) => void) | null },
 ): Promise<boolean> {
-  const result = await askUserInteractive(
-    { question: `${title}\n\n${message}`, type: "confirm" },
-    setPending,
-    resolveRef,
-  );
-  return result === "yes";
+  setPending({ details, token });
+  await yieldToUI();
+  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+  return new Promise<boolean>((resolve) => {
+    resolveRef.current = resolve;
+  });
 }
 
 /**
@@ -426,6 +427,13 @@ export default function App() {
     }>;
   } | null>(null);
   const interactiveResolveRef = useRef<((value: string | null) => void) | null>(null);
+
+  /** 危险操作二次确认状态 */
+  const [pendingConfirmation, setPendingConfirmation] = useState<{
+    details: any;
+    token: string;
+  } | null>(null);
+  const confirmResolveRef = useRef<((value: boolean) => void) | null>(null);
 
   // 切换主题
   useEffect(() => {
@@ -689,6 +697,32 @@ export default function App() {
         // 启动定期持久化
         startStreamPersist(streamState);
 
+        // ─── 消息校验：确保 tool 消息之前有对应的 assistant(tool_calls) ───
+        // 避免 API 报 "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'"
+        for (let i = 0; i < currentMessages.length; i++) {
+          const msg = currentMessages[i];
+          if (msg.role === "tool") {
+            // 查找前面的最后一条 assistant 消息
+            let hasPreceding = false;
+            for (let j = i - 1; j >= 0; j--) {
+              const prev = currentMessages[j];
+              if (prev.role === "assistant" && prev.tool_calls && prev.tool_calls.length > 0) {
+                hasPreceding = true;
+                break;
+              }
+              if (prev.role === "user" || prev.role === "system") break;
+            }
+            if (!hasPreceding) {
+              console.warn(`[handleSend] 孤立的 tool 消息 (tool_call_id=${msg.tool_call_id})，移除`);
+              currentMessages.splice(i, 1);
+              i--; // 回退索引
+            } else if (!msg.tool_call_id) {
+              console.warn(`[handleSend] tool 消息缺少 tool_call_id，填充占位符`);
+              (msg as any).tool_call_id = `fallback_${i}`;
+            }
+          }
+        }
+
         // ─── 工具调用循环（最大 10 轮） ──────────────────────
         const MAX_TOOL_DEPTH = 10;
         for (let depth = 0; depth <= MAX_TOOL_DEPTH; depth++) {
@@ -938,57 +972,45 @@ export default function App() {
                 continue;
               }
 
-              // ── 危险操作确认：删除文件/目录 ──
-              if (toolName === "delete_path") {
-                const confirmed = await confirmDangerousAction(
-                  `确认删除`,
-                  `确定要删除以下路径吗？此操作不可撤销！\n${args.path}`,
-                  setPendingInteractive,
-                  interactiveResolveRef,
+              // ── 通用执行：调用后端 execute_tool，处理二次确认 ──
+              console.log(`[handleSend] 执行工具: ${toolName}`, tc.function.arguments);
+              const result = await executeTool(toolName, args);
+
+              if (result && result.needs_confirmation) {
+                // 后端返回 needs_confirmation → 需要用户二次确认
+                const confirmed = await askConfirmation(
+                  result.details,
+                  result.token,
+                  setPendingConfirmation,
+                  confirmResolveRef,
                 );
-                if (!confirmed) {
+                if (confirmed) {
+                  // 用户点击「运行」→ 调用 confirm_tool_execution 执行
+                  const execResult = await confirmExecution(result.token);
                   toolResults.push({
                     role: "tool",
-                    content: JSON.stringify({ error: "用户取消了删除操作" }),
+                    content: JSON.stringify(execResult, null, 2),
                     tool_call_id: tc.id,
                     name: toolName,
                   } as ChatMessage);
-                  continue;
+                } else {
+                  // 用户点击「取消」→ 取消执行
+                  await cancelExecution(result.token).catch(() => {});
+                  toolResults.push({
+                    role: "tool",
+                    content: JSON.stringify({ error: `用户取消了 ${toolName} 操作` }),
+                    tool_call_id: tc.id,
+                    name: toolName,
+                  } as ChatMessage);
                 }
+              } else {
+                toolResults.push({
+                  role: "tool",
+                  content: JSON.stringify(result, null, 2),
+                  tool_call_id: tc.id,
+                  name: toolName,
+                } as ChatMessage);
               }
-
-              // ── 危险操作确认：执行命令（黑名单检测） ──
-              if (toolName === "run_command") {
-                const cmd = (args.command || "").toLowerCase();
-                const dangerousCmds = ["format", "del ", "rmdir", "rd ", "rm ", "shutdown", "taskkill", "reg delete", "diskpart"];
-                const isDangerous = dangerousCmds.some(d => cmd.includes(d));
-                if (isDangerous) {
-                  const confirmed = await confirmDangerousAction(
-                    `确认执行命令`,
-                    `确定要执行以下命令吗？\n${args.command}\n\n此命令可能对系统有影响，请确认。`,
-                    setPendingInteractive,
-                    interactiveResolveRef,
-                  );
-                  if (!confirmed) {
-                    toolResults.push({
-                      role: "tool",
-                      content: JSON.stringify({ error: "用户取消了命令执行" }),
-                      tool_call_id: tc.id,
-                      name: toolName,
-                    } as ChatMessage);
-                    continue;
-                  }
-                }
-              }
-
-              console.log(`[handleSend] 执行工具: ${toolName}`, tc.function.arguments);
-              const result = await executeTool(toolName, args);
-              toolResults.push({
-                role: "tool",
-                content: JSON.stringify(result, null, 2),
-                tool_call_id: tc.id,
-                name: toolName,
-              } as ChatMessage);
             } catch (err: any) {
               console.error(`[handleSend] 工具执行失败: ${tc.function.name}`, err);
               toolResults.push({
@@ -1071,6 +1093,13 @@ export default function App() {
     interactiveResolveRef.current?.(value);
     interactiveResolveRef.current = null;
     setPendingInteractive(null);
+  }, []);
+
+  /** 用户对二次确认对话框的响应 */
+  const handleConfirmResolve = useCallback((confirmed: boolean) => {
+    confirmResolveRef.current?.(confirmed);
+    confirmResolveRef.current = null;
+    setPendingConfirmation(null);
   }, []);
 
   // 停止当前会话的流式输出
@@ -1445,6 +1474,8 @@ export default function App() {
             onRollback={handleRollback}
             pendingInteractive={pendingInteractive}
             onInteractiveResolve={handleInteractiveResolve}
+            pendingConfirmation={pendingConfirmation}
+            onConfirmResolve={handleConfirmResolve}
           />
 
           <div
