@@ -62,6 +62,16 @@ export async function generateWorkspaceId(): Promise<string> {
   return invoke("generate_workspace_id");
 }
 
+/** 导出单个工作区文件（返回原始 Markdown 内容字符串） */
+export async function exportWorkspaceFileContent(sub: WorkspaceSubDir, id: string): Promise<string> {
+  return invoke("export_workspace_file", { sub, id });
+}
+
+/** 导入单个工作区文件（传入原始 Markdown 内容），返回新文件 id */
+export async function importWorkspaceFileContent(sub: WorkspaceSubDir, content: string): Promise<string> {
+  return invoke("import_workspace_file", { sub, content });
+}
+
 /** 导出备份（返回 base64 字符串） */
 export async function exportBackup(): Promise<string> {
   return invoke("export_backup");

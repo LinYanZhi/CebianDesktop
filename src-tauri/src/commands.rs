@@ -397,6 +397,36 @@ pub fn generate_workspace_id() -> String {
     workspace::generate_id()
 }
 
+/// 导出单个工作区文件（返回原始 Markdown 内容）
+#[tauri::command]
+pub fn export_workspace_file(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    id: String,
+) -> Result<String, String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    workspace::read_file_raw(&app_handle, dir, &id)
+}
+
+/// 导入单个工作区文件（从原始 Markdown 内容）
+#[tauri::command]
+pub fn import_workspace_file(
+    app_handle: tauri::AppHandle,
+    sub: String,
+    content: String,
+) -> Result<String, String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    workspace::import_file_raw(&app_handle, dir, &content)
+}
+
 // ─── 备份与恢复 ─────────────────────────────────────────────
 
 /// 导出备份为 base64 字符串（供前端下载）

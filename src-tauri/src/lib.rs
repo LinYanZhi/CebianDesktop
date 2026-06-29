@@ -52,6 +52,8 @@ pub fn run() {
             commands::write_workspace_file,
             commands::delete_workspace_file,
             commands::generate_workspace_id,
+            commands::export_workspace_file,
+            commands::import_workspace_file,
             commands::export_backup,
             commands::import_backup,
         ])

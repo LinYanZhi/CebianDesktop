@@ -16,6 +16,8 @@ import {
   generateWorkspaceId,
   exportBackup,
   importBackup,
+  exportWorkspaceFileContent,
+  importWorkspaceFileContent,
 } from "../../lib/workspace";
 import type { WorkspaceFile } from "../../lib/workspace";
 import { useI18n } from "../../lib/i18n";
@@ -390,12 +392,49 @@ function PromptsSection() {
   );
 }
 
+// ── 自定义右键菜单 ──────────────────────────────────
+function ContextMenu({ x, y, items, onClose }: {
+  x: number; y: number;
+  items: { label: string; icon?: React.ReactNode; danger?: boolean; onClick: () => void }[];
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [onClose]);
+
+  return (
+    <div ref={ref}
+      className="fixed z-50 min-w-[140px] bg-popover border border-border rounded-lg shadow-xl py-1"
+      style={{ left: x, top: y }}>
+      {items.map((item, i) => (
+        <button key={i} onClick={() => { item.onClick(); onClose(); }}
+          className={`w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left transition-colors ${item.danger ? "text-destructive hover:bg-destructive/10" : "text-foreground hover:bg-accent"}`}>
+          {item.icon && <span className="shrink-0">{item.icon}</span>}
+          {item.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function SkillsSection() {
   const [skills, setSkills] = useState<WorkspaceFile[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [editing, setEditing] = useState<WorkspaceFile | null>(null);
   const [dirty, setDirty] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+
+  // 右键菜单
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; fileId?: string } | null>(null);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = async () => {
     const list = await listWorkspaceFiles("skills");
@@ -403,120 +442,281 @@ function SkillsSection() {
   };
   useEffect(() => { load(); }, []);
 
+  // 选中文件时加载完整内容
+  const selectFile = async (id: string) => {
+    setSelectedId(id);
+    const file = skills.find(s => s.id === id);
+    if (file) setEditing({ ...file });
+    setDirty(false);
+  };
+
+  const handleNew = async () => {
+    if (dirty) { toast.warning("请先保存当前编辑"); return; }
+    const id = await generateWorkspaceId();
+    const blank: WorkspaceFile = {
+      id, filename: `${id}.md`, name: "新技能", description: "", content: "",
+      created_at: Date.now(), updated_at: Date.now(),
+    };
+    // 写入初始文件
+    await writeWorkspaceFile("skills", id, "新技能", "", "");
+    await load();
+    setSelectedId(id);
+    setEditing(blank);
+    setDirty(false);
+  };
+
+  const handleSave = async () => {
+    if (!editing) return;
+    if (!editing.name.trim()) { toast.error("请输入技能名称"); return; }
+    setLoading(true);
+    try {
+      await writeWorkspaceFile("skills", editing.id, editing.name, editing.description, editing.content);
+      toast.success("保存成功");
+      setDirty(false);
+      await load();
+      setSelectedId(editing.id);
+    } catch (e: any) {
+      toast.error("保存失败: " + (e?.toString() || "未知错误"));
+    } finally { setLoading(false); }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteWorkspaceFile("skills", id);
+      toast.success("已删除");
+      if (selectedId === id) { setSelectedId(null); setEditing(null); setDirty(false); }
+      await load();
+    } catch (e: any) {
+      toast.error("删除失败: " + (e?.toString() || "未知错误"));
+    }
+  };
+
+  const handleRename = async (id: string, newName: string) => {
+    if (!newName.trim()) return;
+    const file = skills.find(s => s.id === id);
+    if (!file) return;
+    await writeWorkspaceFile("skills", id, newName.trim(), file.description, file.content);
+    await load();
+    if (editing?.id === id) {
+      setEditing({ ...editing, name: newName.trim() });
+    }
+    setDirty(true);
+  };
+
+  // 导出单个文件
+  const handleExportFile = async (id: string) => {
+    try {
+      const raw = await exportWorkspaceFileContent("skills", id);
+      const file = skills.find(s => s.id === id);
+      const filename = file?.filename || `${id}.md`;
+      const blob = new Blob([raw], { type: "text/markdown" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("导出成功");
+    } catch (e: any) {
+      toast.error("导出失败: " + (e?.toString() || "未知错误"));
+    }
+  };
+
+  // 导出全部（逐个下载为 zip 不便，批量导出为一个 zip 更合理——复用已有备份功能）
+  const handleExportAll = async () => {
+    try {
+      // 利用已有的 exportBackup，但只为 skills 生成 zip
+      // 简单方式：逐个下载
+      for (const s of skills) {
+        await handleExportFile(s.id);
+      }
+    } catch {}
+  };
+
+  // 导入文件
+  const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      await importWorkspaceFileContent("skills", text);
+      toast.success("导入成功");
+      await load();
+    } catch (e: any) {
+      toast.error("导入失败: " + (e?.toString() || "未知错误"));
+    }
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   return (
     <section>
       <h2 className="text-base font-semibold mb-4">技能</h2>
-      <p className="text-sm text-muted-foreground mb-4">
-        技能是可以让 AI 按需调用的能力模块。每个技能是一个 .md 文件，存放在工作区的 skills/ 目录。
-      </p>
 
-      <div className="flex gap-4 h-[400px]">
-        <div className="w-56 shrink-0 flex flex-col gap-2">
-          <button onClick={async () => {
-            if (dirty) { toast.warning("请先保存当前编辑的技能"); return; }
-            const id = await generateWorkspaceId();
-            const blank: WorkspaceFile = {
-              id, filename: `${id}.md`, name: "", description: "", content: "",
-              created_at: Date.now(), updated_at: Date.now(),
-            };
-            setEditing(blank);
-            setSelectedId(blank.id);
-            setDirty(true);
-          }}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-input text-sm text-muted-foreground hover:text-foreground hover:border-ring transition-colors"
-          >
-            <Plus size={14} /> 新建技能
-          </button>
-          <div className="flex-1 overflow-y-auto space-y-0.5 border border-border rounded-lg p-1">
+      {/* 工具栏 */}
+      <div className="flex items-center gap-2 mb-4">
+        <button onClick={handleNew}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-dashed border-input text-xs text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
+          <Plus size={13} /> 新建
+        </button>
+        <div className="w-px h-4 bg-border" />
+        <button onClick={handleExportAll} disabled={skills.length === 0}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-input text-xs text-muted-foreground hover:text-foreground hover:border-ring transition-colors disabled:opacity-30">
+          <Download size={13} /> 导出全部
+        </button>
+        <button onClick={() => fileInputRef.current?.click()}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-input text-xs text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
+          <Upload size={13} /> 导入
+        </button>
+        <input ref={fileInputRef} type="file" accept=".md" onChange={handleImport} className="hidden" />
+      </div>
+
+      <div className="flex gap-0 h-[420px] border border-border rounded-lg overflow-hidden">
+        {/* ── 左侧：文件列表 ── */}
+        <div className="w-52 shrink-0 border-r border-border bg-card flex flex-col">
+          <div className="flex items-center gap-1 px-3 py-2 border-b border-border">
+            <FileText size={12} className="text-muted-foreground" />
+            <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">skills/</span>
+            <span className="text-[10px] text-muted-foreground/60">({skills.length})</span>
+          </div>
+          <div className="flex-1 overflow-y-auto p-1 space-y-0.5"
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setCtxMenu({ x: e.clientX, y: e.clientY });
+            }}>
             {skills.length === 0 ? (
-              <p className="text-xs text-muted-foreground text-center py-8">暂无技能</p>
+              <p className="text-[11px] text-muted-foreground text-center py-8">空目录</p>
             ) : (
               skills.map(s => (
-                <button key={s.id}
-                  onClick={() => {
-                    if (dirty) { toast.warning("请先保存当前编辑"); return; }
-                    setSelectedId(s.id);
-                    setEditing({ ...s });
-                    setDirty(false);
-                  }}
-                  className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors ${
-                    selectedId === s.id
-                      ? "bg-accent text-foreground font-medium"
-                      : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
-                  }`}
-                >
-                  <div className="truncate">{s.name || "(未命名)"}</div>
-                  {s.description && (
-                    <div className="text-[10px] text-muted-foreground truncate mt-0.5">{s.description}</div>
-                  )}
-                </button>
+                <div key={s.id}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    setCtxMenu({ x: e.clientX, y: e.clientY, fileId: s.id });
+                  }}>
+                  <button onClick={() => selectFile(s.id)}
+                    className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs transition-colors text-left ${
+                      selectedId === s.id
+                        ? "bg-accent text-foreground"
+                        : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
+                    }`}
+                    title={s.filename}>
+                    <FileText size={12} className="shrink-0 opacity-60" />
+                    <span className="truncate">{s.name || s.id}</span>
+                  </button>
+                </div>
               ))
             )}
           </div>
         </div>
 
-        <div className="flex-1 flex flex-col border border-border rounded-lg p-4 overflow-y-auto">
-          {!editing ? (
-            <div className="flex items-center justify-center h-full text-sm text-muted-foreground">
-              请选择或创建一个技能
+        {/* ── 右侧：编辑器 ── */}
+        {!editing ? (
+          <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground bg-background">
+            <div className="text-center">
+              <FileText size={32} className="mx-auto mb-2 opacity-20" />
+              <p>选择或新建一个技能文件</p>
             </div>
-          ) : (
-            <div className="space-y-4">
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">名称</label>
+          </div>
+        ) : (
+          <div className="flex-1 flex flex-col bg-background min-w-0">
+            {/* 文件名标签栏 */}
+            <div className="flex items-center gap-2 px-4 py-1.5 border-b border-border bg-muted/30 shrink-0">
+              <FileText size={12} className="text-primary shrink-0" />
+              {renaming === editing.id ? (
+                <input type="text" value={renameValue}
+                  autoFocus
+                  onBlur={() => { setRenaming(null); }}
+                  onKeyDown={async (e) => {
+                    if (e.key === "Enter") {
+                      await handleRename(editing.id, renameValue);
+                      setRenaming(null);
+                    }
+                    if (e.key === "Escape") setRenaming(null);
+                  }}
+                  onChange={(e) => setRenameValue(e.target.value)}
+                  className="flex-1 text-xs bg-background border border-input rounded px-1.5 py-0.5 outline-none focus:border-ring" />
+              ) : (
+                <span className="text-xs font-medium text-foreground truncate">{editing.filename}</span>
+              )}
+              <span className="text-[10px] text-muted-foreground/60 ml-auto shrink-0">
+                {editing.name ? `${editing.name} — ` : ""}{editing.description ? editing.description : "无描述"}
+              </span>
+            </div>
+
+            {/* 编辑区域 */}
+            <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+              {/* Frontmatter 行（直接编辑的样子，用 inline 样式伪装成代码） */}
+              <div className="flex items-center gap-2 px-4 pt-3 pb-1">
                 <input type="text" value={editing.name}
                   onChange={(e) => { setEditing({ ...editing, name: e.target.value }); setDirty(true); }}
-                  placeholder="如 web-researcher" className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring" />
-              </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">描述</label>
+                  placeholder="name: 技能名称"
+                  className="flex-1 text-xs bg-muted/50 border border-border/50 rounded px-2 py-1 font-mono outline-none focus:border-ring/50 placeholder:text-muted-foreground/30" />
                 <input type="text" value={editing.description}
                   onChange={(e) => { setEditing({ ...editing, description: e.target.value }); setDirty(true); }}
-                  placeholder="简短描述这个技能的用途" className="w-full bg-background border border-input rounded-lg px-3 py-2 text-sm outline-none focus:border-ring" />
+                  placeholder="description: 简短描述"
+                  className="flex-1 text-xs bg-muted/50 border border-border/50 rounded px-2 py-1 font-mono outline-none focus:border-ring/50 placeholder:text-muted-foreground/30" />
               </div>
-              <div>
-                <label className="text-xs font-medium text-muted-foreground block mb-1">内容</label>
+              <div className="px-4 pb-1">
+                <div className="text-[10px] text-muted-foreground/40 font-mono border-b border-border/30 pb-1">--- frontmatter end ---</div>
+              </div>
+
+              {/* 编辑器主体 */}
+              <div className="flex-1 min-h-0 px-4 pb-3">
                 <textarea value={editing.content}
                   onChange={(e) => { setEditing({ ...editing, content: e.target.value }); setDirty(true); }}
-                  placeholder="技能定义内容（Markdown 格式）" rows={10}
-                  className="w-full bg-background border border-input rounded-lg p-3 text-sm outline-none focus:border-ring resize-none font-mono" />
-              </div>
-              <div className="flex items-center gap-3 pt-2">
-                <button onClick={async () => {
-                  if (!editing.name.trim()) { toast.error("请输入技能名称"); return; }
-                  setLoading(true);
-                  try {
-                    await writeWorkspaceFile("skills", editing.id, editing.name, editing.description, editing.content);
-                    toast.success("保存成功");
-                    setDirty(false);
-                    await load();
-                    setSelectedId(editing.id);
-                  } catch (e: any) {
-                    toast.error("保存失败: " + (e?.toString() || "未知错误"));
-                  } finally { setLoading(false); }
-                }} disabled={loading || !dirty}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-primary text-primary-foreground rounded-lg text-xs font-medium hover:bg-primary/90 disabled:opacity-50">
-                  <Save size={14} /> {loading ? "保存中..." : "保存"}
-                </button>
-                <button onClick={async () => {
-                  try {
-                    await deleteWorkspaceFile("skills", editing.id);
-                    toast.success("已删除");
-                    setSelectedId(null); setEditing(null); setDirty(false);
-                    await load();
-                  } catch (e: any) {
-                    toast.error("删除失败: " + (e?.toString() || "未知错误"));
-                  }
-                }}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-destructive/10 text-destructive rounded-lg text-xs font-medium hover:bg-destructive/20 border border-destructive/30">
-                  <Trash2 size={14} /> 删除
-                </button>
-                {dirty && <span className="text-xs text-amber-500 ml-2">有未保存的修改</span>}
+                  placeholder="在此编写技能定义（Markdown 格式）..."
+                  className="w-full h-full bg-muted/20 border border-border/30 rounded-lg p-3 text-xs font-mono leading-relaxed outline-none focus:border-ring/50 resize-none placeholder:text-muted-foreground/20" />
               </div>
             </div>
-          )}
-        </div>
+
+            {/* 状态栏 */}
+            <div className="flex items-center gap-2 px-4 py-1.5 border-t border-border bg-muted/30 shrink-0">
+              <div className="flex items-center gap-2">
+                <button onClick={handleSave} disabled={loading || !dirty}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-primary text-primary-foreground text-[10px] font-medium hover:bg-primary/90 disabled:opacity-40 transition-colors">
+                  <Save size={11} /> {loading ? "保存中..." : "保存"}
+                </button>
+                <button onClick={async () => {
+                  try { await handleExportFile(editing.id); } catch {}
+                }}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-input text-[10px] text-muted-foreground hover:text-foreground hover:border-ring transition-colors">
+                  <Download size={11} /> 导出
+                </button>
+                <button onClick={() => {
+                  if (window.confirm(`确认删除「${editing.name || editing.id}」？`)) {
+                    handleDelete(editing.id);
+                  }
+                }}
+                  className="flex items-center gap-1 px-2.5 py-1 rounded-md border border-destructive/30 text-[10px] text-destructive hover:bg-destructive/10 transition-colors">
+                  <Trash2 size={11} /> 删除
+                </button>
+              </div>
+              {dirty && <span className="text-[10px] text-amber-500 ml-auto">● 未保存</span>}
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* ── 右键菜单 ── */}
+      {ctxMenu && (
+        <ContextMenu x={ctxMenu.x} y={ctxMenu.y}
+          items={
+            ctxMenu.fileId
+              ? [
+                  { label: "重命名", icon: <FileText size={12} />, onClick: () => {
+                    const f = skills.find(s => s.id === ctxMenu.fileId);
+                    if (f) { setRenaming(f.id); setRenameValue(f.name || f.id); }
+                  }},
+                  { label: "导出文件", icon: <Download size={12} />, onClick: () => handleExportFile(ctxMenu.fileId!) },
+                  { label: "删除文件", icon: <Trash2 size={12} />, danger: true, onClick: () => handleDelete(ctxMenu.fileId!) },
+                ]
+              : [
+                  { label: "新建技能文件", icon: <Plus size={12} />, onClick: handleNew },
+                  { label: "导入文件", icon: <Upload size={12} />, onClick: () => fileInputRef.current?.click() },
+                ]
+          }
+          onClose={() => setCtxMenu(null)} />
+      )}
     </section>
   );
 }

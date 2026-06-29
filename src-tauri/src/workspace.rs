@@ -211,6 +211,47 @@ pub fn read_file(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str) -> Result<
     }
 }
 
+/// 读取工作区文件的原始 Markdown 内容（用于导出）
+pub fn read_file_raw(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str) -> Result<String, String> {
+    let dir = subdir_path(app, sub)?;
+    let path = dir.join(format!("{}.md", id));
+    if !path.exists() {
+        return Err(format!("文件 '{}' 不存在", id));
+    }
+    fs::read_to_string(&path)
+        .map_err(|e| format!("读取文件失败: {}", e))
+}
+
+/// 从原始 Markdown 内容导入工作区文件（解析 frontmatter，生成新 id）
+pub fn import_file_raw(app: &tauri::AppHandle, sub: WorkspaceDir, raw_content: &str) -> Result<String, String> {
+    let dir = subdir_path(app, sub)?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    // 尝试解析 frontmatter
+    let (name, description, body) = if let Some((meta, body)) = parse_md_file(raw_content) {
+        (meta.name, meta.description, body)
+    } else {
+        // 无 frontmatter：纯文本当作 content
+        ("".to_string(), "".to_string(), raw_content.to_string())
+    };
+
+    let id = generate_id();
+    let meta = WorkspaceFileMeta {
+        name,
+        description,
+        created_at: now,
+        updated_at: now,
+    };
+    let md_content = build_md_content(&meta, &body);
+    let path = dir.join(format!("{}.md", id));
+    fs::write(&path, &md_content)
+        .map_err(|e| format!("写入文件失败: {}", e))?;
+    Ok(id)
+}
+
 /// 写入工作区文件（创建或更新）
 pub fn write_file(
     app: &tauri::AppHandle,
