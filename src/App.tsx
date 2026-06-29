@@ -56,6 +56,7 @@ export default function App() {
   const [historyWidth, setHistoryWidth] = useState(280);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
+  const [settingsExiting, setSettingsExiting] = useState(false);
   const unlistenRef = useRef<(() => void)[]>([]);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -772,16 +773,27 @@ export default function App() {
               onNavigateSettings={() => setCurrentView("settings")}
             />
           ) : (
-            <SettingsView
-              config={aiConfig}
-              onConfigChange={setAiConfig}
-              serverPort={serverPort}
-              serverRunning={serverRunning}
-              onStartServer={handleStartServer}
-              onStopServer={handleStopServer}
-              onPortChange={setServerPort}
-              onBack={() => setCurrentView("chat")}
-            />
+            <div
+              key="settings"
+              className={`flex-1 min-w-0 flex flex-col ${settingsExiting ? "animate-slide-out" : "animate-slide-in"}`}
+              onAnimationEnd={() => {
+                if (settingsExiting) {
+                  setSettingsExiting(false);
+                  setCurrentView("chat");
+                }
+              }}
+            >
+              <SettingsView
+                config={aiConfig}
+                onConfigChange={setAiConfig}
+                serverPort={serverPort}
+                serverRunning={serverRunning}
+                onStartServer={handleStartServer}
+                onStopServer={handleStopServer}
+                onPortChange={setServerPort}
+                onBack={() => setSettingsExiting(true)}
+              />
+            </div>
           )}
         </div>
       </div>
