@@ -73,8 +73,8 @@ function ThinkingBlock({ content, isLive }: { content: string; isLive?: boolean 
       </button>
       <div className={`grid transition-[grid-template-rows] duration-300 ${open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
         <div className="overflow-hidden">
-          <div className="px-3 pb-2 text-xs text-muted-foreground/80 italic leading-relaxed whitespace-pre-wrap">
-            {content}
+          <div className="px-3 pb-3 text-xs text-muted-foreground leading-relaxed">
+            <MarkdownRenderer content={content} />
           </div>
         </div>
       </div>
