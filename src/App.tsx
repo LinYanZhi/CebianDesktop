@@ -851,7 +851,7 @@ export default function App() {
               reasoning_content: fullThinking || undefined,
               usage: accumulatedUsage,
             };
-            const finalMsgs = [...updated, finalAssistantMsg];
+            const finalMsgs = [...currentMessages, finalAssistantMsg];
             persistSessionMessages(streamSessionId, finalMsgs);
             if (sessionIdRef.current === streamSessionId) {
               setMessages(finalMsgs);
@@ -999,7 +999,7 @@ export default function App() {
             cancelled: true,
             usage: accumulatedUsage,
           };
-          const cancelledMsgs = [...updated, cancelledMsg];
+          const cancelledMsgs = [...currentMessages, cancelledMsg];
           persistSessionMessages(streamSessionId, cancelledMsgs);
           if (sessionIdRef.current === streamSessionId) {
             setMessages(cancelledMsgs);
@@ -1011,7 +1011,7 @@ export default function App() {
         console.error("[handleSend] 流式请求错误:", err);
         stopStreamPersist(streamState);
         const errMsg = `**错误**: ${err.message || "请求失败，请检查配置"}`;
-        const errMsgs = [...updated, { role: "assistant", content: errMsg } as ChatMessage];
+        const errMsgs = [...currentMessages, { role: "assistant", content: errMsg } as ChatMessage];
         persistSessionMessages(streamSessionId, errMsgs);
         if (sessionIdRef.current === streamSessionId) {
           setMessages(errMsgs);
