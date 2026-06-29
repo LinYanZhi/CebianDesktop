@@ -327,20 +327,27 @@ function AboutSection() {
         {/* 作者信息 */}
         <div className="space-y-2">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">作者</p>
-          <a href="https://github.com/LinYanZhi" target="_blank" rel="noopener noreferrer"
-            className="inline-flex items-center gap-2.5 text-sm text-primary hover:underline group">
-            <img src="https://github.com/LinYanZhi.png" alt="LinYanZhi"
-              className="w-8 h-8 rounded-full ring-2 ring-border group-hover:ring-primary/50 transition-all" />
+          <div className="inline-flex items-center gap-2.5 text-sm">
+            <a href="https://github.com/LinYanZhi" target="_blank" rel="noopener noreferrer" className="shrink-0">
+              <img src="https://github.com/LinYanZhi.png" alt="LinYanZhi"
+                className="w-8 h-8 rounded-full ring-2 ring-border hover:ring-primary/50 transition-all" />
+            </a>
             <div>
-              <span className="block font-medium">LinYanZhi</span>
-              <span className="block text-xs text-muted-foreground">@LinYanZhi</span>
+              <a href="https://github.com/LinYanZhi" target="_blank" rel="noopener noreferrer"
+                className="block font-medium text-primary hover:underline">
+                LinYanZhi
+              </a>
+              <a href="https://github.com/LinYanZhi/CebianDesktop" target="_blank" rel="noopener noreferrer"
+                className="block text-xs text-muted-foreground hover:underline transition-colors">
+                github.com/LinYanZhi/CebianDesktop
+              </a>
             </div>
-          </a>
+          </div>
         </div>
 
         {/* 技术栈 */}
         <div className="space-y-2">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">技术栈</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">当前项目技术栈</p>
           <div className="flex flex-wrap gap-1.5">
             {["Tauri v2", "React", "TypeScript", "Tailwind CSS", "Rust"].map((tech) => (
               <span key={tech}
