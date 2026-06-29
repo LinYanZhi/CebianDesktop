@@ -1,7 +1,7 @@
-import { useRef, useEffect, useState, memo, useCallback } from "react";
+import { useRef, useEffect, useState, memo, useCallback, useMemo } from "react";
 import {
   Bot, Mic, ChevronDown, Settings, ChevronRight, Lightbulb,
-  Copy, Check, Paperclip, Search, X, Image, FileText, Square, RefreshCw, Undo2, ArrowUp,
+  Copy, Check, Paperclip, Search, X, Image, FileText, Square, RefreshCw, Undo2, ArrowUp, ArrowDown,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -118,7 +118,7 @@ function getToolColor(name: string): string {
   return TOOL_LABELS[name]?.color || "text-muted-foreground";
 }
 
-/** 工具调用卡片：展示 AI 正在执行什么工具 */
+/** 工具调用卡片：仿 Cebian ToolCard，每个工具独立可折叠，显示参数+结果 */
 function ToolCallCards({ tool_calls, results }: {
   tool_calls: ToolCall[];
   results?: Map<string, string>;
@@ -127,38 +127,63 @@ function ToolCallCards({ tool_calls, results }: {
     <div className="space-y-1.5 my-2">
       {tool_calls.map((tc, i) => {
         const resultContent = results?.get(tc.id);
-        const isDone = resultContent !== undefined;
-        return (
-          <div key={tc.id || i}
-            className={`flex items-start gap-2 px-3 py-2 rounded-lg border text-xs transition-colors ${
-              isDone
-                ? "bg-accent/30 border-border/50 text-muted-foreground"
-                : "bg-accent/50 border-border text-foreground animate-pulse"
-            }`}
-          >
-            <div className={`shrink-0 mt-0.5 ${getToolColor(tc.function.name)}`}>
-              {isDone ? "✓" : "⟳"}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-2">
-                <span className={`font-medium ${getToolColor(tc.function.name)}`}>
-                  {getToolLabel(tc.function.name)}
-                </span>
-                {!isDone && (
-                  <span className="text-muted-foreground/60">执行中...</span>
-                )}
-              </div>
-              {isDone && resultContent && (
-                <div className="mt-1 text-muted-foreground/70 line-clamp-2 font-mono text-[10px]">
-                  {resultContent.length > 120
-                    ? resultContent.slice(0, 120) + "..."
-                    : resultContent}
-                </div>
-              )}
-            </div>
-          </div>
-        );
+        const status = resultContent !== undefined ? "done" : "running";
+        const argsStr = (() => {
+          try {
+            return JSON.stringify(JSON.parse(tc.function.arguments), null, 2);
+          } catch { return tc.function.arguments; }
+        })();
+        return <ToolCardItem key={tc.id || i} label={getToolLabel(tc.function.name)} color={getToolColor(tc.function.name)} status={status} args={argsStr} result={resultContent} />;
       })}
+    </div>
+  );
+}
+
+/** 单个工具卡片（可折叠） */
+function ToolCardItem({ label, color, status, args, result }: {
+  label: string; color: string; status: 'running' | 'done'; args: string; result?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="border border-border rounded-lg overflow-hidden text-[0.8rem] min-w-0">
+      {/* Header */}
+      <button
+        type="button"
+        className="w-full flex items-center gap-2.5 px-3.5 py-2.5 bg-card hover:bg-accent/50 transition-colors text-left cursor-pointer"
+        onClick={() => setOpen(!open)}
+      >
+        {status === 'running' ? (
+          <svg className="size-4 text-primary animate-spin shrink-0" viewBox="0 0 16 16" fill="none">
+            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28" strokeDashoffset="8" />
+          </svg>
+        ) : (
+          <svg className="size-4 text-green-500 shrink-0" viewBox="0 0 16 16" fill="none">
+            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" />
+            <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
+        <span className={`flex-1 truncate ${color}`}>{label}</span>
+        <ChevronRight size={14} className={`shrink-0 text-muted-foreground/50 transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
+      </button>
+      {/* Expandable body */}
+      {open && (
+        <div className="border-t border-border">
+          <div className="px-3.5 py-2.5 bg-background">
+            <div className="text-[0.65rem] text-muted-foreground/60 mb-1.5 font-medium">参数</div>
+            <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono">
+              <code>{args}</code>
+            </pre>
+          </div>
+          {result !== undefined && (
+            <div className="px-3.5 py-2.5 bg-background border-t border-border/50">
+              <div className="text-[0.65rem] text-muted-foreground/60 mb-1.5 font-medium">结果</div>
+              <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono max-h-48 overflow-y-auto">
+                <code>{result}</code>
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -837,9 +862,7 @@ function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResults }: {
   msg: ChatMessage; isStreaming?: boolean; isLast?: boolean; onRetry?: () => void;
   toolResults?: ChatMessage[];
 }) {
-  const [toolsOpen, setToolsOpen] = useState(true);
   const hasToolCalls = msg.tool_calls && msg.tool_calls.length > 0;
-  const allDone = hasToolCalls && toolResults && toolResults.length > 0;
 
   // 构建工具名 → 结果的映射
   const toolResultsMap = useMemo(() => {
@@ -860,25 +883,9 @@ function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResults }: {
         <span className="font-medium text-xs text-muted-foreground">Cebian Agent</span>
       </div>
       {msg.reasoning_content && <ThinkingBlock content={msg.reasoning_content} isLive={isStreaming} />}
-      {/* 工具调用卡片（可折叠） */}
+      {/* 工具调用卡片（每个卡片独立可折叠） */}
       {hasToolCalls && (
-        <div className="border border-border rounded-lg overflow-hidden mb-2">
-          <button
-            onClick={() => setToolsOpen(!toolsOpen)}
-            className="w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:text-foreground hover:bg-accent/50 transition-colors select-none"
-          >
-            <ChevronRight size={12} className={`shrink-0 transition-transform ${toolsOpen ? "rotate-90" : ""}`} />
-            <span className="font-medium">{allDone ? "已执行工具" : "正在执行工具..."}</span>
-            <span className="text-muted-foreground/50">({msg.tool_calls!.length})</span>
-          </button>
-          <div className={`grid transition-[grid-template-rows] duration-300 ${toolsOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}>
-            <div className="overflow-hidden">
-              <div className="pb-2">
-                <ToolCallCards tool_calls={msg.tool_calls!} results={toolResultsMap} />
-              </div>
-            </div>
-          </div>
-        </div>
+        <ToolCallCards tool_calls={msg.tool_calls!} results={toolResultsMap} />
       )}
       <div className="text-sm leading-relaxed">
         <MarkdownRenderer content={msg.content || ""} />
@@ -1469,6 +1476,66 @@ function UserMessageBlock({ msg, index, onRollback }: {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  自动滚动 Hook（仿 Cebian useStickToBottom）
+// ═══════════════════════════════════════════════════════════
+
+function useStickToBottom(containerRef: React.RefObject<HTMLDivElement | null>) {
+  const stickRef = useRef(true);
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const lastProgrammaticAtRef = useRef(0);
+  const PROGRAMMATIC_GUARD_MS = 80;
+  const BOTTOM_THRESHOLD_PX = 60;
+
+  const isAtBottomNow = useCallback(() => {
+    const el = containerRef.current;
+    if (!el) return true;
+    return el.scrollHeight - el.scrollTop - el.clientHeight <= BOTTOM_THRESHOLD_PX;
+  }, [containerRef]);
+
+  const scrollToBottom = useCallback((opts?: { force?: boolean }) => {
+    const el = containerRef.current;
+    if (!el) return;
+    if (opts?.force) {
+      if (!stickRef.current) {
+        stickRef.current = true;
+        setIsAtBottom(true);
+      }
+    } else if (!stickRef.current) {
+      return;
+    }
+    lastProgrammaticAtRef.current = Date.now();
+    el.scrollTop = el.scrollHeight;
+  }, [containerRef]);
+
+  // 监听用户滚动事件
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      if (Date.now() - lastProgrammaticAtRef.current < PROGRAMMATIC_GUARD_MS) return;
+      const atBottom = isAtBottomNow();
+      if (stickRef.current !== atBottom) {
+        stickRef.current = atBottom;
+        setIsAtBottom(atBottom);
+      }
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [containerRef, isAtBottomNow]);
+
+  // ResizeObserver：内容变化时自动跟随（仅当用户未向上滚动时）
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => { scrollToBottom(); });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [containerRef, scrollToBottom]);
+
+  return { isAtBottom, scrollToBottom };
+}
+
+// ═══════════════════════════════════════════════════════════
 //  主组件
 // ═══════════════════════════════════════════════════════════
 
@@ -1477,16 +1544,11 @@ export default function ChatView({
   pendingInteractive, onInteractiveResolve,
 }: ChatViewProps) {
   const [inputValue, setInputValue] = useState("");
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // 自动滚动
-  useEffect(() => {
-    if (containerRef.current) {
-      containerRef.current.scrollTop = containerRef.current.scrollHeight;
-    }
-  }, [messages, loading, pendingInteractive]);
+  const { isAtBottom, scrollToBottom } = useStickToBottom(containerRef);
 
+  // 发送新消息时强制回底
   const send = (attachments?: SendAttachment[]) => {
     if (!inputValue.trim() || loading) return;
     if (!hasUsableModel(aiConfig)) {
@@ -1508,7 +1570,7 @@ export default function ChatView({
   // ── 欢迎页 ──
   if (messages.length === 0 && !loading) {
     return (
-      <div className="flex-1 w-full min-w-0 flex flex-col h-full">
+      <div className="flex-1 w-full min-w-0 flex flex-col h-full relative">
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center px-8 max-w-sm">
             <Bot size={48} className="mx-auto mb-4 text-primary/30" />
@@ -1544,7 +1606,7 @@ export default function ChatView({
   }
 
   return (
-    <div className="flex-1 w-full min-w-0 flex flex-col h-full">
+    <div className="flex-1 w-full min-w-0 flex flex-col h-full relative">
       <div ref={containerRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
         {/* 累计 Token 用量 */}
         {(() => {
@@ -1628,9 +1690,19 @@ export default function ChatView({
               <span className="inline-block w-1.5 h-4 bg-primary rounded-sm animate-pulse align-text-bottom" />
             </div>
           )}
-          <div ref={messagesEndRef} />
+          <div />
         </div>
       </div>
+      {/* 回底按钮：用户向上滚动后出现 */}
+      {!isAtBottom && (
+        <button
+          onClick={() => scrollToBottom({ force: true })}
+          className="absolute bottom-20 right-4 size-8 flex items-center justify-center rounded-full bg-background border border-border/60 shadow-md hover:bg-accent transition-colors z-20"
+          title="回到底部"
+        >
+          <ArrowDown size={14} />
+        </button>
+      )}
       <ChatInput inputValue={inputValue} setInputValue={setInputValue}
         onSend={(atts) => send(atts)}
         onStop={onStop}
