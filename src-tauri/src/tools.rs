@@ -180,9 +180,6 @@ pub fn get_tool_definitions() -> Vec<Value> {
              \n- 命令在用户系统上实际执行，请谨慎操作（尤其是删除、格式化等危险命令）\
              \n- 交互式命令（如需要用户输入）会挂起，应避免使用\
              \n- 返回 stdout 和 stderr 的输出\
-             \n- 已自动处理编码问题，中文输出可正常显示\
-             \n\n重要：优先使用 system_info 工具查询系统状态（如已安装软件、磁盘、内存等），\
-             \n不要通过 run_command 执行 PowerShell 或 WMIC 命令来获取系统信息。\
              \n\n适合场景：运行 git 命令、执行构建脚本、启动程序等。",
             &[("command", "string", "要执行的命令，例如 dir 或 git status"), ("cwd", "string", "工作目录（可选，不指定则使用应用默认目录）")], ["command"]),
 
@@ -194,13 +191,26 @@ pub fn get_tool_definitions() -> Vec<Value> {
         td!("system_info",
             "获取计算机的完整系统信息。包括：\
              \n- 操作系统类型和架构\
-             \n- 主机名和用户名\
+             \n- 主机名、计算机名和当前用户名\
              \n- CPU 型号和核心数\
              \n- 内存总量和已用量\
              \n- 所有磁盘（硬盘）的容量和可用空间\
+             \n- 网络信息（内网 IP、外网 IP、MAC 地址、DNS 服务器）\
              \n- 已安装软件列表（名称、版本、安装位置、发布者）及总数\
-             \n\n适合场景：了解用户电脑配置、检查磁盘空间、确认操作系统类型、查询已安装软件等。",
+             \n\n适合场景：了解用户电脑配置、检查磁盘空间、确认操作系统类型、查询已安装软件、查看网络配置等。",
             &[], []),
+
+        td!("get_env",
+            "读取系统环境变量。\
+             \n如果不指定 name 参数，则返回所有环境变量（自动过滤敏感信息）。\
+             \n\n常见环境变量：\
+             \n- PATH: 系统路径\
+             \n- USERPROFILE / HOME: 用户目录\
+             \n- APPDATA: 应用数据目录\
+             \n- TEMP / TMP: 临时目录\
+             \n- COMPUTERNAME: 计算机名\
+             \n\n适合场景：查看用户目录、检查 PATH 配置、了解系统配置等。",
+            &[("name", "string", "环境变量名称（可选），例如 \"PATH\" 或 \"USERPROFILE\"。不传则返回全部。")], []),
 
         // ═══════════════════════════════════════════════════════════
         //  进程与窗口
@@ -451,6 +461,11 @@ pub fn execute_tool(name: &str, args: &Value) -> Result<Value, String> {
             let info = system_info()?;
             Ok(info)
         }
+        "get_env" => {
+            let name = args.get("name").and_then(|v| v.as_str());
+            let result = get_env(name)?;
+            Ok(result)
+        }
         "list_processes" => {
             let filter = args.get("name_filter").and_then(|v| v.as_str());
             let processes = list_processes(filter)?;
@@ -650,16 +665,11 @@ fn open_path(path: &str) -> Result<String, String> {
 // ─── 命令执行 ────────────────────────────────────────────
 
 fn run_command(cmd: &str, cwd: Option<&str>) -> Result<String, String> {
-    let (shell, shell_arg, actual_cmd) = if cfg!(windows) {
-        // Windows 控制台默认 ANSI 编码（中文为 GBK/CP936），PowerShell 输出会乱码。
-        // 先执行 chcp 65001 切换到 UTF-8 代码页确保输出可读
-        ("cmd", "/C", format!("chcp 65001 >nul && {}", cmd))
-    } else {
-        ("sh", "-c", cmd.to_string())
-    };
+    let shell = if cfg!(windows) { "cmd" } else { "sh" };
+    let shell_arg = if cfg!(windows) { "/C" } else { "-c" };
 
     let mut command = Command::new(shell);
-    command.args([shell_arg, &actual_cmd]);
+    command.args([shell_arg, cmd]);
 
     if let Some(dir) = cwd {
         command.current_dir(dir);
@@ -757,6 +767,58 @@ fn get_installed_software() -> Vec<Value> {
     Vec::new()
 }
 
+/// Windows 上从注册表读取第一块网卡 MAC 地址
+#[cfg(windows)]
+fn get_windows_mac() -> Option<String> {
+    let net_path = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e972-e325-11ce-bfc1-08002be10318}";
+    if let Ok(key) = RegKey::predef(HKEY_LOCAL_MACHINE).open_subkey_with_flags(net_path, KEY_READ) {
+        for name in key.enum_keys().filter_map(|k| k.ok()) {
+            if let Ok(sub) = key.open_subkey_with_flags(&name, KEY_READ) {
+                if let Ok(mac) = sub.get_value::<String, _>("NetworkAddress") {
+                    let mac = mac.trim().to_uppercase();
+                    if mac.len() >= 12 && mac != "000000000000" {
+                        return Some(mac);
+                    }
+                }
+            }
+        }
+    }
+    // Fallback: try WMI path in registry
+    if let Ok(key) = RegKey::predef(HKEY_LOCAL_MACHINE)
+        .open_subkey_with_flags(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\NetworkList\DefaultAdapterMac", KEY_READ)
+    {
+        if let Ok(val) = key.get_value::<String, _>("") {
+            return Some(val);
+        }
+    }
+    None
+}
+
+#[cfg(not(windows))]
+fn get_windows_mac() -> Option<String> {
+    None
+}
+
+/// 读取环境变量。name 为 None 时返回全部（过滤敏感信息）。
+fn get_env(name: Option<&str>) -> Result<Value, String> {
+    if let Some(n) = name {
+        let val = std::env::var(n).map_err(|_| format!("环境变量不存在: {}", n))?;
+        return Ok(json!({ "name": n, "value": val }));
+    }
+
+    // 敏感 key 前缀过滤（防止泄露密钥、token 等）
+    let sensitive_prefixes = ["KEY", "TOKEN", "SECRET", "PASSWORD", "API_KEY", "ACCESS_KEY",
+                              "SECRET_KEY", "AUTH", "CREDENTIALS", "CONNECTION_STRING",
+                              "PRIVATE_KEY", "CERTIFICATE", "ENCRYPTION"];
+    let mut vars: Vec<Value> = std::env::vars()
+        .filter(|(k, _)| !sensitive_prefixes.iter().any(|p| k.to_uppercase().contains(p)))
+        .map(|(k, v)| json!({ "name": k, "value": v }))
+        .collect();
+    vars.sort_by(|a, b| a["name"].as_str().unwrap_or("").cmp(b["name"].as_str().unwrap_or("")));
+
+    Ok(json!({ "variables": vars, "count": vars.len() }))
+}
+
 fn system_info() -> Result<Value, String> {
     use sysinfo::System;
 
@@ -793,6 +855,17 @@ fn system_info() -> Result<Value, String> {
     let software = get_installed_software();
     let software_count = software.len();
 
+    // 网络信息
+    let local_ip = std::net::UdpSocket::bind("0.0.0.0:0")
+        .ok()
+        .and_then(|s| s.connect("8.8.8.8:53").ok().map(|_| s.local_addr().ok()))
+        .flatten()
+        .map(|a| a.ip().to_string());
+    #[cfg(windows)]
+    let mac_address = get_windows_mac();
+    #[cfg(not(windows))]
+    let mac_address = None;
+
     Ok(json!({
         "os": os_info,
         "hostname": hostname,
@@ -801,6 +874,10 @@ fn system_info() -> Result<Value, String> {
         "disks": disks,
         "username": std::env::var("USERNAME").unwrap_or_default(),
         "computer_name": std::env::var("COMPUTERNAME").unwrap_or_default(),
+        "network": {
+            "local_ip": local_ip,
+            "mac_address": mac_address,
+        },
         "installed_software": software,
         "installed_software_count": software_count,
     }))
