@@ -772,7 +772,7 @@ export default function App() {
           />
 
           <div
-            className={`absolute inset-0 z-10 transition-all duration-[350ms] ease-[cubic-bezier(0.16,1,0.3,1)] ${
+            className={`absolute inset-0 z-10 bg-background transition-all duration-[350ms] ease-[cubic-bezier(0.16,1,0.3,1)] ${
               currentView === "settings"
                 ? "translate-x-0 opacity-100"
                 : "translate-x-full opacity-0 pointer-events-none"
