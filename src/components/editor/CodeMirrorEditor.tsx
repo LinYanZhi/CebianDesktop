@@ -3,7 +3,7 @@
  *
  * 提供语法高亮、行号、暗色/亮色主题、语言检测、只读模式。
  */
-import { useRef, useEffect, useMemo } from 'react';
+import { useRef, useEffect, useMemo, useState } from 'react';
 import { EditorState, Compartment } from '@codemirror/state';
 import { EditorView, keymap, placeholder as cmPlaceholder, lineNumbers } from '@codemirror/view';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
@@ -13,11 +13,17 @@ import { javascript } from '@codemirror/lang-javascript';
 import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language';
 import { oneDark } from '@codemirror/theme-one-dark';
 
+// 亮色主题：覆盖编辑器内容区 + 行号区背景
+const lightTheme = EditorView.theme({
+  '&': { backgroundColor: 'transparent' },
+  '.cm-gutters': { backgroundColor: 'transparent', borderRight: '1px solid hsl(var(--border))' },
+  '.cm-activeLineGutter': { backgroundColor: 'transparent' },
+});
+
 interface CodeMirrorEditorProps {
   value: string;
   onChange: (value: string) => void;
   language?: 'markdown' | 'yaml' | 'javascript';
-  isDark?: boolean;
   placeholder?: string;
   readOnly?: boolean;
   className?: string;
@@ -43,7 +49,6 @@ export function CodeMirrorEditor({
   value,
   onChange,
   language: forcedLang,
-  isDark = true,
   placeholder = '',
   readOnly = false,
   className = '',
@@ -54,6 +59,18 @@ export function CodeMirrorEditor({
   const onChangeRef = useRef(onChange);
   const valueRef = useRef(value);
   const syncingRef = useRef(false);
+
+  // 自动检测暗色/亮色主题
+  const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
+
+  useEffect(() => {
+    const el = document.documentElement;
+    const observer = new MutationObserver(() => {
+      setIsDark(el.classList.contains('dark'));
+    });
+    observer.observe(el, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
 
   onChangeRef.current = onChange;
   valueRef.current = value;
@@ -95,7 +112,7 @@ export function CodeMirrorEditor({
         syntaxHighlighting(defaultHighlightStyle),
         cmPlaceholder(placeholder),
         updateListener,
-        themeComp.of(isDark ? oneDark : []),
+        themeComp.of(isDark ? oneDark : lightTheme),
         readOnlyComp.of(EditorState.readOnly.of(readOnly)),
         langComp.of(getLanguageExtension(resolvedLang)),
         fontSizeComp.of(EditorView.theme({ '&': { fontSize: fontSizeStrRef.current } })),
@@ -120,8 +137,9 @@ export function CodeMirrorEditor({
   // Sync theme
   useEffect(() => {
     if (!viewRef.current) return;
+    const effective = isDark ? oneDark : lightTheme;
     viewRef.current.dispatch({
-      effects: themeComp.reconfigure(isDark ? oneDark : []),
+      effects: themeComp.reconfigure(effective),
     });
   }, [isDark, themeComp]);
 
