@@ -226,14 +226,19 @@ fn list_files_recursive(base: &Path, scan_dir: &Path, files: &mut Vec<WorkspaceF
 pub fn read_file(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str) -> Result<WorkspaceFile, String> {
     let dir = subdir_path(app, sub)?;
     // 尝试直接使用 id 作为文件名，或补 .md
-    let path = if id.contains('.') {
-        dir.join(id)
-    } else {
-        dir.join(format!("{}.md", id))
+    let path = {
+        let p = dir.join(id);
+        if p.exists() {
+            p
+        } else {
+            let p = dir.join(format!("{}.md", id));
+            if p.exists() {
+                p
+            } else {
+                return Err(format!("文件 '{}' 不存在", id));
+            }
+        }
     };
-    if !path.exists() {
-        return Err(format!("文件 '{}' 不存在", id));
-    }
     let raw = fs::read_to_string(&path)
         .map_err(|e| format!("读取文件失败: {}", e))?;
     let filename = path.file_name()
@@ -283,10 +288,9 @@ pub fn read_file(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str) -> Result<
 /// 读取工作区文件的原始 Markdown 内容（用于导出）
 pub fn read_file_raw(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str) -> Result<String, String> {
     let dir = subdir_path(app, sub)?;
-    let path = if id.contains('.') {
-        dir.join(id)
-    } else {
-        dir.join(format!("{}.md", id))
+    let path = {
+        let p = dir.join(id);
+        if p.exists() { p } else { dir.join(format!("{}.md", id)) }
     };
     if !path.exists() {
         return Err(format!("文件 '{}' 不存在", id));
@@ -367,14 +371,20 @@ pub fn write_file(
 /// id 可含扩展名（如 "1.js"），否则自动尝试 .md
 pub fn delete_file(app: &tauri::AppHandle, sub: WorkspaceDir, id: &str) -> Result<(), String> {
     let dir = subdir_path(app, sub)?;
-    let path = if id.contains('.') {
-        dir.join(id)
-    } else {
-        dir.join(format!("{}.md", id))
+    // 先尝试 id 原样路径，再尝试补 .md
+    let path = {
+        let p = dir.join(id);
+        if p.exists() {
+            p
+        } else {
+            let p = dir.join(format!("{}.md", id));
+            if p.exists() {
+                p
+            } else {
+                return Err(format!("文件 '{}' 不存在", id));
+            }
+        }
     };
-    if !path.exists() {
-        return Err(format!("文件 '{}' 不存在", id));
-    }
     fs::remove_file(&path)
         .map_err(|e| format!("删除文件失败: {}", e))
 }
