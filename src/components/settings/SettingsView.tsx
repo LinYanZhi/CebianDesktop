@@ -70,7 +70,7 @@ function ProvidersSection({ config, onChange }: { config: AIConfig; onChange: (c
         body: JSON.stringify({
           model: verifyModel,
           messages: [{ role: "user", content: "Reply only: ok" }],
-          max_tokens: 5,
+          max_tokens: 50,
         }),
         signal: AbortSignal.timeout(15000),
       });
@@ -80,11 +80,7 @@ function ProvidersSection({ config, onChange }: { config: AIConfig; onChange: (c
         throw new Error(`HTTP ${resp.status}${body ? ` - ${body.slice(0, 200)}` : ""}`);
       }
 
-      const data = await resp.json();
-      const text = data.choices?.[0]?.message?.content ?? "";
-      if (!text.toLowerCase().includes("ok")) {
-        throw new Error("回复内容不符合预期");
-      }
+      // HTTP 200 即验证通过，不需要检查回复内容
 
       // 验证通过
       onChange({
