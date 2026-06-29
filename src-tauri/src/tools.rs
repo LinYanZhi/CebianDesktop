@@ -733,3 +733,76 @@ fn system_notify(title: &str, message: &str) -> Result<(), String> {
         .map_err(|e| format!("发送通知失败: {}", e))?;
     Ok(())
 }
+
+// ─── 技能工具（动态加载自 workspace/skills/） ────────────
+
+use crate::workspace;
+
+/// 从 workspace/skills/ 加载所有技能，转换为工具定义列表
+pub fn get_skill_tools(app_handle: &tauri::AppHandle) -> Result<Vec<Value>, String> {
+    let skills = workspace::list_files(app_handle, workspace::WorkspaceDir::Skills)?;
+    let mut tools = Vec::new();
+
+    for skill in &skills {
+        let tool_name = skill.name.clone();
+        if tool_name.is_empty() {
+            continue; // 跳过未命名的技能
+        }
+
+        // 工具名称：只允许小写字母、数字、下划线
+        let safe_name: String = tool_name
+            .chars()
+            .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+            .collect();
+        if safe_name.is_empty() {
+            continue;
+        }
+
+        tools.push(json!({
+            "name": format!("skill:{}", safe_name),
+            "description": format!("[技能] {} — {}", tool_name, skill.description),
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "string",
+                        "description": "传递给技能的任务输入或上下文。详细描述你想让这个技能帮你完成什么。"
+                    }
+                },
+                "required": ["input"]
+            }
+        }));
+    }
+
+    Ok(tools)
+}
+
+/// 执行一个技能
+///
+/// 读取技能文件内容，将用户的 input 与技能定义合并返回给 AI。
+pub fn execute_skill(app_handle: &tauri::AppHandle, name: &str, args: &Value) -> Result<Value, String> {
+    // name 格式：skill:xxx 或直接 xxx
+    let skill_name = name.strip_prefix("skill:").unwrap_or(name);
+
+    let skills = workspace::list_files(app_handle, workspace::WorkspaceDir::Skills)?;
+    let skill = skills.iter().find(|s| {
+        let safe: String = s.name.chars()
+            .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+            .collect();
+        safe == skill_name || s.name == skill_name
+    }).ok_or_else(|| format!("未找到技能 '{}'", skill_name))?;
+
+    let input = args.get("input")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    // 返回技能内容 + 用户输入，AI 可以据此处理
+    Ok(json!({
+        "skill_name": skill.name,
+        "skill_description": skill.description,
+        "skill_content": skill.content,
+        "user_input": input,
+        "message": format!("已执行技能「{}」。技能定义内容已通过 skill_content 字段提供，请根据技能定义处理用户输入。", skill.name),
+    }))
+}

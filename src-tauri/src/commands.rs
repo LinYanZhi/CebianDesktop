@@ -38,7 +38,7 @@ impl McpServerState {
 /// 返回所有可用工具的 JSON 定义列表，供前端或 MCP 客户端使用
 /// 同时合并外部 MCP 服务器提供的工具
 #[tauri::command]
-pub fn get_tools(mcp: State<'_, McpClientManager>) -> Vec<Value> {
+pub fn get_tools(mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle) -> Vec<Value> {
     let mut tools = tools::get_tool_definitions();
     // 合并外部 MCP 工具
     for mcp_tool in mcp.get_tools() {
@@ -47,6 +47,10 @@ pub fn get_tools(mcp: State<'_, McpClientManager>) -> Vec<Value> {
             "description": mcp_tool.description,
             "inputSchema": mcp_tool.input_schema,
         }));
+    }
+    // 合并技能工具（动态加载自 workspace/skills/）
+    if let Ok(skill_tools) = tools::get_skill_tools(&app_handle) {
+        tools.extend(skill_tools);
     }
     tools
 }
@@ -60,22 +64,31 @@ pub fn get_tools(mcp: State<'_, McpClientManager>) -> Vec<Value> {
 /// # 返回
 /// 工具执行结果（JSON 格式）
 #[tauri::command]
-pub async fn execute_tool(name: String, args: Value, mcp: State<'_, McpClientManager>) -> Result<Value, String> {
+pub async fn execute_tool(name: String, args: Value, mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle) -> Result<Value, String> {
     // MCP 工具（前缀 mcp:）路由到 MCP 客户端
     if name.starts_with("mcp:") {
         return mcp.call_tool(&name, &args).or_else(|e| Ok(json!({ "error": e })));
     }
 
+    // 技能工具（前缀 skill:）直接路由到技能执行
+    if name.starts_with("skill:") {
+        return tools::execute_skill(&app_handle, &name, &args);
+    }
+
     // 内置工具
     let name_clone = name.clone();
+    let args_clone = args.clone();
     let result = tokio::task::spawn_blocking(move || {
-        tools::execute_tool(&name_clone, &args)
+        tools::execute_tool(&name_clone, &args_clone)
     })
     .await;
 
     match result {
         Ok(Ok(val)) => Ok(val),
-        Ok(Err(e)) => Ok(json!({"error": e})),
+        Ok(Err(_)) => {
+            // 内置工具未命中 → 尝试作为技能执行
+            tools::execute_skill(&app_handle, &name, &args)
+        }
         Err(e) => Ok(json!({"error": format!("工具执行线程崩溃: {}", e)})),
     }
 }
