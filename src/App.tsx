@@ -56,7 +56,6 @@ export default function App() {
   const [historyWidth, setHistoryWidth] = useState(280);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
-  const [settingsExiting, setSettingsExiting] = useState(false);
   const unlistenRef = useRef<(() => void)[]>([]);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -759,42 +758,37 @@ export default function App() {
         )}
         </>)}
 
-        {/* 聊天/设置 */}
-        <div className="flex-1 min-w-0 flex flex-col">
-          {currentView === "chat" ? (
-            <ChatView
-              messages={messages}
-              onSend={handleSend}
-              onStop={handleStop}
-              onRetry={handleRetry}
-              loading={isCurrentStreaming}
-              aiConfig={aiConfig}
+        {/* 聊天/设置 — 同时渲染，设置层叠在聊天上方用 transition 滑入滑出 */}
+        <div className="flex-1 min-w-0 flex flex-col relative overflow-hidden">
+          <ChatView
+            messages={messages}
+            onSend={handleSend}
+            onStop={handleStop}
+            onRetry={handleRetry}
+            loading={isCurrentStreaming}
+            aiConfig={aiConfig}
+            onConfigChange={setAiConfig}
+            onNavigateSettings={() => setCurrentView("settings")}
+          />
+
+          <div
+            className={`absolute inset-0 z-10 transition-all duration-[350ms] ease-[cubic-bezier(0.16,1,0.3,1)] ${
+              currentView === "settings"
+                ? "translate-x-0 opacity-100"
+                : "translate-x-full opacity-0 pointer-events-none"
+            }`}
+          >
+            <SettingsView
+              config={aiConfig}
               onConfigChange={setAiConfig}
-              onNavigateSettings={() => setCurrentView("settings")}
+              serverPort={serverPort}
+              serverRunning={serverRunning}
+              onStartServer={handleStartServer}
+              onStopServer={handleStopServer}
+              onPortChange={setServerPort}
+              onBack={() => setCurrentView("chat")}
             />
-          ) : (
-            <div
-              key="settings"
-              className={`flex-1 min-w-0 flex flex-col ${settingsExiting ? "animate-slide-out" : "animate-slide-in"}`}
-              onAnimationEnd={() => {
-                if (settingsExiting) {
-                  setSettingsExiting(false);
-                  setCurrentView("chat");
-                }
-              }}
-            >
-              <SettingsView
-                config={aiConfig}
-                onConfigChange={setAiConfig}
-                serverPort={serverPort}
-                serverRunning={serverRunning}
-                onStartServer={handleStartServer}
-                onStopServer={handleStopServer}
-                onPortChange={setServerPort}
-                onBack={() => setSettingsExiting(true)}
-              />
-            </div>
-          )}
+          </div>
         </div>
       </div>
     </div>
