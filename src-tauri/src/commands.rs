@@ -488,6 +488,25 @@ pub fn import_workspace_file(
     workspace::import_file_raw(&app_handle, dir, &content)
 }
 
+// ─── 打开文件管理器 ─────────────────────────────────────────
+
+/// 在文件管理器中打开工作区子目录
+#[tauri::command]
+pub fn open_workspace_dir(app_handle: tauri::AppHandle, sub: String) -> Result<String, String> {
+    let dir = match sub.as_str() {
+        "prompts" => workspace::WorkspaceDir::Prompts,
+        "skills" => workspace::WorkspaceDir::Skills,
+        _ => return Err(format!("无效的工作区子目录: {}", sub)),
+    };
+    let path = workspace::get_subdir_path(&app_handle, dir)?;
+    let path_str = path.to_string_lossy().to_string();
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "", &path_str])
+        .spawn()
+        .map_err(|e| format!("打开目录失败: {}", e))?;
+    Ok(path_str)
+}
+
 // ─── 备份与恢复 ─────────────────────────────────────────────
 
 /// 导出备份为 base64 字符串（供前端下载）

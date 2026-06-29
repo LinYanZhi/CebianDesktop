@@ -81,3 +81,8 @@ export async function exportBackup(): Promise<string> {
 export async function importBackup(data: string): Promise<void> {
   return invoke("import_backup", { data });
 }
+
+/** 在文件管理器中打开工作区子目录 */
+export async function openWorkspaceDir(sub: WorkspaceSubDir): Promise<string> {
+  return invoke("open_workspace_dir", { sub });
+}

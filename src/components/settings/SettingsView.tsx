@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import {
   ArrowLeft, Bot, Key, MessageSquare, FileText, Puzzle, Plug,
-  DatabaseBackup, HardDrive, Sliders, Info, Eye, EyeOff, Save, Unplug, Plus, Trash2, Download, Upload
+  DatabaseBackup, HardDrive, Sliders, Info, Eye, EyeOff, Save, Unplug, Plus, Trash2, Download, Upload, FolderOpen
 } from "lucide-react";
 import { toast } from "sonner";
 import type { AIConfig, ProviderInfo } from "../../lib/types";
@@ -17,6 +17,7 @@ import {
   importBackup,
   exportWorkspaceFileContent,
   importWorkspaceFileContent,
+  openWorkspaceDir,
 } from "../../lib/workspace";
 import type { WorkspaceFile } from "../../lib/workspace";
 
@@ -311,7 +312,7 @@ function PromptsSection() {
   };
 
   return (
-    <section>
+    <section className="flex flex-col flex-1 min-h-0">
       <h2 className="text-base font-semibold mb-4">提示词</h2>
       <p className="text-sm text-muted-foreground mb-4">
         在输入框中输入 <code className="text-primary text-xs bg-primary/10 px-1 rounded">/</code> 可快速唤出提示词列表。
@@ -333,9 +334,15 @@ function PromptsSection() {
           <Upload size={13} /> 导入
         </button>
         <input ref={fileInputRef} type="file" accept=".md" onChange={handleImport} className="hidden" />
+        <div className="flex-1" />
+        <button onClick={() => openWorkspaceDir("skills")}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-input text-xs text-muted-foreground hover:text-foreground hover:border-ring transition-colors"
+          title="在文件管理器中打开">
+          <FolderOpen size={13} /> 打开位置
+        </button>
       </div>
 
-      <div className="flex gap-0 h-[420px] border border-border rounded-lg overflow-hidden">
+      <div className="flex gap-0 flex-1 min-h-0 border border-border rounded-lg overflow-hidden">
         <div className="w-52 shrink-0 border-r border-border bg-card flex flex-col">
           <div className="flex items-center gap-1 px-3 py-2 border-b border-border">
             <FileText size={12} className="text-muted-foreground" />
@@ -628,7 +635,7 @@ function SkillsSection() {
   };
 
   return (
-    <section>
+    <section className="flex flex-col flex-1 min-h-0">
       <h2 className="text-base font-semibold mb-4">技能</h2>
 
       {/* 工具栏 */}
@@ -649,7 +656,7 @@ function SkillsSection() {
         <input ref={fileInputRef} type="file" accept=".md" onChange={handleImport} className="hidden" />
       </div>
 
-      <div className="flex gap-0 h-[420px] border border-border rounded-lg overflow-hidden">
+      <div className="flex gap-0 flex-1 min-h-0 border border-border rounded-lg overflow-hidden">
         {/* ── 左侧：文件列表 ── */}
         <div className="w-52 shrink-0 border-r border-border bg-card flex flex-col">
           <div className="flex items-center gap-1 px-3 py-2 border-b border-border">

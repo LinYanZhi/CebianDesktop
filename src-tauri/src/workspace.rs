@@ -135,6 +135,11 @@ fn build_md_content(meta: &WorkspaceFileMeta, body: &str) -> String {
 
 // ─── 公开 API ─────────────────────────────────────────────
 
+/// 获取子目录的绝对路径
+pub fn get_subdir_path(app: &tauri::AppHandle, sub: WorkspaceDir) -> Result<PathBuf, String> {
+    subdir_path(app, sub)
+}
+
 /// 列出工作区子目录下的所有文件
 pub fn list_files(app: &tauri::AppHandle, sub: WorkspaceDir) -> Result<Vec<WorkspaceFile>, String> {
     let dir = subdir_path(app, sub)?;
