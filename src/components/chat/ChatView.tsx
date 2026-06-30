@@ -8,6 +8,20 @@ import { UserMessageBlock, AgentMessageBlock } from "./MessageBlock";
 import { AskUserBlock } from "./AskUser";
 import { ChatInput } from "./ChatInput";
 
+// ── 独立回底按钮组件（absolute 定位，放在父 relative 容器内） ──
+function ScrollToBottomButton({ visible, onClick }: { visible: boolean; onClick: () => void }) {
+  if (!visible) return null;
+  return (
+    <button
+      onClick={onClick}
+      className="absolute bottom-4 right-5 size-8 flex items-center justify-center rounded-full bg-background border border-border/60 shadow-md hover:bg-accent transition-colors z-10"
+      title="回到底部"
+    >
+      <ArrowDown size={14} />
+    </button>
+  );
+}
+
 interface ChatViewProps {
   messages: ChatMessage[];
   onSend: (content: string, attachments?: SendAttachment[]) => void;
@@ -284,19 +298,10 @@ export default function ChatView({
           )}
           <div />
         </div>
+        </div>
+        <ScrollToBottomButton visible={!isAtBottom} onClick={() => scrollToBottom({ force: true })} />
       </div>
-      {/* 回底按钮：用户向上滚动后出现在消息区域右下角 */}
-      {!isAtBottom && (
-        <button
-          onClick={() => scrollToBottom({ force: true })}
-          className="absolute bottom-4 right-5 size-8 flex items-center justify-center rounded-full bg-background border border-border/60 shadow-md hover:bg-accent transition-colors z-10"
-          title="回到底部"
-        >
-          <ArrowDown size={14} />
-        </button>
-      )}
-    </div>
-    <ChatInput inputValue={inputValue} setInputValue={setInputValue}
+      <ChatInput inputValue={inputValue} setInputValue={setInputValue}
         onSend={(atts) => send(atts)}
         onStop={onStop}
         loading={loading} aiConfig={aiConfig}
