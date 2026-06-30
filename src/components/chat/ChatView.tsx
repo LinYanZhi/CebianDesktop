@@ -1896,17 +1896,17 @@ export default function ChatView({
           )}
           <div />
         </div>
-        {/* 回底按钮：用户向上滚动后出现在消息区域右下角 */}
-        {!isAtBottom && (
-          <button
-            onClick={() => scrollToBottom({ force: true })}
-            className="sticky bottom-4 right-4 size-8 flex items-center justify-center rounded-full bg-background border border-border/60 shadow-md hover:bg-accent transition-colors"
-            title="回到底部"
-          >
-            <ArrowDown size={14} />
-          </button>
-        )}
       </div>
+      {/* 回底按钮：用户向上滚动后出现在消息区域右下角 */}
+      {!isAtBottom && (
+        <button
+          onClick={() => scrollToBottom({ force: true })}
+          className="absolute bottom-16 right-4 size-8 flex items-center justify-center rounded-full bg-background border border-border/60 shadow-md hover:bg-accent transition-colors z-10"
+          title="回到底部"
+        >
+          <ArrowDown size={14} />
+        </button>
+      )}
       <ChatInput inputValue={inputValue} setInputValue={setInputValue}
         onSend={(atts) => send(atts)}
         onStop={onStop}
