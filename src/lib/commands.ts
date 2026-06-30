@@ -64,7 +64,26 @@ export async function loadConfig(): Promise<any> {
 }
 
 export async function exportProvidersConfig(path: string, config: any): Promise<void> {
-  return invoke("export_providers_config", { path, config });
+  // 将前端驼峰字段映射为后端蛇形命名
+  const snakeConfig = {
+    providers: (config.providers || []).map((p: any) => ({
+      id: p.id,
+      name: p.name,
+      api_key: p.api_key,
+      endpoint: p.endpoint,
+      models: p.models,
+      selected_model: p.selectedModel,
+      connected: p.connected,
+    })),
+    active_provider_id: config.activeProviderId,
+    max_tokens: config.max_tokens ?? 4096,
+    temperature: config.temperature ?? 0.7,
+    thinking_level: config.thinking_level || "medium",
+    system_prompt: config.system_prompt || "",
+    theme: config.theme || "dark",
+    primary_hue: config.primary_hue ?? 200,
+  };
+  return invoke("export_providers_config", { path, config: snakeConfig });
 }
 
 export async function importProvidersConfig(path: string): Promise<any[]> {
