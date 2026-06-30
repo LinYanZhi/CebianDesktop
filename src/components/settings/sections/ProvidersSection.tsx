@@ -146,12 +146,12 @@ export function ProvidersSection({ config, onChange }: { config: AIConfig; onCha
           <button onClick={handleImport}
             className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
             title="导入配置">
-            <Upload size={14} />导入
+            <Download size={14} />导入
           </button>
           <button onClick={handleExport}
             className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
             title="导出配置">
-            <Download size={14} />导出
+            <Upload size={14} />导出
           </button>
         </div>
       </div>
