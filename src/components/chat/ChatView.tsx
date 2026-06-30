@@ -1900,7 +1900,7 @@ export default function ChatView({
         {!isAtBottom && (
           <button
             onClick={() => scrollToBottom({ force: true })}
-            className="sticky bottom-4 float-right mr-4 size-8 flex items-center justify-center rounded-full bg-background border border-border/60 shadow-md hover:bg-accent transition-colors"
+            className="sticky bottom-4 right-4 size-8 flex items-center justify-center rounded-full bg-background border border-border/60 shadow-md hover:bg-accent transition-colors"
             title="回到底部"
           >
             <ArrowDown size={14} />
