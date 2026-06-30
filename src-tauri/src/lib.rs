@@ -87,6 +87,8 @@ pub fn run() {
             commands::import_workspace_zip_path,
             commands::open_file_location,
             commands::get_workspace_file_path,
+            commands::export_providers_config,
+            commands::import_providers_config,
         ])
         .run(tauri::generate_context!())
         .expect("启动应用时出错");

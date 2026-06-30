@@ -11,7 +11,7 @@ use tauri::State;
 
 use crate::ai::{call_llm, AIConfig, ChatMessage};
 use crate::config_storage::{
-    save_config, load_config, AppConfig, Conversation, Prompt, McpServerConfig,
+    save_config, load_config, AppConfig, ProviderConfig, Conversation, Prompt, McpServerConfig,
     save_conversations as storage_save_convs, load_conversations as storage_load_convs,
 };
 use crate::mcp_client::McpClientManager;
@@ -1042,4 +1042,22 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
 pub fn write_file_to_path(path: String, content: String) -> Result<(), String> {
     std::fs::write(&path, &content)
         .map_err(|e| format!("写入文件失败: {}", e))
+}
+
+/// 导出 AI 提供商配置到指定路径的 JSON 文件
+#[tauri::command]
+pub fn export_providers_config(path: String, config: AppConfig) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(&config.providers)
+        .map_err(|e| format!("序列化提供商配置失败: {}", e))?;
+    std::fs::write(&path, &json)
+        .map_err(|e| format!("写入提供商配置文件失败: {}", e))
+}
+
+/// 从指定路径的 JSON 文件导入 AI 提供商配置
+#[tauri::command]
+pub fn import_providers_config(path: String) -> Result<Vec<ProviderConfig>, String> {
+    let json = std::fs::read_to_string(&path)
+        .map_err(|e| format!("读取提供商配置文件失败: {}", e))?;
+    serde_json::from_str::<Vec<ProviderConfig>>(&json)
+        .map_err(|e| format!("解析提供商配置失败: {}", e))
 }

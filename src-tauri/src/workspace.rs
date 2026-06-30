@@ -85,6 +85,7 @@ fn subdir_path(app: &tauri::AppHandle, sub: WorkspaceDir) -> Result<PathBuf, Str
 }
 
 /// 提取文件名中的 id（去掉 .md 后缀）
+#[allow(dead_code)]
 fn filename_to_id(filename: &str) -> String {
     filename.strip_suffix(".md").unwrap_or(filename).to_string()
 }

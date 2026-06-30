@@ -62,3 +62,11 @@ export async function saveConfig(config: any): Promise<void> {
 export async function loadConfig(): Promise<any> {
   return invoke("load_app_config");
 }
+
+export async function exportProvidersConfig(path: string, config: any): Promise<void> {
+  return invoke("export_providers_config", { path, config });
+}
+
+export async function importProvidersConfig(path: string): Promise<any[]> {
+  return invoke("import_providers_config", { path });
+}

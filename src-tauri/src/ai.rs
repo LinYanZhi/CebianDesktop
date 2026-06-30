@@ -37,6 +37,7 @@ impl ThinkingLevel {
     }
 
     /// 返回当前思考模式的显示标签
+    #[allow(dead_code)]
     pub fn label(self) -> &'static str {
         match self {
             ThinkingLevel::Low => "低",

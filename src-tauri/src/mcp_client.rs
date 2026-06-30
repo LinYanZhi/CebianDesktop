@@ -11,6 +11,7 @@ use std::sync::Mutex;
 
 /// 连接的 MCP 服务器信息
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct McpServerConnection {
     /// 服务器名称（唯一标识）
     pub name: String,
@@ -177,6 +178,7 @@ impl McpClientManager {
     }
 
     /// 断开所有 MCP 服务器
+    #[allow(dead_code)]
     pub fn disconnect_all(&self) {
         if let Ok(mut procs) = self.processes.lock() {
             for (_, proc) in procs.drain() {
@@ -244,6 +246,7 @@ impl McpClientManager {
     }
 
     /// 检查指定服务器是否已连接
+    #[allow(dead_code)]
     pub fn is_connected(&self, name: &str) -> bool {
         self.processes.lock()
             .map(|p| p.contains_key(name))

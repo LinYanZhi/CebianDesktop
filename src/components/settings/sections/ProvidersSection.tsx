@@ -1,6 +1,8 @@
 import { useState } from "react";
-import { Eye, EyeOff, Save, Unplug } from "lucide-react";
+import { Eye, EyeOff, Save, Unplug, Download, Upload } from "lucide-react";
 import { toast } from "sonner";
+import { save, open } from "@tauri-apps/plugin-dialog";
+import { exportProvidersConfig, importProvidersConfig } from "../../../lib/commands";
 import type { AIConfig, ProviderInfo } from "../../../lib/types";
 
 export function ProvidersSection({ config, onChange }: { config: AIConfig; onChange: (c: AIConfig) => void }) {
@@ -90,9 +92,69 @@ export function ProvidersSection({ config, onChange }: { config: AIConfig; onCha
     return <span className="text-[0.65rem] px-1.5 py-0.5 rounded border border-border bg-muted text-muted-foreground">未配置</span>;
   };
 
+  const handleExport = async () => {
+    try {
+      const filePath = await save({
+        filters: [{ name: "JSON", extensions: ["json"] }],
+        defaultPath: "cebiandesktop-providers.json",
+        title: "导出 AI 提供商配置",
+      });
+      if (!filePath) return;
+      await exportProvidersConfig(filePath, config);
+      toast.success("提供商配置已导出");
+    } catch (err: any) {
+      toast.error("导出失败", { description: err.message || String(err) });
+    }
+  };
+
+  const handleImport = async () => {
+    try {
+      const filePath = await open({
+        filters: [{ name: "JSON", extensions: ["json"] }],
+        multiple: false,
+        title: "导入 AI 提供商配置",
+      });
+      if (!filePath) return;
+      const imported = await importProvidersConfig(filePath as string);
+      if (!Array.isArray(imported) || imported.length === 0) {
+        toast.error("导入失败：文件中没有有效的提供商配置");
+        return;
+      }
+      onChange({
+        ...config,
+        providers: imported.map((p: any) => ({
+          id: p.id || "",
+          name: p.name || p.id || "",
+          api_key: p.api_key || "",
+          endpoint: p.endpoint || "",
+          models: p.models || [],
+          selectedModel: p.selected_model || p.selectedModel || "",
+          connected: false,
+        })),
+      });
+      toast.success(`已导入 ${imported.length} 个提供商配置`);
+    } catch (err: any) {
+      toast.error("导入失败", { description: err.message || String(err) });
+    }
+  };
+
   return (
     <section>
-      <h2 className="text-base font-semibold mb-4">AI 提供商</h2>
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-base font-semibold">AI 提供商</h2>
+        <div className="flex items-center gap-1">
+          <button onClick={handleImport}
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            title="导入配置">
+            <Upload size={14} />导入
+          </button>
+          <button onClick={handleExport}
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            title="导出配置">
+            <Download size={14} />导出
+          </button>
+        </div>
+      </div>
       <div className="space-y-5">
         {config.providers.map((provider) => (
           <div key={provider.id}>
