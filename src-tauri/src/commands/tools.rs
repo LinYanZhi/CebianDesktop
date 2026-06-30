@@ -178,8 +178,9 @@ pub fn get_tool_permission_list(mcp: State<'_, McpClientManager>, app_handle: ta
     let builtin = crate::tools::get_tool_definitions();
     // 工具类型标签映射：tool_name → type_label
     let type_labels: std::collections::HashMap<&str, &str> = [
-        ("read_local_file", "文件读取工具"),
-        ("write_new_file", "文件写入/创建工具"),
+        ("get_file_info", "内置文件信息查询工具"),
+        ("read_local_file", "内置文件读取工具"),
+        ("write_new_file", "内置文件写入工具"),
         ("edit_file", "文件查找替换工具"),
         ("list_directory", "目录浏览工具"),
         ("create_directory", "目录创建工具"),
@@ -209,7 +210,7 @@ pub fn get_tool_permission_list(mcp: State<'_, McpClientManager>, app_handle: ta
 
     // 类别映射
     let categories: &[(&str, &[&str])] = &[
-        ("文件操作", &["read_local_file", "write_new_file", "edit_file"]),
+        ("文件操作", &["get_file_info", "read_local_file", "write_new_file", "edit_file"]),
         ("目录操作", &["list_directory", "create_directory", "rename_path", "delete_path", "search_files"]),
         ("网络/文件传输", &["download_file", "open_path"]),
         ("命令执行", &["run_command"]),
