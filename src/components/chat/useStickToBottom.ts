@@ -10,15 +10,21 @@ import { useRef, useState, useCallback, useEffect } from "react";
  * 1. **BOTTOM_THRESHOLD_PX 不要改大**：曾从 4→60（被认为防抖），导致用户向上滚动
  *    3-4 行后按钮不出现 —— 「置底按钮又没了」问题修了 4 次。
  *
- * 2. **千万不要加 MutationObserver**：某次修复加了它，流式输出时每帧调 scrollToBottom，
- *    刷新 programmaticAtRef，用户滚动事件被 80ms 守卫拦截 → 按钮永远不出现。
+ * 2. **MutationObserver 现在可以加了**（之前有 bug，现已修复）：
+ *    流式输出时 MutationObserver 每帧触发，但 scrollToBottom 内有 stickRef 守卫，
+ *    用户离开底部后不会滚动，也不会刷新 programmaticAtRef 干扰滚动检测。
  *
- * 3. **程序化滚动后设置 programmaticAtRef**：防止 scrollToBottom 触发的 scroll 事件
+ * 3. **ResizeObserver 不能检测内容增长**：
+ *    定高容器（flex-1）的内容溢出时 scrollHeight 增加，但 clientHeight 不变，
+ *    只有窗口/容器自身尺寸变化时 ResizeObserver 才触发。
+ *    所以内容变化的触发必须靠 MutationObserver。
+ *
+ * 4. **程序化滚动后设置 programmaticAtRef**：防止 scrollToBottom 触发的 scroll 事件
  *    把「在底部」状态误覆盖掉。
  *
- * 4. **按钮必须放在 relative 容器内，不能移出去**（见 ChatView.tsx 注释）。
+ * 5. **按钮必须放在 relative 容器内，不能移出去**（见 ChatView.tsx 注释）。
  *
- * 5. **改用 callback ref + useState 管理容器元素**（第 7 次修复才找到的根因）：
+ * 6. **改用 callback ref + useState 管理容器元素**（第 7 次修复才找到的根因）：
  *    ChatView 在欢迎页和聊天视图间切换时，容器元素从 null 变成新 div。
  *    之前用 useRef + useEffect([containerRef])，ref 对象引用不变，effect 不重新执行，
  *    scroll listener / ResizeObserver 都没绑定到新元素上 → 用户滚动无响应 → 按钮不出现。
@@ -63,23 +69,47 @@ export function useStickToBottom() {
     containerEl.scrollTop = containerEl.scrollHeight;
   }, [containerEl]);
 
-  // ⚠ 每次渲染后都检查实际滚动状态，确保 atBottom 与 DOM 同步。
-  //   之所以不用 [] deps（只在挂载时跑一次），是因为消息可能异步加载，
-  //   挂载时 DOM 还没渲染完，状态不准确。无 deps 每次渲染都修一次，保证最终一致。
-  //   曾修了 5 次「置底按钮又没了」，根因都是挂载时状态误判后无法同步。
+  // ═══════════════════════════════════════════════════════════
+  //  内容变化检测：MutationObserver
+  //  当 AI 流式输出新内容到容器时，检测到 DOM 变化并跟随滚动。
+  //  之前有 bug：流式输出时每帧调 scrollToBottom → 刷新 programmaticAtRef
+  //  → 用户滚动被 80ms 守卫拦截。但 scrollToBottom 内有 !stickRef.current
+  //  守卫，用户离开底部后不会滚动，也就不会刷新 programmaticAtRef。
+  // ═══════════════════════════════════════════════════════════
   useEffect(() => {
     if (!containerEl) return;
-    const elAtBottom = isAtBottomNow();
-    if (stickRef.current !== elAtBottom) {
-      stickRef.current = elAtBottom;
-      setAtBottom(elAtBottom);
-    }
-  });
+    const mo = new MutationObserver(() => {
+      if (stickRef.current) {
+        scrollToBottom();
+      }
+    });
+    mo.observe(containerEl, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+    });
+    return () => mo.disconnect();
+  }, [containerEl, scrollToBottom]);
 
-  // 用户滚动事件
-  // ⚠ 依赖 containerEl（DOM 元素本身），不是 ref 对象。
-  //   容器元素变化时（如欢迎页→聊天视图），effect 重新执行，正确绑定事件。
-  //   之前用 containerRef（RefObject）导致元素变了但 effect 不重跑，修了第 7 次才找到。
+  // ═══════════════════════════════════════════════════════════
+  //  窗口/容器尺寸变化：ResizeObserver
+  //  窗口 resize 或布局变化时跟随滚动。
+  // ═══════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!containerEl) return;
+    const ro = new ResizeObserver(() => {
+      if (stickRef.current) {
+        scrollToBottom();
+      }
+    });
+    ro.observe(containerEl);
+    return () => ro.disconnect();
+  }, [containerEl, scrollToBottom]);
+
+  // ═══════════════════════════════════════════════════════════
+  //  用户滚动事件：检测用户是否在底部/离开底部
+  //  程序化滚动后 80ms 静默期，避免 scrollToBottom 触发的 scroll 事件误判。
+  // ═══════════════════════════════════════════════════════════
   useEffect(() => {
     if (!containerEl) return;
     const onScroll = () => {
@@ -94,27 +124,6 @@ export function useStickToBottom() {
     containerEl.addEventListener('scroll', onScroll, { passive: true });
     return () => containerEl.removeEventListener('scroll', onScroll);
   }, [containerEl, isAtBottomNow]);
-
-  // ResizeObserver：窗口 resize / 布局变化时先检查状态，再决定是否滚动
-  // ⚠ 之前只调 scrollToBottom() 不检查状态，如果 stickRef 状态不同步，即使内容变化
-  //   也无法修正。先同步状态，再滚动。
-  useEffect(() => {
-    if (!containerEl) return;
-    const ro = new ResizeObserver(() => {
-      // 第一步：重新检查「在底部」状态，同步 stickRef 和 atBottom
-      const now = isAtBottomNow();
-      if (stickRef.current !== now) {
-        stickRef.current = now;
-        setAtBottom(now);
-      }
-      // 第二步：如果用户在底部，跟随滚动到最新内容
-      if (stickRef.current) {
-        scrollToBottom();
-      }
-    });
-    ro.observe(containerEl);
-    return () => ro.disconnect();
-  }, [containerEl, isAtBottomNow, scrollToBottom]);
 
   return { containerRef, isAtBottom: atBottom, scrollToBottom, setAtBottom };
 }

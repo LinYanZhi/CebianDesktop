@@ -158,7 +158,7 @@ fn handle_tools_call(
 
     let arguments = params.get("arguments").cloned().unwrap_or(json!({}));
 
-    match tools::execute_tool(tool_name, &arguments) {
+    match tools::execute_tool(tool_name, &arguments, None) {
         Ok(content) => {
             let result = json!({
                 "content": [

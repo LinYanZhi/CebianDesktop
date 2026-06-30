@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { ChevronRight } from "lucide-react";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ToolCall } from "../../lib/types";
 import {
   ToolCategory,
@@ -9,6 +10,17 @@ import {
   getToolColor,
   getToolDesc,
 } from "./chat-types";
+
+/** 下载进度事件载荷 */
+interface DownloadProgress {
+  status: string;
+  url: string;
+  destination: string;
+  engine: string;
+  bytes: number;
+  total: number | null;
+  percent: number | null;
+}
 
 /** 工具调用卡片：仿 Cebian ToolCard，每个工具独立可折叠，显示参数+结果 */
 export function ToolCallCards({ tool_calls, results }: {
@@ -37,9 +49,103 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
   label: string; color: string; toolName: string; category: ToolCategory; status: 'running' | 'done'; args: string; result?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [progress, setProgress] = useState<DownloadProgress | null>(null);
+  const unlistenRef = useRef<UnlistenFn | null>(null);
+  const startTimeRef = useRef<number>(0);
   const desc = getToolDesc(toolName);
   const hasArgs = args !== "{}" && args !== "{\n}";
   const catMeta = TOOL_CATEGORY_META[category];
+
+  // 解析参数
+  const parsedArgs = (() => {
+    try { return JSON.parse(args) as Record<string, string>; } catch { return {}; }
+  })();
+  const isDownload = toolName === "download_file";
+  const argUrl = parsedArgs.url;
+  const argDest = parsedArgs.destination;
+
+  // 下载进度监听
+  useEffect(() => {
+    if (!isDownload || !argUrl || !argDest) return;
+    if (status !== "running") return;
+
+    const setup = async () => {
+      const unlisten = await listen<DownloadProgress>("download-progress", (event) => {
+        const p = event.payload;
+        // 按 URL + destination 匹配
+        if (p.url === argUrl && p.destination === argDest) {
+          // 首次收到 downloading 时记录开始时间
+          if (p.status === "downloading" && startTimeRef.current === 0) {
+            startTimeRef.current = Date.now();
+          }
+          // 下载结束或出错时重置开始时间
+          if (p.status === "finished" || p.status === "error") {
+            startTimeRef.current = 0;
+          }
+          setProgress(p);
+        }
+      });
+      unlistenRef.current = unlisten;
+    };
+    setup();
+
+    return () => {
+      if (unlistenRef.current) {
+        unlistenRef.current();
+        unlistenRef.current = null;
+      }
+    };
+  }, [isDownload, argUrl, argDest, status]);
+
+  const engineLabel = (() => {
+    switch (progress?.engine) {
+      case "ureq": return "系统证书";
+      case "ureq_insecure": return "跳过证书";
+      case "curl": return "curl";
+      case "powershell": return "PowerShell";
+      case "bits": return "BITS";
+      default: return "";
+    }
+  })();
+
+  // 计算下载速度和时间
+  const downloadInfo = (() => {
+    if (!progress || progress.status !== "downloading" || startTimeRef.current === 0) return null;
+    const elapsed = (Date.now() - startTimeRef.current) / 1000; // 秒
+    if (elapsed <= 0) return null;
+    const speed = progress.bytes / elapsed; // bytes/s
+    let eta: number | null = null;
+    if (progress.total && progress.total > 0 && speed > 0) {
+      eta = (progress.total - progress.bytes) / speed;
+    }
+    return { elapsed, speed, eta };
+  })();
+
+  const statusText = (() => {
+    if (!progress) return desc;
+    switch (progress.status) {
+      case "connecting": return `正在尝试 ${engineLabel || (isDownload ? "下载引擎" : "")}...`;
+      case "downloading": {
+        const pct = progress.percent != null ? `${progress.percent}%` : "";
+        const size = progress.total ? `${fmtSize(progress.bytes)} / ${fmtSize(progress.total)}` : fmtSize(progress.bytes);
+        let parts = [`下载中 ${pct} (${size})`];
+        if (downloadInfo) {
+          parts.push(`${fmtSpeed(downloadInfo.speed)}`);
+          parts.push(`已用 ${fmtDuration(downloadInfo.elapsed)}`);
+          if (downloadInfo.eta !== null && downloadInfo.eta > 0) {
+            parts.push(`剩余 ${fmtDuration(downloadInfo.eta)}`);
+          }
+        }
+        if (engineLabel) parts.push(engineLabel);
+        return parts.join(" · ");
+      }
+      case "engine_fallback": return `${engineLabel} 不可用，切换下一引擎...`;
+      case "finished": return "下载完成";
+      case "error": return "下载失败";
+      default: return desc;
+    }
+  })();
+
   return (
     <div className="border border-border rounded-lg overflow-hidden text-[0.8rem] min-w-0">
       {/* Header */}
@@ -65,9 +171,7 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
               {catMeta.label}
             </span>
           </div>
-          {!hasArgs && desc && (
-            <span className="text-[0.6rem] text-muted-foreground/60 truncate block">{desc}</span>
-          )}
+          <span className="text-[0.6rem] text-muted-foreground/60 truncate block">{statusText}</span>
         </div>
         <ChevronRight size={14} className={`shrink-0 text-muted-foreground/50 transition-transform duration-150 ${open ? "rotate-90" : ""}`} />
       </button>
@@ -77,6 +181,34 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
           {desc && hasArgs && (
             <div className="px-3.5 py-2 bg-background border-b border-border/30">
               <span className="text-[0.6rem] text-muted-foreground/60">{desc}</span>
+            </div>
+          )}
+          {/* 下载进度条 */}
+          {isDownload && progress?.status === "downloading" && progress.total != null && progress.total > 0 && (
+            <div className="px-3.5 py-2 bg-background border-b border-border/30">
+              <div className="flex items-center justify-between text-[0.6rem] text-muted-foreground/60 mb-1">
+                <span>{fmtSize(progress.bytes)} / {fmtSize(progress.total)}</span>
+                <span>{progress.percent}%</span>
+              </div>
+              <div className="w-full h-1.5 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full transition-all duration-200"
+                  style={{ width: `${Math.min(progress.percent ?? 0, 100)}%` }}
+                />
+              </div>
+              {/* 速度 + 时间信息 */}
+              {downloadInfo && (
+                <div className="flex items-center gap-3 mt-1.5 text-[0.55rem] text-muted-foreground/50">
+                  <span>⬇ {fmtSpeed(downloadInfo.speed)}</span>
+                  <span>已用 {fmtDuration(downloadInfo.elapsed)}</span>
+                  {downloadInfo.eta !== null && downloadInfo.eta > 0 && (
+                    <>
+                      <span className="text-muted-foreground/30">|</span>
+                      <span>剩余 {fmtDuration(downloadInfo.eta)}</span>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
           {hasArgs && (
@@ -99,4 +231,31 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
       )}
     </div>
   );
+}
+
+/** 格式化字节数为可读字符串 */
+function fmtSize(bytes: number): string {
+  if (bytes === 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  const size = bytes / Math.pow(1024, i);
+  return `${size.toFixed(i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+/** 格式化速度为可读字符串 */
+function fmtSpeed(bytesPerSec: number): string {
+  if (bytesPerSec < 1024) return `${bytesPerSec.toFixed(0)} B/s`;
+  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  return `${(bytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`;
+}
+
+/** 格式化秒数为可读时长 */
+function fmtDuration(seconds: number): string {
+  if (seconds < 60) return `${Math.round(seconds)}秒`;
+  const min = Math.floor(seconds / 60);
+  const sec = Math.round(seconds % 60);
+  if (min < 60) return `${min}分${sec}秒`;
+  const hour = Math.floor(min / 60);
+  const remainMin = min % 60;
+  return `${hour}时${remainMin}分${sec}秒`;
 }

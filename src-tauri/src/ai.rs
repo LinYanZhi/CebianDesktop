@@ -437,7 +437,7 @@ pub fn execute_tool_call(tool_calls: &[ToolCall], app_handle: Option<&tauri::App
                 Err("缺少 app_handle，无法执行技能管理工具".to_string())
             }
         } else {
-            tools::execute_tool(tool_name, &args)
+            tools::execute_tool(tool_name, &args, app_handle)
         };
 
         let content = match result {

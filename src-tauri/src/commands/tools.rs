@@ -386,8 +386,9 @@ pub async fn execute_tool(name: String, args: Value, permission_mode: Option<Str
     // 内置工具
     let name_clone = name.clone();
     let args_clone = args.clone();
+    let app_clone = app_handle.clone();
     let result = tokio::task::spawn_blocking(move || {
-        crate::tools::execute_tool(&name_clone, &args_clone)
+        crate::tools::execute_tool(&name_clone, &args_clone, Some(&app_clone))
     })
     .await;
 
@@ -442,8 +443,9 @@ pub async fn confirm_tool_execution(token: String, _mcp: State<'_, McpClientMana
     // 内置工具（带路径沙箱）
     let name_clone = tool_name.clone();
     let args_clone = args.clone();
+    let app_clone = app_handle.clone();
     let result = tokio::task::spawn_blocking(move || {
-        crate::tools::execute_tool(&name_clone, &args_clone)
+        crate::tools::execute_tool(&name_clone, &args_clone, Some(&app_clone))
     })
     .await;
 

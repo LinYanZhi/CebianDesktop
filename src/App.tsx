@@ -10,7 +10,6 @@ import { getActiveConfig } from "./lib/types";
 import { DEFAULT_AI_CONFIG, TOOL_EXPORT_LABELS } from "./lib/constants";
 import { yieldToUI, parseAskUserArgs, createNewConversation } from "./lib/utils";
 import { getDefaultSystemPrompt } from "./lib/prompts";
-import { compactMessages } from "./lib/compact";
 import { toast } from "sonner";
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -121,6 +120,8 @@ export default function App() {
     token: string;
   } | null>(null);
   const confirmResolveRef = useRef<((value: boolean) => void) | null>(null);
+  /** 工具执行取消标记：用户点击停止后，后续工具结果丢弃 */
+  const toolCancelledRef = useRef(false);
 
   // 切换主题
   useEffect(() => {
@@ -333,6 +334,9 @@ export default function App() {
       setMessages([...updated, placeholder]);
       forceRender((n) => n + 1); // 触发重渲染，UI 显示 loading 状态
 
+      // 重置取消标记
+      toolCancelledRef.current = false;
+
       // 注册流状态
       const controller = new AbortController();
       (window as any).__streamController = controller;
@@ -412,21 +416,6 @@ export default function App() {
 
         // ─── 工具调用循环（无限制，Cebian 浏览器版亦无限制） ──
         for (let depth = 0; ; depth++) {
-
-          // ── 上下文压缩：当消息数超过阈值时压缩早期对话 ──
-          if (currentMessages.length > 30) {
-            try {
-              const compacted = await compactMessages(currentMessages, aiConfig);
-              if (compacted !== currentMessages) {
-                currentMessages = compacted;
-                // 持久化压缩后的消息
-                persistSessionMessages(streamSessionId, currentMessages);
-                console.log("[handleSend] 上下文已压缩，当前消息数:", currentMessages.length);
-              }
-            } catch (e) {
-              console.warn("[handleSend] 压缩失败，继续:", e);
-            }
-          }
 
           // 构建 API 消息（含 tool 角色消息）
           let systemPrompt = aiConfig.system_prompt || getDefaultSystemPrompt();
@@ -636,6 +625,9 @@ export default function App() {
           // 执行每个工具调用
           const toolResults: ChatMessage[] = [];
           for (const tc of roundToolCalls) {
+            // 用户已停止 → 不再执行新工具
+            if (toolCancelledRef.current) break;
+
             try {
               const args = JSON.parse(tc.function.arguments);
               const toolName = tc.function.name;
@@ -669,6 +661,9 @@ export default function App() {
               console.log(`[handleSend] 执行工具: ${toolName}`, tc.function.arguments);
               const result = await executeTool(toolName, args, aiConfig.aiPermissionMode);
 
+              // 工具执行途中用户停止了 → 丢弃本轮所有结果
+              if (toolCancelledRef.current) break;
+
               if (result && result.needs_confirmation) {
                 // 后端返回 needs_confirmation → 需要用户二次确认
                 const confirmed = await askConfirmation(
@@ -680,6 +675,8 @@ export default function App() {
                 if (confirmed) {
                   // 用户点击「运行」→ 调用 confirm_tool_execution 执行
                   const execResult = await confirmExecution(result.token);
+                  // confirm_tool_execution 也可能会耗时较长，再次检查
+                  if (toolCancelledRef.current) break;
                   toolResults.push({
                     role: "tool",
                     content: JSON.stringify(execResult, null, 2),
@@ -713,6 +710,14 @@ export default function App() {
                 name: tc.function.name,
               } as ChatMessage);
             }
+
+            // 每执行完一个工具让出 UI 线程，避免界面卡顿
+            await yieldToUI();
+          }
+
+          // 如果用户已停止，丢弃本轮工具结果，让异常捕获分支处理清理
+          if (toolCancelledRef.current) {
+            throw new DOMException("The user aborted a request.", "AbortError");
           }
 
           // 将工具结果加入消息列表
@@ -797,6 +802,7 @@ export default function App() {
 
   // 停止当前会话的流式输出
   const handleStop = useCallback(() => {
+    toolCancelledRef.current = true;
     if (!currentSessionId) return;
     const streamState = activeStreamsRef.current.get(currentSessionId);
     if (streamState) {

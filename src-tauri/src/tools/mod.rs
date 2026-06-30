@@ -501,7 +501,7 @@ fn props(entries: &[(&str, &str, &str)]) -> Value {
 }
 
 /// 执行工具
-pub fn execute_tool(name: &str, args: &Value) -> Result<Value, String> {
+pub fn execute_tool(name: &str, args: &Value, app: Option<&tauri::AppHandle>) -> Result<Value, String> {
     match name {
         "read_local_file" => {
             let path = arg_str(args, "path")?;
@@ -560,7 +560,7 @@ pub fn execute_tool(name: &str, args: &Value) -> Result<Value, String> {
             let url = arg_str(args, "url")?;
             let destination = arg_str(args, "destination")?;
             validate_path(destination, false)?;
-            let result = download_file(url, destination)?;
+            let result = download_file(url, destination, app)?;
             Ok(json!({"message": result}))
         }
         "open_path" => {
