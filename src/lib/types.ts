@@ -113,3 +113,15 @@ export interface MCPServerStatus {
 export function hasUsableModel(config: AIConfig): boolean {
   return config.providers.some(p => p.connected && p.api_key.trim() !== "");
 }
+
+/** 单流状态（每个进行中的流一个实例） */
+export interface StreamState {
+  controller: AbortController;
+  persistTimer: ReturnType<typeof setTimeout> | null;
+  sessionId: string;
+  /** 流开始前的消息（含刚发出的用户消息），用于重建完整数组 */
+  prevMessages: ChatMessage[];
+  fullContent: string;
+  fullThinking: string;
+  usage?: { input: number; output: number };
+}
