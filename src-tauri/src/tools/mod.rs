@@ -120,6 +120,8 @@ pub(crate) fn get_tool_risk_level(name: &str) -> &'static str {
         // 🟠 中风险
         "write_new_file" | "edit_file" | "rename_path" | "system_add_language" 
         | "capture_screen" | "download_file" | "clipboard_write" => "medium",
+        // 🟢 以下安全工具由 Rust 处理，不走 fallback
+        "get_file_info" => "safe",
         // 🟢 低风险 / 安全
         _ => "safe",
     }
@@ -218,6 +220,13 @@ pub fn get_tool_definitions() -> Vec<Value> {
         // ═══════════════════════════════════════════════════════════
         //  文件操作
         // ═══════════════════════════════════════════════════════════
+        td!("get_file_info",
+            "获取文件或目录的详细信息。返回文件大小（含人类可读格式）、修改时间、创建时间、类型（文件/目录）、\
+             文件扩展名等元数据。\
+             \n\n适合场景：查看文件大小、检查修改时间、判断文件是否存在、了解文件类型等基本信息查询。\
+             \n注意：路径必须是绝对路径。",
+            &[("path", "string", "要查询的文件或目录的绝对路径，例如 C:\\Users\\用户名\\Desktop\\file.txt")], ["path"]),
+
         td!("read_local_file",
             "读取本地文本文件的内容。返回文件全部文本。适用于读取源代码、配置文件、文档、日志等文本文件。\
              \n\n注意：路径必须是绝对路径（如 C:\\Users\\用户名\\Desktop\\test.txt）。不支持读取二进制文件（如图片、视频）。\
@@ -503,6 +512,11 @@ fn props(entries: &[(&str, &str, &str)]) -> Value {
 /// 执行工具
 pub fn execute_tool(name: &str, args: &Value, app: Option<&tauri::AppHandle>) -> Result<Value, String> {
     match name {
+        "get_file_info" => {
+            let path = arg_str(args, "path")?;
+            validate_path(path, true)?;
+            Ok(get_file_info(path)?)
+        }
         "read_local_file" => {
             let path = arg_str(args, "path")?;
             validate_path(path, true)?;

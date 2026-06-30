@@ -3,6 +3,64 @@ use std::path::Path;
 use serde_json::{json, Value};
 use walkdir::WalkDir;
 
+// ─── 文件信息查询 ──────────────────────────────────────
+
+pub(crate) fn get_file_info(path: &str) -> Result<Value, String> {
+    let p = Path::new(path);
+    if !p.exists() { return Err(format!("路径不存在: {}", path)); }
+
+    let metadata = fs::metadata(p).map_err(|e| format!("读取文件元数据失败: {}", e))?;
+    let file_size = metadata.len();
+
+    let modified = metadata.modified()
+        .ok()
+        .map(|t| {
+            let duration = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+            duration.as_secs()
+        });
+
+    let created = metadata.created()
+        .ok()
+        .map(|t| {
+            let duration = t.duration_since(std::time::UNIX_EPOCH).unwrap_or_default();
+            duration.as_secs()
+        });
+
+    let is_dir = metadata.is_dir();
+    let is_file = metadata.is_file();
+    let is_symlink = metadata.is_symlink();
+    let extension = if is_file {
+        p.extension().map(|e| e.to_string_lossy().to_string())
+    } else {
+        None
+    };
+    let file_name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+
+    // 人类可读格式
+    let size_display = if file_size < 1024 {
+        format!("{} B", file_size)
+    } else if file_size < 1024 * 1024 {
+        format!("{:.1} KB", file_size as f64 / 1024.0)
+    } else if file_size < 1024 * 1024 * 1024 {
+        format!("{:.1} MB", file_size as f64 / (1024.0 * 1024.0))
+    } else {
+        format!("{:.2} GB", file_size as f64 / (1024.0 * 1024.0 * 1024.0))
+    };
+
+    Ok(json!({
+        "path": path,
+        "name": file_name,
+        "size": file_size,
+        "size_display": size_display,
+        "is_dir": is_dir,
+        "is_file": is_file,
+        "is_symlink": is_symlink,
+        "extension": extension,
+        "modified_at": modified,
+        "created_at": created,
+    }))
+}
+
 // ─── 文件读写 ──────────────────────────────────────────
 
 pub(crate) fn read_local_file(path: &str) -> Result<String, String> {

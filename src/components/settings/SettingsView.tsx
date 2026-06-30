@@ -1,18 +1,11 @@
 import { useState, useRef, useEffect } from "react";
 import {
-  ArrowLeft, Bot, Key, MessageSquare, FileText, Puzzle, Plug,
-  DatabaseBackup, HardDrive, Sliders, Info, Shield,
+  ArrowLeft, Bot, Key, Puzzle, Info, Shield,
 } from "lucide-react";
 import type { AIConfig } from "../../lib/types";
 import { ProvidersSection } from "./sections/ProvidersSection";
-import { InstructionsSection } from "./sections/InstructionsSection";
 import { PermissionSection } from "./sections/PermissionSection";
-import { PromptsSection } from "./sections/PromptsSection";
 import { SkillsSection } from "./sections/SkillsSection";
-import { MCPSection } from "./sections/MCPSection";
-import { BackupSection } from "./sections/BackupSection";
-import { StorageSection } from "./sections/StorageSection";
-import { AdvancedSection } from "./sections/AdvancedSection";
 import { AboutSection } from "./sections/AboutSection";
 
 interface SettingsViewProps {
@@ -34,36 +27,16 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: "providers", label: "AI 提供商", icon: Key },
-  { id: "instructions", label: "指引", icon: MessageSquare },
   { id: "permission", label: "AI 权限", icon: Shield },
-  { id: "prompts", label: "提示词", icon: FileText },
   { id: "skills", label: "技能", icon: Puzzle },
-  { id: "mcp", label: "MCP 服务", icon: Plug },
-  { id: "backup", label: "备份与恢复", icon: DatabaseBackup },
-  { id: "storage", label: "文件系统", icon: HardDrive },
-  { id: "advanced", label: "高级", icon: Sliders },
   { id: "about", label: "关于", icon: Info },
 ];
 
 function renderSection(props: SettingsViewProps, active: string) {
   switch (active) {
     case "providers": return <ProvidersSection config={props.config} onChange={props.onConfigChange} />;
-    case "instructions": return <InstructionsSection config={props.config} onChange={props.onConfigChange} />;
     case "permission": return <PermissionSection config={props.config} onChange={props.onConfigChange} />;
-    case "prompts": return <PromptsSection />;
     case "skills": return <SkillsSection />;
-    case "mcp": return (
-      <MCPSection
-        port={props.serverPort}
-        running={props.serverRunning}
-        onStart={props.onStartServer}
-        onStop={props.onStopServer}
-        onPortChange={props.onPortChange}
-      />
-    );
-    case "backup": return <BackupSection />;
-    case "storage": return <StorageSection />;
-    case "advanced": return <AdvancedSection />;
     case "about": return <AboutSection />;
     default: return null;
   }
