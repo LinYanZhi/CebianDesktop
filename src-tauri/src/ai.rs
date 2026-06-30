@@ -265,6 +265,21 @@ fn build_openai_tools(app_handle: Option<&tauri::AppHandle>) -> Vec<Value> {
         })
         .collect();
 
+    // 追加浏览器工具（去重）
+    for bt in crate::bridge::get_browser_tool_definitions() {
+        let name = bt["name"].as_str().unwrap_or("");
+        if !result.iter().any(|r| r["function"]["name"].as_str() == Some(name)) {
+            result.push(json!({
+                "type": "function",
+                "function": {
+                    "name": bt["name"],
+                    "description": bt["description"],
+                    "parameters": bt["inputSchema"],
+                }
+            }));
+        }
+    }
+
     // 追加动态技能工具（去重，避免与内置工具重名）
     if let Some(handle) = app_handle {
         if let Ok(skill_tools) = tools::get_skill_tools(handle) {
