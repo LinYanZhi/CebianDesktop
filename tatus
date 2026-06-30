@@ -1,0 +1,3 @@
+[33ma13646c[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mfeat/dual-ai-bridge[m[33m, [m[1;31morigin/feat/dual-ai-bridge[m[33m)[m feat: 双 AI 双向桥接 - 浏览器 AI 进度可视化 + 身份认知 + 桌面工具调用
+[33mc1c3e7c[m feat: AI 工具列表注入浏览器工具 + Cargo.toml ws 依赖
+[33m4275cbe[m feat: 双 AI 桥接多对多架构重构

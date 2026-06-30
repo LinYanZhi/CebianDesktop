@@ -32,6 +32,9 @@ pub fn run() {
             #[cfg(desktop)]
             app.handle().plugin(tauri_plugin_window_state::Builder::default().build())?;
 
+            // 设置 AppHandle 到桥接状态（供 run_desktop_task 使用）
+            bridge_state_for_setup.set_app_handle(app.handle().clone());
+
             // 初始化 AI 文件操作的路径沙箱（工作区根目录）
             if let Ok(skills_dir) = workspace::get_subdir_path(app.handle(), workspace::WorkspaceDir::Skills) {
                 if let Some(parent) = skills_dir.parent() {

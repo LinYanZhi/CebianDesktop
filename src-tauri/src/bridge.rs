@@ -24,6 +24,12 @@
 //! { "jsonrpc": "2.0", "id": "desktop_req_xxx", "method": "desktop/execute_tool", "params": { "name": "read_local_file", "arguments": { "path": "C:/file.txt" } } }
 //! // 桌面 → 浏览器：成功响应
 //! { "jsonrpc": "2.0", "id": "desktop_req_xxx", "result": { "content": "..." } }
+//!
+//! // 浏览器 AI → 桌面：委托任务给桌面 AI（推荐）
+//! // 桌面 AI 收到后自行规划工具调用来完成任务，返回最终结果
+//! { "jsonrpc": "2.0", "id": "desktop_req_xxx", "method": "desktop/delegate_task", "params": { "task": "读取桌面上的 B站首页封面 文件夹的内容" } }
+//! // 桌面 → 浏览器：成功响应
+//! { "jsonrpc": "2.0", "id": "desktop_req_xxx", "result": { "content": "文件夹包含 3 个文件..." } }
 //! ```
 
 use std::collections::HashMap;
@@ -41,10 +47,87 @@ use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::{oneshot, Mutex};
 
+use crate::ai::{call_llm, AIConfig, ChatMessage, ThinkingLevel};
 use crate::config_storage::BridgePortConfig;
 
 /// 桥接服务器默认监听端口
 pub const DEFAULT_BRIDGE_PORT: u16 = 37421;
+
+/// 执行桌面任务（由浏览器 AI 通过 desktop/delegate_task 调用）
+///
+/// 创建一个独立的 AI 代理会话，让 Desktop AI 自主规划工具调用完成任务。
+pub async fn run_desktop_task(state: &BridgeState, task: &str) -> Result<String, String> {
+    let app_handle = state
+        .app_handle
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("桥接服务未初始化（AppHandle 未设置）")?;
+    let config = crate::config_storage::load_config(&app_handle)?;
+    let active_provider = config
+        .providers
+        .iter()
+        .find(|p| p.id == config.active_provider_id)
+        .ok_or("没有激活的 AI 提供商，请先在设置中配置")?;
+
+    let ai_config = AIConfig {
+        base_url: active_provider.endpoint.clone(),
+        api_key: active_provider.api_key.clone(),
+        model: active_provider.selected_model.clone(),
+        max_tokens: config.max_tokens,
+        temperature: config.temperature as f32,
+        system_prompt: config.system_prompt.clone(),
+        dual_ai: false,
+        thinking_level: ThinkingLevel::Medium,
+        permission_mode: None,
+    };
+
+    let mut messages = vec![
+        ChatMessage {
+            role: "system".to_string(),
+            content: "你是一个桌面 AI 助手，运行在用户的本地计算机上。\
+                     你有访问本地文件系统、执行命令、操作文件等全套桌面工具。\
+                     请根据用户的任务描述，自主规划并执行工具调用来完成它。\
+                     完成所有必要的操作后，用中文给出最终回复。"
+                .to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: task.to_string(),
+            tool_calls: None,
+            tool_call_id: None,
+            name: None,
+        },
+    ];
+
+    let max_rounds: usize = 15;
+    for _round in 0..max_rounds {
+        let response = call_llm(&ai_config, &messages)?;
+
+        if response.tool_calls.is_none() || response.tool_calls.as_ref().unwrap().is_empty() {
+            // LLM 给出最终回复，任务完成
+            let final_content = response.content.trim().to_string();
+            if final_content.is_empty() {
+                return Ok("任务已完成（无具体回复内容）".to_string());
+            }
+            return Ok(final_content);
+        }
+
+        let tool_calls = response.tool_calls.clone().unwrap();
+        let results = crate::ai::execute_tool_call(&tool_calls, Some(&app_handle), None);
+
+        messages.push(response);
+        messages.extend(results);
+    }
+
+    Err(format!(
+        "桌面 AI 任务执行超过 {} 轮工具调用上限，请简化任务描述",
+        max_rounds
+    ))
+}
 
 // ─── Shared State ──────────────────────────────────────────
 
@@ -77,6 +160,7 @@ pub(crate) struct BrowserSession {
 /// 桥接服务器共享状态
 pub struct BridgeState {
     pub(crate) inner: Mutex<BridgeInner>,
+    pub(crate) app_handle: std::sync::Mutex<Option<tauri::AppHandle>>,
 }
 
 pub(crate) struct BridgeInner {
@@ -103,7 +187,13 @@ impl BridgeState {
                 desktop_ai_progress: json!({"steps": [], "status": "idle", "task": ""}),
                 port_configs: HashMap::new(),
             }),
+            app_handle: std::sync::Mutex::new(None),
         }
+    }
+
+    /// 设置 AppHandle（在 setup 中调用）
+    pub fn set_app_handle(&self, handle: tauri::AppHandle) {
+        *self.app_handle.lock().unwrap() = Some(handle);
     }
 }
 
@@ -284,6 +374,25 @@ async fn relay_from_websocket(
                         let result = execute_desktop_tool(name, &args).await;
                         let response = match result {
                             Ok(val) => json!({ "jsonrpc": "2.0", "id": id, "result": val }),
+                            Err(e) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -1, "message": e } }),
+                        };
+                        let _ = ws_sender.send(Message::Text(response.to_string().into()));
+                        continue;
+                    }
+
+                    // ── 浏览器 AI 委托任务给桌面 AI ──
+                    if parsed.get("method").and_then(|m| m.as_str()) == Some("desktop/delegate_task") {
+                        let id = parsed.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let task = parsed.pointer("/params/task").and_then(|v| v.as_str()).unwrap_or("");
+                        if task.is_empty() {
+                            let response = json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -1, "message": "缺少 task 参数" } });
+                            let _ = ws_sender.send(Message::Text(response.to_string().into()));
+                            continue;
+                        }
+                        // 创建一个独立的 AI 代理来执行任务
+                        let result = run_desktop_task(&state, task).await;
+                        let response = match result {
+                            Ok(val) => json!({ "jsonrpc": "2.0", "id": id, "result": { "content": val } }),
                             Err(e) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -1, "message": e } }),
                         };
                         let _ = ws_sender.send(Message::Text(response.to_string().into()));
