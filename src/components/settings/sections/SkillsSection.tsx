@@ -2,7 +2,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useState, useRef, useEffect } from "react";
 import {
   FileCode, FileText, FileJson, File, Search, FilePlus, FolderPlus, MoreHorizontal, Download,
-  FolderOpen, Trash2, Plus, Folder, FileImage, FileArchive, ChevronRight, ChevronDown,
+  FolderOpen, Trash2, Plus, FileImage, FileArchive,
 } from "lucide-react";
 import { toast } from "sonner";
 import { listWorkspaceFiles, writeWorkspaceFile, deleteWorkspaceFile, renameWorkspaceFile,
@@ -13,8 +13,9 @@ import { listWorkspaceFiles, writeWorkspaceFile, deleteWorkspaceFile, renameWork
 import { save, open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import type { WorkspaceFile } from "../../../lib/workspace";
-import { CodeMirrorEditor } from "../../editor/CodeMirrorEditor";
-import { ContextMenu } from "../ContextMenu";
+import { ContextMenu, type ContextMenuItem } from "../ContextMenu";
+import { SkillFileTree } from "./SkillFileTree";
+import { SkillEditor } from "./SkillEditor";
 
 /** 文件扩展名 → lucide 图标 + 颜色 */
 const FILE_ICON_MAP: Record<string, { icon: any; color: string }> = {
@@ -113,12 +114,9 @@ export function SkillsSection() {
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; fileId?: string; isDir?: boolean } | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [leftWidth, setLeftWidth] = useState(240);
-  const [fontSize, setFontSize] = useState(13);
-  const [fontTip, setFontTip] = useState(false);
   const [dragOverDir, setDragOverDir] = useState<string | null>(null);
   const [draggingFile, setDraggingFile] = useState<string | null>(null);
   const [dragPos, setDragPos] = useState<{ x: number; y: number } | null>(null);
-  const fontTipTimer = useRef<ReturnType<typeof setTimeout>>();
   const draggingRef = useRef(false);
   const dragFileRef = useRef<string | null>(null);
   const dragFilesRef = useRef<string[]>([]);
@@ -200,7 +198,6 @@ export function SkillsSection() {
 
     const onUp = async (e: PointerEvent) => {
       const isDragging = dragActiveRef.current;
-      const fileId = dragFileRef.current;
       const fileIds = dragFilesRef.current.slice();
       // 清理所有状态
       document.body.style.userSelect = '';
@@ -599,12 +596,6 @@ export function SkillsSection() {
     document.addEventListener('mouseup', onUp);
   };
 
-  const showFontTip = () => {
-    setFontTip(true);
-    if (fontTipTimer.current) clearTimeout(fontTipTimer.current);
-    fontTipTimer.current = setTimeout(() => setFontTip(false), 1200);
-  };
-
   return (
     <section ref={sectionRef} className="flex flex-col flex-1 min-h-0">
       <h2 className="text-base font-semibold mb-3 shrink-0 sr-only">技能</h2>
@@ -658,105 +649,41 @@ export function SkillsSection() {
             </div>
           </div>
 
-          {/* 文件树 */}
-          <div ref={treeContainerRef} className="flex-1 overflow-y-auto p-1 space-y-0.5"
-            onContextMenu={(e) => { e.preventDefault(); setCtxMenu({ x: e.clientX, y: e.clientY }); }}
-            onPointerDown={(e) => { if (e.target === e.currentTarget) { setCurrentDir(""); setSelectedFilenames(new Set()); } }}>
-            {creatingFolder && (
-              <div className="flex items-center gap-1.5 px-1.5 py-1">
-                <Folder size={12} className="shrink-0 text-muted-foreground/50" />
-                <input ref={createInputRef} type="text" value={createValue}
-                  placeholder="文件夹名称"
-                  onBlur={(e) => confirmCreateFolder(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !createError) { confirmCreateFolder(createValue); }
-                    if (e.key === "Escape") { setCreatingFolder(false); setCreateError(null); }
-                  }}
-                  onChange={(e) => { setCreateValue(e.target.value); setCreateError(null); }}
-                  className={`flex-1 text-[11px] bg-background border rounded px-2 py-1 outline-none min-w-0 ${createError ? 'border-red-500 ring-1 ring-red-500' : 'border-ring'}`} />
-                {createError && <span className="text-[10px] text-red-500 whitespace-nowrap shrink-0">{createError}</span>}
-              </div>
-            )}
-            {creatingFile && (
-              <div className="flex items-center gap-1.5 px-1.5 py-1">
-                <FilePlus size={12} className="shrink-0 text-muted-foreground/50" />
-                <input ref={createInputRef} type="text" value={createValue}
-                  placeholder="文件名（如 技能.md, script.js）"
-                  onBlur={(e) => confirmCreateFile(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && !createError) { confirmCreateFile(createValue); }
-                    if (e.key === "Escape") { setCreatingFile(false); setCreateError(null); }
-                  }}
-                  onChange={(e) => { setCreateValue(e.target.value); setCreateError(null); }}
-                  className={`flex-1 text-[11px] bg-background border rounded px-2 py-1 outline-none min-w-0 ${createError ? 'border-red-500 ring-1 ring-red-500' : 'border-ring'}`} />
-                {createError && <span className="text-[10px] text-red-500 whitespace-nowrap shrink-0">{createError}</span>}
-              </div>
-            )}
-            {visibleItems.length === 0 && !creatingFile && !creatingFolder ? (
-              <p className="text-[11px] text-muted-foreground text-center py-8">{search ? "无匹配" : "空目录"}</p>
-            ) : (
-              visibleItems.map(({ item: s, depth }) => {
-                const selected = selectedFilenames.has(s.filename);
-                return (
-                  <div key={s.id}
-                    onContextMenu={(e) => { e.preventDefault(); e.stopPropagation(); setCtxMenu({ x: e.clientX, y: e.clientY, fileId: s.filename, isDir: isDir(s) }); }}>
-                    {renaming === s.id ? (
-                      <div className="flex items-center gap-1.5 px-1.5 py-1" style={{ paddingLeft: 8 + depth * 16 }}>
-                        <input ref={renameInputRef} type="text" value={renameValue}
-                          onBlur={() => { setRenaming(null); setRenameError(null); }}
-                          onKeyDown={async (e) => {
-                            if (e.key === "Enter" && !renameError) { setRenaming(null); await handleRename(s.id, renameValue); }
-                            if (e.key === "Escape") { setRenaming(null); setRenameError(null); }
-                          }}
-                          onChange={(e) => { setRenameValue(e.target.value); setRenameError(null); }}
-                          className={`flex-1 text-[11px] bg-background border rounded px-2 py-1 outline-none min-w-0 ${renameError ? 'border-red-500 ring-1 ring-red-500' : 'border-ring'}`}
-                          onClick={(e) => e.stopPropagation()} />
-                        {renameError && <span className="text-[10px] text-red-500 whitespace-nowrap shrink-0">{renameError}</span>}
-                      </div>
-                    ) : isDir(s) ? (
-                      // ── 目录项 ──
-                      <div data-dir-id={s.id} tabIndex={-1}
-                        onClick={(e) => { toggleDir(s.id); toggleSelect(s.filename, e.ctrlKey || e.metaKey, e.shiftKey); setCurrentDir(s.id); }}
-                        onPointerDown={(e) => handlePointerDown(e, s.filename)}
-                        className={`flex items-center px-2.5 py-1.5 rounded-md text-xs cursor-pointer transition-colors group focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
-                          dragOverDir === s.id ? 'bg-accent ring-1 ring-primary' : selected ? 'bg-accent/70' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
-                        }`}
-                        style={{ paddingLeft: 8 + depth * 16 }}>
-                        <span className="w-4 shrink-0 flex items-center justify-center">
-                          {expandedDirs.has(s.id)
-                            ? <ChevronDown size={12} className="shrink-0 text-muted-foreground/50" />
-                            : <ChevronRight size={12} className="shrink-0 text-muted-foreground/50" />}
-                        </span>
-                        {expandedDirs.has(s.id)
-                          ? <FolderOpen size={14} className="w-[18px] shrink-0 text-muted-foreground/60" />
-                          : <Folder size={14} className="w-[18px] shrink-0 text-muted-foreground/60" />}
-                        <span className="w-2 shrink-0" />
-                        <span className="truncate flex-1 text-left">{baseName(s)}</span>
-                      </div>
-                    ) : (
-                      // ── 文件项 ──
-                      <div tabIndex={-1}
-                        onClick={(e) => { toggleSelect(s.filename, e.ctrlKey || e.metaKey, e.shiftKey); selectFile(s.filename); setCurrentDir(dirOf(s)); }}
-                        onPointerDown={(e) => handlePointerDown(e, s.filename)}
-                        className={`flex items-center px-2.5 py-1.5 rounded-md text-xs cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
-                          selected ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-accent/50'
-                        }`}
-                        style={{ paddingLeft: 8 + depth * 16 }}
-                        title={s.filename}>
-                        <span className="w-4 shrink-0" />
-                        {(() => { const fi = fileIcon(s.filename); const Icon = fi.icon; return <Icon size={14} className="w-[18px] shrink-0" />; })()}
-                        <span className="w-2 shrink-0" />
-                        <span className="truncate flex-1 text-left">{baseName(s)}</span>
-                        {dirtyMap[s.id] && (
-                          <span className="text-[10px] text-amber-500 shrink-0 leading-none">●</span>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
-            )}
-          </div>
+          <SkillFileTree
+            visibleItems={visibleItems}
+            expanded={expandedDirs}
+            selected={selectedFilenames}
+            searchQuery={search}
+            dirtyMap={dirtyMap}
+            renaming={renaming}
+            renameValue={renameValue}
+            renameError={renameError}
+            creatingFile={creatingFile}
+            creatingFolder={creatingFolder}
+            createValue={createValue}
+            createError={createError}
+            dragOverDir={dragOverDir}
+            treeContainerRef={treeContainerRef}
+            renameInputRef={renameInputRef}
+            createInputRef={createInputRef}
+            onToggleDir={toggleDir}
+            onToggleSelect={toggleSelect}
+            onSelectFile={selectFile}
+            onPointerDown={handlePointerDown}
+            onSetRenaming={setRenaming}
+            onSetRenameValue={setRenameValue}
+            onSetRenameError={setRenameError}
+            onRename={handleRename}
+            onSetCreatingFile={setCreatingFile}
+            onSetCreatingFolder={setCreatingFolder}
+            onSetCreateValue={setCreateValue}
+            onSetCreateError={setCreateError}
+             onConfirmCreateFile={confirmCreateFile}
+            onConfirmCreateFolder={confirmCreateFolder}
+            onSetCurrentDir={setCurrentDir}
+            onSetCtxMenu={setCtxMenu}
+            onSetSelected={setSelectedFilenames}
+          />
         </div>
 
         {/* 拖拽手柄 */}
@@ -765,46 +692,11 @@ export function SkillsSection() {
           <div className="absolute inset-y-0 -left-1 -right-1" />
         </div>
 
-        {/* ── 右侧：编辑器 ── */}
-        {!editing ? (
-          <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground bg-background min-w-0">
-            <div className="text-center"><FileCode size={36} className="mx-auto mb-2 opacity-20" /><p>选择一个技能文件开始编辑</p></div>
-          </div>
-        ) : (
-          <div className="flex-1 flex flex-col bg-background min-w-0">
-            {/* 面包屑 + 文件路径 */}
-            <div className="flex items-center gap-2 px-2 py-1 border-b border-border bg-muted/20 shrink-0">
-              <div className="flex items-center gap-1 text-[11px] text-muted-foreground/70 font-mono truncate">
-                <span className="text-muted-foreground/40">workspace/skills/</span>
-                <span className="text-foreground/80">{editing.filename}</span>
-              </div>
-              <div className="flex-1" />
-              {(() => { const fi = fileIcon(editing.filename); const Icon = fi.icon; return <Icon size={11} className={`${fi.color}`} />; })()}
-            </div>
-
-            {/* CodeMirror 编辑器 — 无内边距、无底部状态栏 */}
-            <div className="flex-1 min-h-0 relative"
-              onWheel={(e) => {
-                if (e.ctrlKey) {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  setFontSize(f => Math.max(10, Math.min(24, f - Math.sign(e.deltaY))));
-                  showFontTip();
-                }
-              }}>
-              <CodeMirrorEditor
-                value={editing.content}
-                onChange={(val) => { setEditing({ ...editing, content: val }); draftCacheRef.current[editing.filename] = val; setDirtyMap(prev => ({ ...prev, [editing.id]: true })); }}
-                language={editing.filename.endsWith('.js') || editing.filename.endsWith('.ts') ? 'javascript' : editing.filename.endsWith('.yaml') || editing.filename.endsWith('.yml') ? 'yaml' : 'markdown'}
-                placeholder="在此编写技能定义（Markdown/代码格式）..."
-                fontSize={`${fontSize}px`} />
-              {/* 字体大小浮动提示 */}
-              <div className={`absolute bottom-3 right-3 z-20 px-2.5 py-1 rounded-md bg-popover border border-border shadow-lg text-xs font-mono transition-opacity duration-200 pointer-events-none ${fontTip ? 'opacity-100' : 'opacity-0'}`}>
-                {fontSize}px
-              </div>
-            </div>
-          </div>
-        )}
+        <SkillEditor
+          editing={editing}
+          fileIcon={fileIcon}
+          onContentChange={(val) => { if (editing) { setEditing({ ...editing, content: val }); draftCacheRef.current[editing.filename] = val; setDirtyMap(prev => ({ ...prev, [editing.id]: true })); } }}
+        />
       </div>
 
       {/* ── 右键菜单 ── */}
