@@ -3,6 +3,7 @@ import { Settings, MessageSquarePlus, Bot, History, X, Trash2, Sun, Moon } from 
 import ChatView from "./components/chat/ChatView";
 import SettingsView from "./components/settings/SettingsView";
 import { SkinPopover } from "./components/SkinPopover";
+import { BridgeStatus } from "./components/BridgeStatus";
 import { getTools, executeTool, confirmExecution, cancelExecution, startMcpServer, stopMcpServer } from "./lib/commands";
 import { loadAIConfig, saveAIConfig, loadConversationsFromStorage, saveConversationsToStorage, loadTheme, saveTheme } from "./lib/db";
 import type { Conversation, ChatMessage, AIConfig, SendAttachment, ToolCall, StreamState } from "./lib/types";
@@ -1041,6 +1042,7 @@ export default function App() {
             {darkMode ? <Sun size={16} /> : <Moon size={16} />}
           </button>
           <SkinPopover config={aiConfig} onChange={setAiConfig} />
+          <BridgeStatus />
           <button onClick={() => {
             if (currentView !== "settings") {
               historyBeforeSettingsRef.current = showHistory;

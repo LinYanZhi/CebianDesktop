@@ -41,6 +41,15 @@ impl From<&str> for PermissionMode {
     }
 }
 
+/// 双 AI 桥接端口配置
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BridgePortConfig {
+    /// 浏览器别名，如 "Chrome"、"Edge"
+    pub name: String,
+    /// 监听端口号
+    pub port: u16,
+}
+
 /// 应用完整配置，对应前端 AIConfig 结构
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AppConfig {
@@ -67,6 +76,16 @@ pub struct AppConfig {
     /// 自定义模式下每个工具的独立权限（tool_name → "allow" / "confirm" / "deny"）
     #[serde(default)]
     pub tool_permissions: HashMap<String, String>,
+    /// 双 AI 桥接端口配置列表
+    #[serde(default = "default_bridge_ports")]
+    pub bridge_ports: Vec<BridgePortConfig>,
+}
+
+fn default_bridge_ports() -> Vec<BridgePortConfig> {
+    vec![BridgePortConfig {
+        name: "默认浏览器".to_string(),
+        port: 37421,
+    }]
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -93,6 +112,7 @@ impl Default for AppConfig {
             primary_hue: 200.0,
             ai_permission_mode: "conservative".into(),
             tool_permissions: HashMap::new(),
+            bridge_ports: default_bridge_ports(),
         }
     }
 }

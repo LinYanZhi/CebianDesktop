@@ -351,7 +351,13 @@ pub async fn execute_tool(name: String, args: Value, permission_mode: Option<Str
 
     // ═══ 浏览器工具（通过桥接发送到 CeBian 扩展执行）═══
     if crate::bridge::get_browser_tool_names().contains(&name.as_str()) {
-        return crate::bridge::execute_browser_tool(&bridge_state, &name, &args).await;
+        // 从参数中提取 browser_name，传给桥接执行
+        let browser_name = args.get("browser_name").and_then(|v| v.as_str());
+        let mut clean_args = args.clone();
+        if let Some(obj) = clean_args.as_object_mut() {
+            obj.remove("browser_name");
+        }
+        return crate::bridge::execute_browser_tool(&bridge_state, &name, &clean_args, browser_name).await;
     }
 
     // 技能管理工具（需要 app_handle）

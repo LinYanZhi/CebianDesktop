@@ -37,7 +37,7 @@ function renderSection(props: SettingsViewProps, active: string) {
     case "providers": return <ProvidersSection config={props.config} onChange={props.onConfigChange} />;
     case "permission": return <PermissionSection config={props.config} onChange={props.onConfigChange} />;
     case "skills": return <SkillsSection />;
-    case "about": return <AboutSection />;
+    case "about": return <AboutSection config={props.config} onChange={props.onConfigChange} />;
     default: return null;
   }
 }

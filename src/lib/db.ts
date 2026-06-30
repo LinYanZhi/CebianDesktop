@@ -21,6 +21,7 @@ interface AppConfigJson {
   primary_hue?: number;
   ai_permission_mode?: string;
   tool_permissions?: Record<string, string>;
+  bridge_ports?: { name: string; port: number }[];
 }
 
 interface ProviderConfigJson {
@@ -62,6 +63,7 @@ export async function loadAIConfig(): Promise<AIConfig | null> {
       primary_hue: raw.primary_hue ?? 200,
       aiPermissionMode: (raw.ai_permission_mode as any) || "conservative",
       toolPermissions: (raw.tool_permissions as Record<string, "allow" | "confirm" | "deny">) || {},
+      bridgePorts: raw.bridge_ports?.length ? raw.bridge_ports : [{ name: "默认浏览器", port: 37421 }],
     };
   } catch (e) {
     console.error("loadAIConfig 失败:", e);
@@ -93,6 +95,7 @@ export async function saveAIConfig(config: AIConfig): Promise<void> {
       primary_hue: config.primary_hue ?? 200,
       ai_permission_mode: config.aiPermissionMode || "conservative",
       tool_permissions: config.toolPermissions || {},
+      bridge_ports: config.bridgePorts?.length ? config.bridgePorts : [{ name: "默认浏览器", port: 37421 }],
     };
     const ds = json.providers.find(p => p.id === "deepseek");
     console.log("[saveAIConfig] deepseek key save:", ds ? { keyPrefix: ds.api_key.slice(0, 8), keyLen: ds.api_key.length } : "not found");

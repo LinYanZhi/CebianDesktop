@@ -78,6 +78,8 @@ export interface AIConfig {
   aiPermissionMode?: PermissionMode;
   /** 自定义模式下各工具的独立权限配置 */
   toolPermissions?: Record<string, ToolPermission>;
+  /** 双 AI 桥接端口配置列表 */
+  bridgePorts?: { name: string; port: number }[];
 }
 
 /** 从多 Provider 配置中提取当前激活的扁平配置（向后兼容后端） */

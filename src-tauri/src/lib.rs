@@ -13,14 +13,16 @@ mod workspace;
 
 use std::sync::Arc;
 
-use commands::{BridgeServerHandle, McpServerState};
+use commands::McpServerState;
 use mcp_client::McpClientManager;
 
 /// 运行 Tauri 桌面应用
 pub fn run() {
-    // 提前创建桥接状态，以便在 setup 中同时用于 manage 和启动服务器
+    // 提前创建桥接状态和句柄，以便在 setup 中同时用于 manage 和启动服务器
     let bridge_state = Arc::new(bridge::BridgeState::new());
     let bridge_state_for_setup = bridge_state.clone();
+    let bridge_handle = commands::BridgeServerHandle::new();
+    let bridge_handle_for_setup = bridge_handle.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -44,20 +46,57 @@ pub fn run() {
                 let _ = workspace::start_watcher(handle, workspace::WorkspaceDir::Skills);
             });
 
-            // 自动启动双 AI 桥接 WebSocket 服务器
-            let state_for_server = bridge_state_for_setup.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = bridge::run_bridge_server(state_for_server).await {
-                    eprintln!("[bridge] 桥接服务器启动失败: {}", e);
+            // 自动启动双 AI 桥接 WebSocket 服务器（从配置读取多端口）
+            if let Ok(config) = crate::config_storage::load_config(app.handle()) {
+                if !config.bridge_ports.is_empty() {
+                    let state_clone = bridge_state_for_setup.clone();
+                    let handle_clone = bridge_handle_for_setup.clone();
+                    let configs: Vec<(String, u16)> = config
+                        .bridge_ports
+                        .iter()
+                        .map(|p| (p.name.clone(), p.port))
+                        .collect();
+
+                    // 先将端口配置注册到 handle，再逐个 spawn
+                    let handle_for_setup = bridge_handle_for_setup;
+                    tauri::async_runtime::block_on(async {
+                        handle_for_setup
+                            .set_port_configs(&configs)
+                            .await;
+                    });
+
+                    for (name, port) in configs {
+                        let s = state_clone.clone();
+                        let h = handle_clone.clone();
+                        let port_for_name = name.clone();
+                        let join_handle = tauri::async_runtime::spawn(async move {
+                            // 注册端口配置到桥接状态
+                            {
+                                let mut inner = s.inner.lock().await;
+                                inner.port_configs.insert(port, name);
+                            }
+                            if let Err(e) = bridge::run_bridge_server(s, port).await {
+                                eprintln!("[bridge] 桥接服务器（{}:{}）启动失败: {}", port_for_name, port, e);
+                            }
+                        });
+                        // 将 JoinHandle 存到 BridgeServerHandle 中
+                        tauri::async_runtime::block_on(async {
+                            h.add_handle(port, join_handle).await;
+                        });
+                    }
+                    eprintln!(
+                        "[bridge] 已启动 {} 个桥接服务器",
+                        config.bridge_ports.len()
+                    );
                 }
-            });
+            }
 
             Ok(())
         })
         .manage(McpServerState::new())
         .manage(McpClientManager::new())
         .manage(bridge_state)
-        .manage(BridgeServerHandle::new())
+        .manage(bridge_handle)
         .invoke_handler(tauri::generate_handler![
             commands::get_tools,
             commands::get_tool_permission_list,
