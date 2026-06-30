@@ -20,7 +20,8 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
-axum = "0.8"
+axum = { version = "0.8", features = ["ws"] }
+futures-util = "0.3"
 # ⚠ 用 native-tls 而不是默认的 rustls，因为 rustls 不信任 Windows 系统证书，
 #   导致火绒/代理等 HTTPS 中间人场景下下载工具报 UnknownIssuer 错误。
 #   不要改回 rustls，除非你确认用户不需要证书验证回退。

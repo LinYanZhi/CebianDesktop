@@ -11,6 +11,7 @@
 //! - misc: 杂项（备份导出导入、base64 辅助等）
 
 mod ai;
+mod bridge_cmd;
 mod config;
 mod mcp;
 mod misc;
@@ -18,6 +19,7 @@ mod tools;
 mod workspace;
 
 pub use ai::*;
+pub use bridge_cmd::*;
 pub use config::*;
 pub use mcp::*;
 pub use misc::*;

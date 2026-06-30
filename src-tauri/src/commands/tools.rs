@@ -9,11 +9,13 @@
 //!   4. confirm_execution 取出 pending 记录并执行，返回真实结果
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use serde_json::{json, Value};
 use tauri::State;
 
+use crate::bridge::BridgeState;
 use crate::mcp_client::McpClientManager;
 use crate::workspace;
 
@@ -134,7 +136,7 @@ fn get_tool_confirmation_details(name: &str, args: &Value) -> Value {
 /// 获取 MCP 工具列表
 ///
 /// 返回所有可用工具的 JSON 定义列表，供前端或 MCP 客户端使用
-/// 同时合并外部 MCP 服务器提供的工具
+/// 同时合并外部 MCP 服务器提供的工具和浏览器工具
 #[tauri::command]
 pub fn get_tools(mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle) -> Vec<Value> {
     let mut tools = crate::tools::get_tool_definitions();
@@ -145,6 +147,13 @@ pub fn get_tools(mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle)
             "description": mcp_tool.description,
             "inputSchema": mcp_tool.input_schema,
         }));
+    }
+    // 合并浏览器工具（去重）
+    for bt in crate::bridge::get_browser_tool_definitions() {
+        let name = bt["name"].as_str().unwrap_or("");
+        if !tools.iter().any(|t| t["name"].as_str() == Some(name)) {
+            tools.push(bt);
+        }
     }
     // 合并技能工具（去重，避免与内置工具重名）
     if let Ok(skill_tools) = crate::tools::get_skill_tools(&app_handle) {
@@ -233,7 +242,20 @@ pub fn get_tool_permission_list(mcp: State<'_, McpClientManager>, app_handle: ta
         }));
     }
 
-    // 2. MCP 工具
+    // 2. 浏览器工具（通过桥接）
+    for bt in crate::bridge::get_browser_tool_definitions() {
+        let name = bt["name"].as_str().unwrap_or("");
+        let desc = bt["description"].as_str().unwrap_or("");
+        items.push(json!({
+            "name": name,
+            "description": desc.lines().next().unwrap_or(desc),
+            "category": "浏览器控制",
+            "source": "bridge",
+            "type_label": "浏览器工具（需连接 CeBian 扩展）",
+        }));
+    }
+
+    // 3. MCP 工具
     for tool in mcp.get_tools() {
         items.push(json!({
             "name": tool.prefixed_name,
@@ -272,7 +294,7 @@ pub fn get_tool_permission_list(mcp: State<'_, McpClientManager>, app_handle: ta
 /// # 返回
 /// 工具执行结果（JSON 格式）
 #[tauri::command]
-pub async fn execute_tool(name: String, args: Value, permission_mode: Option<String>, mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle) -> Result<Value, String> {
+pub async fn execute_tool(name: String, args: Value, permission_mode: Option<String>, mcp: State<'_, McpClientManager>, bridge_state: State<'_, Arc<BridgeState>>, app_handle: tauri::AppHandle) -> Result<Value, String> {
     let mode = permission_mode.as_deref().unwrap_or("conservative");
 
     // ═══ 自定义模式：查询工具权限表 ═══
@@ -324,6 +346,11 @@ pub async fn execute_tool(name: String, args: Value, permission_mode: Option<Str
                 "details": details,
             }));
         }
+    }
+
+    // ═══ 浏览器工具（通过桥接发送到 CeBian 扩展执行）═══
+    if crate::bridge::get_browser_tool_names().contains(&name.as_str()) {
+        return crate::bridge::execute_browser_tool(&bridge_state, &name, &args).await;
     }
 
     // 技能管理工具（需要 app_handle）
