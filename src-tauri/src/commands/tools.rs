@@ -158,12 +158,116 @@ pub fn get_tools(mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle)
     tools
 }
 
+/// 获取全部工具清单（含权限状态），供前端自定义权限列表使用
+///
+/// 返回每个工具的名称、描述、类别、详细类型说明和当前权限状态。
+#[tauri::command]
+pub fn get_tool_permission_list(mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle) -> Vec<Value> {
+    let mut items: Vec<Value> = Vec::new();
+
+    // 1. 内置工具（按类别和类型分组）
+    let builtin = crate::tools::get_tool_definitions();
+    // 工具类型标签映射：tool_name → type_label
+    let type_labels: std::collections::HashMap<&str, &str> = [
+        ("read_local_file", "文件读取工具"),
+        ("write_new_file", "文件写入/创建工具"),
+        ("edit_file", "文件查找替换工具"),
+        ("list_directory", "目录浏览工具"),
+        ("create_directory", "目录创建工具"),
+        ("rename_path", "文件/目录重命名工具"),
+        ("delete_path", "文件/目录删除工具"),
+        ("search_files", "文件搜索工具"),
+        ("download_file", "网络文件下载工具"),
+        ("open_path", "文件/路径打开工具"),
+        ("run_command", "终端命令执行工具"),
+        ("system_notify", "系统通知工具"),
+        ("system_info", "系统信息查询工具"),
+        ("get_env", "环境变量读取工具"),
+        ("system_get_languages", "系统语言查询工具"),
+        ("system_add_language", "系统语言添加工具"),
+        ("list_processes", "进程列表查询工具"),
+        ("list_windows", "窗口列表查询工具"),
+        ("capture_screen", "屏幕截图工具"),
+        ("fetch_url", "HTTP 网络请求工具"),
+        ("clipboard_read", "剪贴板读取工具"),
+        ("clipboard_write", "剪贴板写入工具"),
+        ("ask_user", "用户交互工具（向用户提问）"),
+        ("skill_list", "内置技能管理工具（列出技能）"),
+        ("skill_create", "内置技能管理工具（创建技能）"),
+        ("skill_read", "内置技能管理工具（读取技能）"),
+        ("skill_delete", "内置技能管理工具（删除技能）"),
+    ].iter().cloned().collect();
+
+    // 类别映射
+    let categories: &[(&str, &[&str])] = &[
+        ("文件操作", &["read_local_file", "write_new_file", "edit_file"]),
+        ("目录操作", &["list_directory", "create_directory", "rename_path", "delete_path", "search_files"]),
+        ("网络/文件传输", &["download_file", "open_path"]),
+        ("命令执行", &["run_command"]),
+        ("系统通知", &["system_notify"]),
+        ("系统信息", &["system_info", "get_env", "system_get_languages", "system_add_language", "list_processes", "list_windows", "capture_screen"]),
+        ("网络请求", &["fetch_url"]),
+        ("剪贴板", &["clipboard_read", "clipboard_write"]),
+        ("用户交互", &["ask_user"]),
+        ("技能管理", &["skill_list", "skill_create", "skill_read", "skill_delete"]),
+    ];
+
+    for tool in &builtin {
+        let name = tool["name"].as_str().unwrap_or("");
+        let desc = tool["description"].as_str().unwrap_or("");
+        let short_desc = desc.lines().next().unwrap_or(desc);
+        let mut cat = "其他";
+        for (c, names) in categories {
+            if names.contains(&name) {
+                cat = c;
+                break;
+            }
+        }
+        let type_label = type_labels.get(name).copied().unwrap_or("内置工具");
+        items.push(json!({
+            "name": name,
+            "description": short_desc,
+            "category": cat,
+            "source": "builtin",
+            "type_label": type_label,
+        }));
+    }
+
+    // 2. MCP 工具
+    for tool in mcp.get_tools() {
+        items.push(json!({
+            "name": tool.prefixed_name,
+            "description": tool.description.lines().next().unwrap_or(&tool.description),
+            "category": "MCP 服务",
+            "source": "mcp",
+            "type_label": "MCP 外部服务工具",
+        }));
+    }
+
+    // 3. 技能工具
+    if let Ok(skill_tools) = crate::tools::get_skill_tools(&app_handle) {
+        for st in skill_tools {
+            let name = st["name"].as_str().unwrap_or("");
+            let desc = st["description"].as_str().unwrap_or("");
+            items.push(json!({
+                "name": name,
+                "description": desc.lines().next().unwrap_or(desc),
+                "category": "技能",
+                "source": "skill",
+                "type_label": "用户自定义技能（以 .md 文件形式存储）",
+            }));
+        }
+    }
+
+    items
+}
+
 /// 执行指定的工具
 ///
 /// # 参数
 /// * `name` - 工具名称
 /// * `args` - 工具参数（JSON 对象）
-/// * `permission_mode` - 权限模式（conservative / balanced / trusted），可选
+/// * `permission_mode` - 权限模式（conservative / balanced / trusted / custom），可选
 ///
 /// # 返回
 /// 工具执行结果（JSON 格式）
@@ -171,23 +275,55 @@ pub fn get_tools(mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle)
 pub async fn execute_tool(name: String, args: Value, permission_mode: Option<String>, mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle) -> Result<Value, String> {
     let mode = permission_mode.as_deref().unwrap_or("conservative");
 
-    // ═══ 二次确认拦截（根据安全模式判断，不满足阈值则拦截）═══
-    if tool_needs_confirmation(&name, mode) {
-        let token = generate_token();
-        let details = get_tool_confirmation_details(&name, &args);
-        let pending = PendingExecution {
-            tool_name: name.clone(),
-            args: args.clone(),
-        };
-        pending_store()
-            .lock()
-            .map_err(|e| format!("内部错误: {}", e))?
-            .insert(token.clone(), pending);
-        return Ok(json!({
-            "needs_confirmation": true,
-            "token": token,
-            "details": details,
-        }));
+    // ═══ 自定义模式：查询工具权限表 ═══
+    if mode == "custom" {
+        let config = crate::config_storage::load_config(&app_handle)?;
+        match config.tool_permissions.get(&name).map(|s| s.as_str()) {
+            Some("deny") => {
+                return Ok(json!({
+                    "error": format!("工具「{}」已被你设置为「拒绝」。如需使用，请在设置 → AI 权限中修改。", name),
+                    "permission_denied": true,
+                }));
+            }
+            Some("confirm") => {
+                // 需要二次确认
+                let token = generate_token();
+                let details = get_tool_confirmation_details(&name, &args);
+                let pending = PendingExecution {
+                    tool_name: name.clone(),
+                    args: args.clone(),
+                };
+                pending_store()
+                    .lock()
+                    .map_err(|e| format!("内部错误: {}", e))?
+                    .insert(token.clone(), pending);
+                return Ok(json!({
+                    "needs_confirmation": true,
+                    "token": token,
+                    "details": details,
+                }));
+            }
+            _ => {} // "allow" 或未设置 → 直接放行
+        }
+    } else {
+        // ═══ 非自定义模式：按风险等级判断 ═══
+        if tool_needs_confirmation(&name, mode) {
+            let token = generate_token();
+            let details = get_tool_confirmation_details(&name, &args);
+            let pending = PendingExecution {
+                tool_name: name.clone(),
+                args: args.clone(),
+            };
+            pending_store()
+                .lock()
+                .map_err(|e| format!("内部错误: {}", e))?
+                .insert(token.clone(), pending);
+            return Ok(json!({
+                "needs_confirmation": true,
+                "token": token,
+                "details": details,
+            }));
+        }
     }
 
     // 技能管理工具（需要 app_handle）

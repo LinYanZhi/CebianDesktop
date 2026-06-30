@@ -9,6 +9,10 @@ export async function executeTool(name: string, args: any, permissionMode?: stri
   return invoke("execute_tool", { name, args, permissionMode: permissionMode || null });
 }
 
+export async function getToolPermissionList(): Promise<any[]> {
+  return invoke("get_tool_permission_list");
+}
+
 export async function confirmExecution(token: string): Promise<any> {
   return invoke("confirm_tool_execution", { token });
 }

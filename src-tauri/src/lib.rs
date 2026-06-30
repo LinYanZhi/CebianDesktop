@@ -43,6 +43,7 @@ pub fn run() {
         .manage(McpClientManager::new())
         .invoke_handler(tauri::generate_handler![
             commands::get_tools,
+            commands::get_tool_permission_list,
             commands::execute_tool,
             commands::confirm_tool_execution,
             commands::cancel_tool_execution,

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
@@ -60,9 +61,12 @@ pub struct AppConfig {
     /// 主色调色相 (0-360)，默认 24（橙色）
     #[serde(default)]
     pub primary_hue: f64,
-    /// AI 权限模式：conservative（保守）/ balanced（平衡）/ trusted（信任）
+    /// AI 权限模式：conservative（保守）/ balanced（平衡）/ trusted（信任）/ custom（自定义）
     #[serde(default)]
     pub ai_permission_mode: String,
+    /// 自定义模式下每个工具的独立权限（tool_name → "allow" / "confirm" / "deny"）
+    #[serde(default)]
+    pub tool_permissions: HashMap<String, String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -88,6 +92,7 @@ impl Default for AppConfig {
             theme: "dark".into(),
             primary_hue: 200.0,
             ai_permission_mode: "conservative".into(),
+            tool_permissions: HashMap::new(),
         }
     }
 }

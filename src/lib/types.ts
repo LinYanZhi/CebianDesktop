@@ -1,7 +1,9 @@
 export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high';
 
 /** AI 权限模式 */
-export type PermissionMode = 'conservative' | 'balanced' | 'trusted';
+export type PermissionMode = 'conservative' | 'balanced' | 'trusted' | 'custom';
+/** 工具权限值 */
+export type ToolPermission = 'allow' | 'confirm' | 'deny';
 
 export interface SendAttachment {
   id: string;
@@ -74,6 +76,8 @@ export interface AIConfig {
   primary_hue?: number;
   /** AI 权限模式 */
   aiPermissionMode?: PermissionMode;
+  /** 自定义模式下各工具的独立权限配置 */
+  toolPermissions?: Record<string, ToolPermission>;
 }
 
 /** 从多 Provider 配置中提取当前激活的扁平配置（向后兼容后端） */

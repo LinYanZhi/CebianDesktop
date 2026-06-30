@@ -443,7 +443,7 @@ export function SkillsSection() {
     // 只有 .md 文件需要校验技能名称（其他文件没有 frontmatter）
     if (editing.id.endsWith('.md') && !editing.name.trim()) { toast.error("请输入技能名称"); return; }
     try {
-      await writeWorkspaceFile("skills", editing.id, editing.name, editing.description, editing.content);
+      await writeWorkspaceFile("skills", editing.filename, editing.name, editing.description, editing.content);
       toast.success("保存成功");
       setDirtyMap(prev => ({ ...prev, [editing.id]: false }));
       delete draftCacheRef.current[editing.filename];
