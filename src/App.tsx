@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Settings, MessageSquarePlus, Bot, History, Server, X, Trash2, Sun, Moon } from "lucide-react";
+import { Settings, MessageSquarePlus, Bot, History, X, Trash2, Sun, Moon } from "lucide-react";
 import ChatView from "./components/chat/ChatView";
 import SettingsView from "./components/settings/SettingsView";
 import { SkinPopover } from "./components/SkinPopover";
@@ -1028,10 +1028,7 @@ export default function App() {
         </span>
 
         <div className="flex items-center gap-1">
-          <div className="flex items-center gap-1.5 mr-2">
-            <Server size={12} className="text-muted-foreground" />
-            <span className={`w-1.5 h-1.5 rounded-full ${serverRunning ? "bg-emerald-500" : "bg-destructive"}`} />
-          </div>
+
           <button onClick={() => setDarkMode(!darkMode)}
             className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
             title={darkMode ? "切换浅色主题" : "切换深色主题"}>

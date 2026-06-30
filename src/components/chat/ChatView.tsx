@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { Bot, Settings, ArrowDown, FileText } from "lucide-react";
 import type { ChatMessage, AIConfig, SendAttachment } from "../../lib/types";
 import { hasUsableModel } from "../../lib/types";
@@ -87,7 +87,16 @@ export default function ChatView({
   messages, onSend, onStop, onRetry, loading, aiConfig, onConfigChange, onNavigateSettings, onRollback,
   pendingInteractive, onInteractiveResolve, pendingConfirmation, onConfirmResolve,
 }: ChatViewProps) {
-  const [inputValue, setInputValue] = useState("");
+  const INPUT_DRAFT_KEY = "cebiandesktop_chat_input_draft";
+  const [inputValue, setInputValue] = useState(() => {
+    try { return localStorage.getItem(INPUT_DRAFT_KEY) || ""; } catch { return ""; }
+  });
+
+  // 输入框内容变化时自动保存到 localStorage，防止断电丢失
+  useEffect(() => {
+    try { localStorage.setItem(INPUT_DRAFT_KEY, inputValue); } catch {}
+  }, [inputValue]);
+
   const { containerRef, isAtBottom, scrollToBottom } = useStickToBottom();
 
   // 发送新消息时强制回底
@@ -101,6 +110,7 @@ export default function ChatView({
     }
     onSend(inputValue, attachments);
     setInputValue("");
+    try { localStorage.removeItem(INPUT_DRAFT_KEY); } catch {}
   };
 
   // 本地回滚处理：通知父组件截断消息，同时本地设置输入内容
