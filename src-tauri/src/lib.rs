@@ -110,6 +110,7 @@ pub fn run() {
             commands::get_server_status,
             commands::start_bridge_server,
             commands::stop_bridge_server,
+            commands::reload_bridge_config,
             commands::get_bridge_status,
             commands::save_app_config,
             commands::load_app_config,

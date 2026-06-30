@@ -1,7 +1,7 @@
 //! 双 AI 桥接服务器
 //!
 //! 桌面端启动 WebSocket 服务，浏览器扩展（Cebian）作为客户端连接。
-//! 支持配置多个端口，每个端口对应一个浏览器连接（如 Chrome、Edge）。
+//! 支持配置多个端口，同一端口可接受多个浏览器连接。
 //!
 //! ## 协议（JSON-RPC 2.0 over WebSocket）
 //!
@@ -9,11 +9,21 @@
 //! // 桌面 → 浏览器：工具调用请求
 //! { "jsonrpc": "2.0", "id": "req_xxx", "method": "tools/call", "params": { "name": "search_web", "arguments": { ... } } }
 //!
+//! // 浏览器 → 桌面：注册（连接后立即发送）
+//! { "jsonrpc": "2.0", "method": "session/register", "params": { "session_id": "...", "client_name": "我的 Edge", "browser": "edge", "version": "120.0", "profile": "Work", "windows": 3 } }
+//!
 //! // 浏览器 → 桌面：成功响应
 //! { "jsonrpc": "2.0", "id": "req_xxx", "result": { ... } }
 //!
 //! // 浏览器 → 桌面：错误响应
 //! { "jsonrpc": "2.0", "id": "req_xxx", "error": { "code": -1, "message": "..." } }
+//!
+//! // 浏览器 AI → 桌面：请求执行桌面工具
+//! // 桌面 AI 收到后执行对应的工具（read_local_file、list_directory 等），返回结果
+//! // 工具名称须在白名单中，否则返回错误
+//! { "jsonrpc": "2.0", "id": "desktop_req_xxx", "method": "desktop/execute_tool", "params": { "name": "read_local_file", "arguments": { "path": "C:/file.txt" } } }
+//! // 桌面 → 浏览器：成功响应
+//! { "jsonrpc": "2.0", "id": "desktop_req_xxx", "result": { "content": "..." } }
 //! ```
 
 use std::collections::HashMap;
@@ -40,12 +50,24 @@ pub const DEFAULT_BRIDGE_PORT: u16 = 37421;
 
 /// 一个已连接的浏览器会话
 pub(crate) struct BrowserSession {
-    /// 浏览器名称（如 "Chrome"、"Edge"）
-    pub name: String,
+    /// 唯一会话 ID（由扩展端生成，UUID v4）
+    pub session_id: String,
+    /// 此会话所属的端口
+    pub port: u16,
+    /// 端口名称（如 "默认浏览器"）
+    pub port_name: String,
     /// 客户端自定义名称（从 session/register 的 client_name 字段获取）
     pub client_name: String,
-    /// 连接的端口
-    pub port: u16,
+    /// 浏览器类型（chrome / edge / firefox）
+    pub browser_type: String,
+    /// 浏览器版本号
+    pub version: String,
+    /// 浏览器用户画像名称（如 "Default"、"Work"、"个人"）
+    pub profile_name: String,
+    /// 浏览器用户画像头像 URL
+    pub profile_avatar: String,
+    /// 当前窗口数量
+    pub window_count: i32,
     /// 向浏览器发送消息的通道
     pub ws_sender: tokio::sync::mpsc::UnboundedSender<Message>,
     /// 连接时间
@@ -58,10 +80,14 @@ pub struct BridgeState {
 }
 
 pub(crate) struct BridgeInner {
-    /// 所有已连接的浏览器会话（key = 浏览器名称+端口）
+    /// 所有已连接的浏览器会话（key = session_id）
     pub browsers: HashMap<String, BrowserSession>,
     /// 待处理的 RPC 请求（id → 响应回调）
-    pending_requests: HashMap<String, oneshot::Sender<Result<Value, String>>>,
+    pub(crate) pending_requests: HashMap<String, oneshot::Sender<Result<Value, String>>>,
+    /// 浏览器 AI 执行进度（request_id → 最新进度 JSON）
+    pub pending_progress: HashMap<String, Value>,
+    /// 桌面 AI 执行进度（当前会话的最新进度，用于推送到浏览器）
+    pub desktop_ai_progress: Value,
     /// 当前配置的端口列表（用于 WS 处理器识别所属端口名称）
     pub port_configs: HashMap<u16, String>, // port → name
 }
@@ -73,6 +99,8 @@ impl BridgeState {
             inner: Mutex::new(BridgeInner {
                 browsers: HashMap::new(),
                 pending_requests: HashMap::new(),
+                pending_progress: HashMap::new(),
+                desktop_ai_progress: json!({"steps": [], "status": "idle", "task": ""}),
                 port_configs: HashMap::new(),
             }),
         }
@@ -157,23 +185,33 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<BridgeState>, local_
             .unwrap_or_else(|| format!("端口{}", local_port))
     };
 
-    // 创建会话
-    let session_key = port_name.clone();
+    // ── 关键改动：会话创建推迟到 session/register 消息到达 ──
+    // 先创建一个临时 session_key 用于收发注册消息
+    // 真正的 session 在收到寄存器消息后用 session_id 创建
+    let temp_key = format!("_pending_{}", uuid_v4());
+
+    // 发送任务和接收任务共享的 session_id（注册后更新）
+    let session_id = Arc::new(tokio::sync::Mutex::new(temp_key.clone()));
+
+    // 创建临时会话占位（防止清理冲突）
     {
         let mut inner = state.inner.lock().await;
         inner.browsers.insert(
-            session_key.clone(),
+            temp_key.clone(),
             BrowserSession {
-                name: port_name.clone(),
-                client_name: "未知".to_string(), // 等注册消息更新
+                session_id: temp_key.clone(),
                 port: local_port,
+                port_name: port_name.clone(),
+                client_name: String::new(),
+                browser_type: String::new(),
+                version: String::new(),
+                profile_name: String::new(),
+                profile_avatar: String::new(),
+                window_count: 0,
                 ws_sender: tx.clone(),
                 connected_at: Instant::now(),
             },
         );
-        // 清理此浏览器之前可能残留的 pending 请求（断线重连时）
-        retain_pending_for_browser(&mut inner, &session_key);
-        eprintln!("[bridge] 浏览器「{}」已连接（端口 {})", port_name, local_port);
     }
 
     // ── 任务 1：转发桌面端的消息到 WebSocket ──
@@ -181,8 +219,9 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<BridgeState>, local_
 
     // ── 任务 2：从 WebSocket 读取响应并匹配 ──
     let recv_state = state.clone();
-    let recv_session = session_key.clone();
-    let recv_task = tokio::spawn(relay_from_websocket(ws_receiver, recv_state, recv_session));
+    let recv_session_id = session_id.clone();
+    let recv_sender = tx.clone();
+    let recv_task = tokio::spawn(relay_from_websocket(ws_receiver, recv_state, recv_session_id, port_name.clone(), recv_sender));
 
     // 等待任意一个任务结束（浏览器断开连接）
     tokio::select! {
@@ -191,38 +230,30 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<BridgeState>, local_
     }
 
     // 清理连接
+    let final_session_id = session_id.lock().await.clone();
     let mut inner = state.inner.lock().await;
-    inner.browsers.remove(&session_key);
-    // 清理此浏览器所有的 pending 请求
-    inner.pending_requests.retain(|id, _| {
-        !id.starts_with(&format!("{}_", session_key))
-    });
-    eprintln!("[bridge] 浏览器「{}」已断开", port_name);
-}
-
-/// 保留属于指定浏览器的 pending 请求（重连时不清，非本浏览器的保留）
-fn retain_pending_for_browser(inner: &mut BridgeInner, session_key: &str) {
-    let prefix = format!("{}_", session_key);
-    inner.pending_requests.retain(|id, _| !id.starts_with(&prefix));
-}
-
-/// 将桌面端的消息转发到 WebSocket（给浏览器）
-async fn relay_to_websocket(
-    mut ws_sender: SplitSink<WebSocket, Message>,
-    mut rx: tokio::sync::mpsc::UnboundedReceiver<Message>,
-) {
-    while let Some(msg) = rx.recv().await {
-        if ws_sender.send(msg).await.is_err() {
-            break;
-        }
+    if let Some(session) = inner.browsers.remove(&final_session_id) {
+        let display = if !session.client_name.is_empty() {
+            session.client_name.clone()
+        } else {
+            format!("{}:{}", session.browser_type, session.port)
+        };
+        // 清理此浏览器所有的 pending 请求
+        inner.pending_requests.retain(|id, _| {
+            !id.starts_with(&format!("{}_", get_key(&final_session_id)))
+        });
+        eprintln!("[bridge] 浏览器「{}」已断开", display);
     }
 }
 
 /// 从 WebSocket 读取浏览器的响应，匹配到 pending_requests
+/// 同时处理浏览器发起的 desktop/execute_tool 请求
 async fn relay_from_websocket(
     mut ws_receiver: futures_util::stream::SplitStream<WebSocket>,
     state: Arc<BridgeState>,
-    session_key: String,
+    session_id: Arc<tokio::sync::Mutex<String>>,
+    port_name: String,
+    ws_sender: tokio::sync::mpsc::UnboundedSender<Message>, // ← 新增：用于发送响应回浏览器
 ) {
     while let Some(Ok(msg)) = ws_receiver.next().await {
         match msg {
@@ -230,25 +261,40 @@ async fn relay_from_websocket(
                 if let Ok(parsed) = serde_json::from_str::<Value>(&text) {
                     // 注册消息（浏览器连接后发送）
                     if parsed.get("method").and_then(|m| m.as_str()) == Some("session/register") {
-                        if let Some(client_name) = parsed
-                            .pointer("/params/client_name")
-                            .and_then(|v| v.as_str())
-                        {
-                            let mut inner = state.inner.lock().await;
-                            if let Some(session) = inner.browsers.get_mut(&session_key) {
-                                session.client_name = client_name.to_string();
-                                eprintln!(
-                                    "[bridge] 浏览器注册: {} ({})",
-                                    client_name, session.name
-                                );
+                        handle_session_register(&parsed, &state, &session_id, &port_name).await;
+                        continue;
+                    }
+
+                    // 进度通知（浏览器 AI 执行中的流式进度）
+                    if parsed.get("method").and_then(|m| m.as_str()) == Some("agent/progress") {
+                        if let Some(params) = parsed.get("params") {
+                            if let Some(req_id) = params.get("request_id").and_then(|v| v.as_str()) {
+                                let mut inner = state.inner.lock().await;
+                                inner.pending_progress.insert(req_id.to_string(), params.clone());
                             }
                         }
+                        continue;
+                    }
+
+                    // ── 浏览器 AI 请求执行桌面工具 ──
+                    if parsed.get("method").and_then(|m| m.as_str()) == Some("desktop/execute_tool") {
+                        let id = parsed.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let name = parsed.pointer("/params/name").and_then(|v| v.as_str()).unwrap_or("");
+                        let args = parsed.pointer("/params/arguments").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+                        let result = execute_desktop_tool(name, &args).await;
+                        let response = match result {
+                            Ok(val) => json!({ "jsonrpc": "2.0", "id": id, "result": val }),
+                            Err(e) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": -1, "message": e } }),
+                        };
+                        let _ = ws_sender.send(Message::Text(response.to_string().into()));
                         continue;
                     }
 
                     // 响应消息（有 id 字段）
                     if let Some(id) = parsed.get("id").and_then(|v| v.as_str()) {
                         let mut inner = state.inner.lock().await;
+                        // 请求完成，清除进度
+                        inner.pending_progress.remove(id);
                         if let Some(sender) = inner.pending_requests.remove(id) {
                             if let Some(error) = parsed.get("error") {
                                 let msg = error
@@ -271,17 +317,214 @@ async fn relay_from_websocket(
     }
 }
 
+// ─── 桌面工具白名单 ──────────────────────────────────────────
+
+/// 浏览器 AI 允许调用的桌面工具白名单
+const DESKTOP_TOOL_WHITELIST: &[&str] = &[
+    "read_local_file",
+    "list_directory",
+    "get_system_info",
+];
+
+/// 执行桌面工具（由浏览器 AI 通过 desktop/execute_tool 请求）
+async fn execute_desktop_tool(name: &str, args: &serde_json::Map<String, Value>) -> Result<Value, String> {
+    // 白名单检查
+    if !DESKTOP_TOOL_WHITELIST.contains(&name) {
+        return Err(format!("桌面工具「{}」不在白名单中，不允许浏览器 AI 调用", name));
+    }
+
+    match name {
+        "read_local_file" => {
+            let path = args.get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("缺少 path 参数")?;
+            let content = tokio::fs::read_to_string(path).await
+                .map_err(|e| format!("读取文件失败: {}", e))?;
+            Ok(json!({ "content": content, "path": path, "size": content.len() }))
+        }
+        "list_directory" => {
+            let path = args.get("path")
+                .and_then(|v| v.as_str())
+                .ok_or("缺少 path 参数")?;
+            let mut entries = Vec::new();
+            let mut dir = tokio::fs::read_dir(path).await
+                .map_err(|e| format!("读取目录失败: {}", e))?;
+            while let Some(entry) = dir.next_entry().await
+                .map_err(|e| format!("读取目录条目失败: {}", e))? {
+                entries.push(json!({
+                    "name": entry.file_name().to_string_lossy(),
+                    "is_dir": entry.file_type().await.map(|t| t.is_dir()).unwrap_or(false),
+                    "size": entry.metadata().await.map(|m| m.len()).unwrap_or(0),
+                }));
+            }
+            Ok(json!({ "entries": entries, "path": path }))
+        }
+        "get_system_info" => {
+            let info = json!({
+                "os": std::env::consts::OS,
+                "arch": std::env::consts::ARCH,
+                "hostname": hostname(),
+                "username": whoami(),
+            });
+            Ok(info)
+        }
+        _ => Err(format!("未知的桌面工具: {}", name)),
+    }
+}
+
+/// 获取主机名
+fn hostname() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+/// 获取当前用户名
+fn whoami() -> String {
+    std::env::var("USERNAME")
+        .or_else(|_| std::env::var("USER"))
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+/// 处理浏览器 session/register 消息
+async fn handle_session_register(
+    parsed: &Value,
+    state: &Arc<BridgeState>,
+    session_id_mutex: &Arc<tokio::sync::Mutex<String>>,
+    port_name: &str,
+) {
+    let temp_key = session_id_mutex.lock().await.clone();
+
+    // 解析 rich metadata
+    let sid = parsed
+        .pointer("/params/session_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let client_name = parsed
+        .pointer("/params/client_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let browser_type = parsed
+        .pointer("/params/browser")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let version = parsed
+        .pointer("/params/version")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let profile_name = parsed
+        .pointer("/params/profile")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let profile_avatar = parsed
+        .pointer("/params/profile_avatar")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let window_count = parsed
+        .pointer("/params/windows")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32;
+
+    let final_session_id = if !sid.is_empty() { sid } else { uuid_v4() };
+
+    let mut inner = state.inner.lock().await;
+
+    // 如果已有同 session_id 的连接，先移除旧的
+    if inner.browsers.contains_key(&final_session_id) {
+        inner.browsers.remove(&final_session_id);
+    }
+
+    // 从临时 key 中取出 ws_sender
+    let session = inner.browsers.remove(&temp_key);
+    if let Some(mut s) = session {
+        s.session_id = final_session_id.clone();
+        s.client_name = client_name.clone();
+        s.browser_type = browser_type.clone();
+        s.version = version.clone();
+        s.profile_name = profile_name.clone();
+        s.profile_avatar = profile_avatar.clone();
+        s.window_count = window_count;
+
+        inner.browsers.insert(final_session_id.clone(), s);
+        // 更新 session_id 引用
+        *session_id_mutex.lock().await = final_session_id.clone();
+
+        let display = if !client_name.is_empty() {
+            client_name.clone()
+        } else {
+            format!("{}@{}", browser_type, port_name)
+        };
+        eprintln!(
+            "[bridge] 浏览器注册: {}（type={}, profile={}, windows={}）",
+            display, browser_type, profile_name, window_count
+        );
+    } else {
+        eprintln!("[bridge] 警告：session/register 时未找到临时会话 {}", temp_key);
+    }
+}
+
+/// 将桌面端的消息转发到 WebSocket（给浏览器）
+async fn relay_to_websocket(
+    mut ws_sender: SplitSink<WebSocket, Message>,
+    mut rx: tokio::sync::mpsc::UnboundedReceiver<Message>,
+) {
+    while let Some(msg) = rx.recv().await {
+        if ws_sender.send(msg).await.is_err() {
+            break;
+        }
+    }
+}
+
 // ─── 工具调用 ──────────────────────────────────────────────
+
+/// 获取已连接的浏览器列表（AI 工具用）
+pub async fn get_connected_browsers_inner(state: &BridgeState) -> Result<Value, String> {
+    let inner = state.inner.lock().await;
+    let browsers: Vec<Value> = inner
+        .browsers
+        .values()
+        .map(|b| {
+            json!({
+                "session_id": b.session_id,
+                "port": b.port,
+                "port_name": b.port_name,
+                "client_name": b.client_name,
+                "browser": b.browser_type,
+                "version": b.version,
+                "profile": b.profile_name,
+                "profile_avatar": b.profile_avatar,
+                "windows": b.window_count,
+                "connected_seconds": b.connected_at.elapsed().as_secs_f64().round() as i64,
+            })
+        })
+        .collect();
+    Ok(json!({
+        "browsers": browsers,
+        "count": browsers.len(),
+    }))
+}
 
 /// 通过桥接执行浏览器工具
 ///
 /// `browser_name`: 指定目标浏览器名称。为 None 时使用第一个已连接的浏览器。
+/// 支持按 port_name、client_name、browser_type、profile_name 匹配。
 pub async fn execute_browser_tool(
     state: &BridgeState,
     name: &str,
     args: &Value,
     browser_name: Option<&str>,
 ) -> Result<Value, String> {
+    // get_connected_browsers 是内置查询，不转发到浏览器
+    if name == "get_connected_browsers" {
+        return get_connected_browsers_inner(state).await;
+    }
+
     let (tx, rx) = oneshot::channel();
     let request_id = format!(
         "req_{}",
@@ -292,7 +535,7 @@ pub async fn execute_browser_tool(
     );
 
     // 查找目标浏览器（分两步避免双重借用）
-    let (ws_sender, session_key_name) = {
+    let (ws_sender, found_session_id) = {
         let inner = state.inner.lock().await;
 
         if inner.browsers.is_empty() {
@@ -302,23 +545,38 @@ pub async fn execute_browser_tool(
         }
 
         let session = if let Some(bname) = browser_name {
-            // 按名称查找：支持精确匹配和包含匹配
+            // 按名称查找：支持 port_name、client_name、browser_type、profile_name 匹配
             inner
                 .browsers
                 .values()
                 .find(|s| {
-                    s.name == bname
+                    s.port_name == bname
                         || s.client_name == bname
-                        || s.name.contains(bname)
+                        || s.browser_type == bname
+                        || s.profile_name == bname
+                        || s.port_name.contains(bname)
                         || s.client_name.contains(bname)
+                        || s.browser_type.contains(bname)
+                        || s.profile_name.contains(bname)
+                        || format!("{}:{}", s.browser_type, s.profile_name) == bname
                         || format!("{}", s.port) == bname
                 })
                 .ok_or_else(|| {
-                    let keys: Vec<String> = inner.browsers.keys().cloned().collect();
+                    let info: Vec<String> = inner
+                        .browsers
+                        .values()
+                        .map(|s| {
+                            if !s.client_name.is_empty() {
+                                format!("「{}」({}:{})", s.client_name, s.browser_type, s.profile_name)
+                            } else {
+                                format!("{}:{}:{}", s.browser_type, s.profile_name, s.port)
+                            }
+                        })
+                        .collect();
                     format!(
                         "未找到浏览器「{}」，当前已连接的浏览器：{}",
                         bname,
-                        keys.join("、")
+                        info.join("、")
                     )
                 })?
         } else {
@@ -326,41 +584,121 @@ pub async fn execute_browser_tool(
             inner.browsers.values().next().ok_or("没有已连接的浏览器")?
         };
 
-        (session.ws_sender.clone(), session.name.clone())
+        (session.ws_sender.clone(), session.session_id.clone())
     };
 
-    // 用带 session_key 前缀的 id 注册，方便按浏览器清理
-    let full_id = format!("{}_{}", get_key(&session_key_name), request_id);
+    // 用带 session_id 前缀的 id 注册，方便按浏览器清理
+    let full_id = format!("{}_{}", get_key(&found_session_id), request_id);
     {
         let mut inner = state.inner.lock().await;
         inner.pending_requests.insert(full_id.clone(), tx);
     }
 
     // 发送请求到浏览器
-    let request = json!({
-        "jsonrpc": "2.0",
-        "id": full_id,
-        "method": "tools/call",
-        "params": {
-            "name": name,
-            "arguments": args,
-        }
-    });
+    // ask_browser_ai 使用 agent/prompt 方法（让浏览器 AI 自主执行），其他工具使用 tools/call
+    let is_agent_prompt = name == "ask_browser_ai";
+    let request = if is_agent_prompt {
+        let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
+        json!({
+            "jsonrpc": "2.0",
+            "id": full_id,
+            "method": "agent/prompt",
+            "params": {
+                "task": task,
+                "timeout": 300_000,
+            }
+        })
+    } else {
+        json!({
+            "jsonrpc": "2.0",
+            "id": full_id,
+            "method": "tools/call",
+            "params": {
+                "name": name,
+                "arguments": args,
+            }
+        })
+    };
 
     let request_id_str = full_id.clone();
     ws_sender
         .send(Message::Text(request.to_string().into()))
         .map_err(|e| format!("发送请求到浏览器失败: {}", e))?;
 
-    // 等待响应（带 120 秒超时）
-    match tokio::time::timeout(std::time::Duration::from_secs(120), rx).await {
-        Ok(Ok(result)) => result,
-        Ok(Err(_)) => Err("浏览器已断开连接，未能获取响应".to_string()),
+    // 等待响应。ask_browser_ai 可能需要更长时间（AI 思考+工具调用）
+    let timeout_secs = if is_agent_prompt { 300u64 } else { 120u64 };
+    let raw_result = match tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), rx).await {
+        Ok(Ok(result)) => match result {
+            Ok(v) => v,
+            Err(e) => return Err(e),
+        },
+        Ok(Err(_)) => return Err("浏览器已断开连接，未能获取响应".to_string()),
         Err(_) => {
             let mut inner = state.inner.lock().await;
             inner.pending_requests.remove(&request_id_str);
-            Err("浏览器工具执行超时（120秒），浏览器可能无响应".to_string())
+            if is_agent_prompt {
+                return Err("浏览器 AI 执行超时（300秒），任务可能过于复杂或浏览器 AI 模型不可用".to_string())
+            } else {
+                return Err("浏览器工具执行超时（120秒），浏览器可能无响应".to_string())
+            }
         }
+    };
+
+    // ── ask_browser_ai 结果后处理 ──
+    // 展平返回结构，提取有意义的文本内容，让桌面 AI 直接能看懂
+    if is_agent_prompt {
+        let task_text = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
+
+        // 尝试提取 result 字符串（这是 bridge-agent.ts 返回的结构化报告）
+        let report_text = raw_result
+            .get("result")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        let success = raw_result
+            .get("success")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if !report_text.is_empty() {
+            // 检查报告是否包含有意义的工具调用记录或 AI 回复
+            let has_tool_calls = report_text.contains("执行记录") || report_text.contains("[工具]");
+            let has_ai_reply = report_text.contains("浏览器 AI 回复") || report_text.contains("执行总结");
+            let has_error = report_text.contains("错误");
+
+            if has_tool_calls || has_ai_reply || has_error {
+                // 报告内容有意义，直接返回。同时附加一条「结果说明」帮助桌面 AI 理解
+                let summary = if has_error {
+                    "浏览器 AI 执行出错，详见下方报告。".to_string()
+                } else if report_text.len() > 50 {
+                    format!(
+                        "✅ 浏览器 AI 已完成任务（调用了工具，生成了执行报告）。\n桌面 AI 注意：以下报告已经包含了完整的浏览器状态和执行详情，直接以此回复用户即可，无需再调用 get_tab_info 或 get_browser_state 验证。\n\n{}",
+                        report_text
+                    )
+                } else {
+                    report_text.to_string()
+                };
+                return Ok(json!(summary));
+            }
+        }
+
+        // 报告为空或没有有意义的内容，生成更友好的替代消息
+        if success {
+            Ok(json!(format!(
+                "✅ 浏览器 AI 已成功完成任务「{}」。\n\
+                 （浏览器 AI 未返回详细执行报告，但操作已执行完毕。\n\
+                 桌面 AI 注意：浏览器状态已更新，不需要额外验证或补救操作。）",
+                task_text
+            )))
+        } else {
+            Ok(json!(format!(
+                "❌ 浏览器 AI 执行失败，错误信息: {}",
+                report_text
+            )))
+        }
+    } else {
+        // 普通工具调用，原样返回
+        Ok(raw_result)
     }
 }
 
@@ -372,21 +710,50 @@ fn get_key(name: &str) -> String {
         .to_lowercase()
 }
 
+/// 生成简易 UUID v4（非加密，仅用于唯一标识）
+fn uuid_v4() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!(
+        "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
+        (ts >> 64) as u32,
+        (ts >> 48) as u16,
+        (ts >> 32) as u16 & 0xfff,
+        (ts >> 16) as u16 & 0xffff,
+        ts as u64 & 0xffffffffffff
+    )
+}
+
 // ─── 工具定义 ──────────────────────────────────────────────
 
 /// 获取浏览器工具的定义列表（用于注入到桌面 AI 的工具列表）
 ///
 /// 每个工具添加可选的 `browser_name` 参数，AI 可指定目标浏览器。
+/// AI 应先调用 get_connected_browsers 获取当前可用浏览器列表。
 pub fn get_browser_tool_definitions() -> Vec<Value> {
     let browser_param = json!({
         "type": "string",
-        "description": "目标浏览器名称（如「Chrome」「Edge」）。不填则使用默认浏览器。可用浏览器可向用户询问或通过 get_bridge_status 获取。"
+        "description": "目标浏览器标识（可填浏览器类型如「edge/chrome/firefox」、画像名如「Default/Work」、或自定义名称）。先用 get_connected_browsers 查看当前已连接的浏览器再决定。不填则使用默认浏览器。"
     });
 
     vec![
+        // ── 查询工具 ──
+        json!({
+            "name": "get_connected_browsers",
+            "description": "获取当前通过桥接连接的所有浏览器列表，包含浏览器类型、名称、画像名、版本等信息。在调用其他浏览器工具之前应优先调用此工具了解可用的浏览器。无需任何参数。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }),
+        // ── 操作工具 ──
         json!({
             "name": "search_web",
-            "description": "在互联网上搜索信息，返回搜索结果的标题、摘要和链接列表。当用户询问最新信息或本地没有的知识时使用。可指定 browser_name 选择目标浏览器。",
+            "description": "【仅限简单搜索】在互联网上搜索信息，返回搜索结果的标题、摘要和链接列表。注意：这只做搜索，不会打开结果页面。如果需要搜索后进一步操作（如打开结果），请用 ask_browser_ai。可指定 browser_name 选择目标浏览器。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -433,8 +800,19 @@ pub fn get_browser_tool_definitions() -> Vec<Value> {
             }
         }),
         json!({
+            "name": "get_browser_state",
+            "description": "获取浏览器的完整当前状态，包括所有窗口、所有标签页的 URL 和标题、当前活跃标签页、窗口数量等。在调用其他浏览器工具前调用此工具可以了解当前的浏览器状况，避免重复打开页面或操作错误的标签页。可指定 browser_name 选择目标浏览器。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "browser_name": browser_param.clone()
+                },
+                "required": []
+            }
+        }),
+        json!({
             "name": "execute_js",
-            "description": "在当前浏览器标签页的上下文中执行 JavaScript 代码，返回执行结果。可指定 browser_name 选择目标浏览器。",
+            "description": "【警告：高风险，仅在绝对必要时使用】在当前浏览器标签页上下文中执行 JavaScript 代码。此工具会直接修改页面状态，如果使用不当会破坏页面状态。首选 ask_browser_ai。可指定 browser_name 选择目标浏览器。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -449,7 +827,7 @@ pub fn get_browser_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "fill_form",
-            "description": "在当前浏览器页面中填写表单字段。通过 CSS 选择器定位元素并设置值。可指定 browser_name 选择目标浏览器。",
+            "description": "【警告：仅在极简单场景使用】在当前浏览器页面中填写表单字段。注意：这个工具是低级操作，只适用于非常简单的单字段表单。对于多步骤操作（搜索→打开→填写→提交等），请用 ask_browser_ai。可指定 browser_name 选择目标浏览器。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -468,7 +846,7 @@ pub fn get_browser_tool_definitions() -> Vec<Value> {
         }),
         json!({
             "name": "click_element",
-            "description": "在当前浏览器标签页中点击指定的页面元素。通过 CSS 选择器定位目标。可指定 browser_name 选择目标浏览器。",
+            "description": "【警告：仅在极简单场景使用】在当前浏览器标签页中点击指定的页面元素。注意：这个工具是低级操作，只适用于非常简单的单次点击。对于任何涉及打开页面后的操作，请用 ask_browser_ai。可指定 browser_name 选择目标浏览器。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -492,12 +870,34 @@ pub fn get_browser_tool_definitions() -> Vec<Value> {
                 "required": []
             }
         }),
+        // ── AI 代理工具（首选方案）──
+        // 这是执行浏览器操作的首选工具。对于任何涉及多步骤、需要理解页面内容、
+        // 或者可能出错的浏览器操作，都应该优先使用 ask_browser_ai 而不是手动
+        // 调用多个低级工具。ask_browser_ai 返回完整的执行报告，包含每一步的
+        // 工具调用和结果，以及浏览器 AI 的总结。
+        json!({
+            "name": "ask_browser_ai",
+            "description": "【⭐⭐⭐ 强烈推荐：所有浏览器操作的默认首选】让浏览器端的 AI 助手自主执行一个高层次任务。浏览器 AI 拥有搜索网页、读取页面内容、点击元素、填写表单、执行 JS、截图等完整工具链，会自主规划、执行并返回完整的执行报告（做了什么、结果如何、当前浏览器状态）。\n\n使用原则：\n1. 重要：ask_browser_ai 返回的结果已包含完整的浏览器状态和执行详情，你不需要再额外调用任何工具验证\n2. 对于任何多步骤的浏览器操作（搜索+阅读、打开多个页面、填写表单+提交等），必须使用此工具，不要手动调用多个低级工具\n3. 对于简单的单步操作（如只需要打开一个页面、只需要截图），也可以直接用对应的低级工具\n\n可指定 browser_name 选择目标浏览器。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "要浏览器 AI 执行的任务描述。应该是一个高层次的目标，描述清晰完整。例如：\n- 「先打开百度首页 https://www.baidu.com，然后在百度搜索框输入「今日天气」并截图搜索结果」\n- 「打开 B 站热门视频页 https://www.bilibili.com/v/popular，找到播放量最高的 3 个视频并告诉我标题和播放量」\n- 「在 Google 搜索「Cebian 浏览器扩展」并打开搜索结果中的第一个链接，然后读取该页面的内容并总结」"
+                    },
+                    "browser_name": browser_param.clone()
+                },
+                "required": ["task"]
+            }
+        }),
     ]
 }
 
 /// 浏览器工具名称列表
 pub fn get_browser_tool_names() -> Vec<&'static str> {
     vec![
+        "get_connected_browsers",
+        "get_browser_state",
         "search_web",
         "read_current_page",
         "take_screenshot",
@@ -506,5 +906,83 @@ pub fn get_browser_tool_names() -> Vec<&'static str> {
         "fill_form",
         "click_element",
         "get_page_html",
+        "ask_browser_ai",
     ]
+}
+
+/// 获取最新的浏览器 AI 执行进度
+pub async fn get_agent_progress(state: &BridgeState, request_id: &str) -> Option<Value> {
+    let inner = state.inner.lock().await;
+    inner.pending_progress.get(request_id).cloned()
+}
+
+/// 获取所有正在进行的浏览器 AI 进度（用于前端轮询）
+pub async fn get_all_agent_progresses(state: &BridgeState) -> Value {
+    let inner = state.inner.lock().await;
+    let mut progresses = serde_json::Map::new();
+    for (req_id, progress) in &inner.pending_progress {
+        progresses.insert(req_id.clone(), progress.clone());
+    }
+    json!({ "progresses": progresses })
+}
+
+// ─── 桌面 AI 进度广播 ─────────────────────────────────────
+
+/// 将消息广播到所有已连接的浏览器
+pub async fn broadcast_to_all_browsers(state: &BridgeState, message: &str) {
+    let inner = state.inner.lock().await;
+    let browsers: Vec<_> = inner.browsers.values().collect();
+    for browser in browsers {
+        let _ = browser.ws_sender.send(Message::Text(message.to_string().into()));
+    }
+}
+
+/// 更新桌面 AI 执行进度并广播到所有浏览器
+///
+/// 在桌面 AI 执行过程中调用，每次有新的 thinking/tool_call/tool_result 时：
+/// 1. 更新本地存储的进度快照
+/// 2. 通过 WebSocket 广播到所有浏览器
+pub async fn update_desktop_ai_progress(state: &BridgeState, step: Value) {
+    let msg = json!({
+        "jsonrpc": "2.0",
+        "method": "desktop/progress",
+        "params": {
+            "step": step,
+        }
+    });
+    let msg_str = msg.to_string();
+
+    let inner = state.inner.lock().await;
+    // 更新进度快照
+    let mut current = inner.desktop_ai_progress.clone();
+    if let Some(steps) = current.get_mut("steps").and_then(|s| s.as_array_mut()) {
+        steps.push(step);
+    }
+    // 广播到所有浏览器
+    for browser in inner.browsers.values() {
+        let _ = browser.ws_sender.send(Message::Text(msg_str.clone().into()));
+    }
+}
+
+/// 重置桌面 AI 进度（新对话开始时调用）
+pub async fn reset_desktop_ai_progress(state: &BridgeState) {
+    let mut inner = state.inner.lock().await;
+    inner.desktop_ai_progress = json!({"steps": [], "status": "idle", "task": ""});
+    // 通知浏览器重置
+    let msg = json!({
+        "jsonrpc": "2.0",
+        "method": "desktop/progress",
+        "params": {
+            "reset": true,
+        }
+    });
+    for browser in inner.browsers.values() {
+        let _ = browser.ws_sender.send(Message::Text(msg.to_string().into()));
+    }
+}
+
+/// 获取桌面 AI 当前进度（给前端 IPC 用）
+pub async fn get_desktop_ai_progress(state: &BridgeState) -> Value {
+    let inner = state.inner.lock().await;
+    inner.desktop_ai_progress.clone()
 }

@@ -4,12 +4,14 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader};
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::Emitter;
 
+use crate::bridge::BridgeState;
 use crate::tools;
 
 /// 思考模式（对应 CeBian 的三档）
@@ -181,7 +183,42 @@ fn build_api_messages(config: &AIConfig, messages: &[ChatMessage]) -> Vec<Value>
              7. 禁止在桌面、文档等用户可见目录创建临时脚本文件（.ps1/.bat/.cmd/.vbs）。\
                 用 run_command 执行内联命令（如 powershell -Command \"...\"），\
                 如需写脚本文件则存到临时目录（%TEMP%）并在执行后立即删除。\n\
-             8. 你的回答应当简洁、准确，直接给出结果或结论，避免长篇大论。",
+             8. 你的回答应当简洁、准确，直接给出结果或结论，避免长篇大论。\n\n\
+             ## 双 AI 协作协议\n\n\
+             你通过「双 AI 桥接」系统与浏览器中的 AI 助手协同工作。\
+             浏览器操作必须通过浏览器 AI 执行，你不能直接用低级工具操作浏览器。\n\n\
+             ### 职责分工\n\n\
+             - 你（桌面 AI）：思考、规划、只读检查（查看浏览器状态、截图、读取内容）、通过 ask_browser_ai 委派任务\n\n\
+             - 浏览器 AI：执行（打开页面、搜索、点击、填写表单、执行 JS 等所有写入操作）\n\n\
+             - 禁止：绝对不要用 execute_js、click_element、fill_form 等低级写入工具直接操作浏览器\n\n\
+             ### 任务描述规范\n\n\
+             调用 ask_browser_ai 时，task 参数必须包含：\n\n\
+             1. 具体目标 —— 要做什么，包含 URL、搜索词等关键信息\n\n\
+             2. 操作步骤 —— 先做什么、再做什么\n\n\
+             3. 期望输出 —— 完成后需要返回什么信息\n\n\
+             正例：「在 Google 搜索「今日天气」，打开第一个结果页面，读取内容并总结天气情况」\n\n\
+             反例：「帮我查点东西」（太模糊）\n\n\
+             ### 核心规则：信任浏览器 AI 的结果\n\n\
+             这是最重要的规则——ask_browser_ai 返回的结果已经包含了完整的执行详情和浏览器状态，你不需要也不应该再去额外验证。\n\n\
+             1. ask_browser_ai 返回的内容 = 浏览器的最终状态，不需要再用 get_tab_info 或 get_browser_state 确认\n\n\
+             2. 如果 ask_browser_ai 返回了工具调用记录（执行记录中有 [工具] 标记），说明浏览器确实执行了操作，结果可信\n\n\
+             3. 直接基于 ask_browser_ai 的返回内容回复用户，不需要额外验证步骤\n\n\
+             4. 在 ask_browser_ai 返回后，不要再去调用 get_tab_info、execute_js、take_screenshot、read_current_page 等任何浏览器工具来确认状态——报告已经包含了所有你需要的信息\n\n\
+             5. 绝对不要用 execute_js、click_element、fill_form、search_web 等低级工具去「修复」或「补充」ask_browser_ai 没做完的事——这会直接操作浏览器，导致与浏览器 AI 的操作冲突，造成页面混乱（如重复打开标签页）\n\n\
+             ### 异常处理协议\n\n\
+             当 ask_browser_ai 返回非正常结果时，必须按以下规则处理：\n\n\
+             1. 【返回了执行记录但没有 AI 回复】\
+             这表示浏览器 AI 成功执行了工具调用但没有生成文本总结。直接基于执行记录告诉用户浏览器做了什么，不需要额外验证。\n\n\
+             2. 【返回错误】先检查错误原因。如果是模型未配置等问题，直接告知用户。\
+             如果是任务执行失败，尝试将任务拆成更简单的子步骤重新发送。\n\n\
+             3. 【返回超时（300 秒无响应）】告知用户浏览器 AI 响应超时，\
+             建议尝试更简单的操作或检查浏览器扩展是否正常运行。\n\n\
+             4. 【返回纯文本结果（无执行记录）】浏览器 AI 执行了操作但没有返回完整报告。直接以这个结果为准回复用户，不要额外验证。\n\n\
+             ### 状态检查协议\n\n\
+             - 在调用 ask_browser_ai 前，如果不知道当前浏览器状态，可以调用 get_browser_state\n\n\
+             - 在 ask_browser_ai 返回后，**不允许**再调用任何浏览器工具来验证状态——返回结果中已经包含了所有信息\n\n\
+             - get_browser_state 只在 ask_browser_ai 调用之前使用，不要在之后使用\n\n\
+             - 如果用户要求截图或读取特定内容，可以在 ask_browser_ai 的 task 参数中一并要求浏览器 AI 处理",
             permission_rules
         )
     );
@@ -427,7 +464,11 @@ pub fn call_llm(config: &AIConfig, messages: &[ChatMessage]) -> Result<ChatMessa
 ///
 /// # 返回
 /// 工具执行结果消息列表（每条结果对应一个工具调用）
-pub fn execute_tool_call(tool_calls: &[ToolCall], app_handle: Option<&tauri::AppHandle>) -> Vec<ChatMessage> {
+pub fn execute_tool_call(
+    tool_calls: &[ToolCall],
+    app_handle: Option<&tauri::AppHandle>,
+    bridge_state: Option<(&Arc<BridgeState>, &tokio::runtime::Handle)>,
+) -> Vec<ChatMessage> {
     let mut results = Vec::new();
 
     for call in tool_calls {
@@ -450,6 +491,20 @@ pub fn execute_tool_call(tool_calls: &[ToolCall], app_handle: Option<&tauri::App
                 crate::commands::execute_tool_internal(tool_name, &args, handle)
             } else {
                 Err("缺少 app_handle，无法执行技能管理工具".to_string())
+            }
+        } else if crate::bridge::get_browser_tool_names().contains(&tool_name.as_str()) {
+            // 浏览器工具 → 通过桥接发送到 Cebian 扩展执行
+            if let Some((bs, rt)) = bridge_state {
+                let browser_name = args.get("browser_name").and_then(|v| v.as_str());
+                let mut clean_args = args.clone();
+                if let Some(obj) = clean_args.as_object_mut() {
+                    obj.remove("browser_name");
+                }
+                rt.block_on(
+                    crate::bridge::execute_browser_tool(bs, tool_name, &clean_args, browser_name)
+                )
+            } else {
+                Err("桥接服务未就绪，无法执行浏览器工具".to_string())
             }
         } else {
             tools::execute_tool(tool_name, &args, app_handle)
@@ -495,6 +550,7 @@ pub fn call_llm_streaming(
     config: &AIConfig,
     messages: &[ChatMessage],
     app_handle: &tauri::AppHandle,
+    bridge_state: Option<(&Arc<BridgeState>, &tokio::runtime::Handle)>,
 ) -> Result<(), String> {
     let api_key = config.api_key.trim();
     if config.base_url.is_empty() {
@@ -606,6 +662,22 @@ pub fn call_llm_streaming(
             if let Some(token) = delta.get("reasoning_content").and_then(|c| c.as_str()) {
                 if !token.is_empty() {
                     let _ = app_handle.emit("ai:thinking", json!({"token": token}));
+                    // 广播思考步骤到所有浏览器
+                    if let Some((bridge_state, tokio_handle)) = &bridge_state {
+                        let step = json!({
+                            "type": "thinking",
+                            "content": token,
+                            "tool": null,
+                            "timestamp": std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_millis() as u64,
+                        });
+                        let bridge = Arc::clone(bridge_state);
+                        tokio_handle.block_on(async {
+                            crate::bridge::update_desktop_ai_progress(&bridge, step).await;
+                        });
+                    }
                 }
             }
 
@@ -665,6 +737,22 @@ pub fn call_llm_streaming(
         if tool_calls.is_empty() {
             // 没有工具调用，流式完成
             let _ = app_handle.emit("ai:done", json!({"content": content}));
+            // 广播完成状态到所有浏览器
+            if let Some((bridge_state, tokio_handle)) = &bridge_state {
+                let step = json!({
+                    "type": "done",
+                    "content": "桌面 AI 已完成回复",
+                    "tool": null,
+                    "timestamp": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                });
+                let bridge = Arc::clone(bridge_state);
+                tokio_handle.block_on(async {
+                    crate::bridge::update_desktop_ai_progress(&bridge, step).await;
+                });
+            }
             return Ok(());
         }
 
@@ -689,10 +777,29 @@ pub fn call_llm_streaming(
                     "arguments": tc.function.arguments,
                 }),
             );
+            // 广播工具调用到所有浏览器
+            if let Some((bridge_state, tokio_handle)) = &bridge_state {
+                let step = json!({
+                    "type": "tool_call",
+                    "content": serde_json::to_string(&json!({
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    })).unwrap_or_default(),
+                    "tool": tc.function.name,
+                    "timestamp": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                });
+                let bridge = Arc::clone(bridge_state);
+                tokio_handle.block_on(async {
+                    crate::bridge::update_desktop_ai_progress(&bridge, step).await;
+                });
+            }
         }
 
         // 执行工具调用
-        let tool_results = execute_tool_call(&tool_calls, Some(app_handle));
+        let tool_results = execute_tool_call(&tool_calls, Some(app_handle), bridge_state);
 
         // 发送工具执行结果事件
         for tr in &tool_results {
@@ -704,6 +811,22 @@ pub fn call_llm_streaming(
                     "content": tr.content,
                 }),
             );
+            // 广播工具结果到所有浏览器
+            if let Some((bridge_state, tokio_handle)) = &bridge_state {
+                let step = json!({
+                    "type": "tool_result",
+                    "content": tr.content.clone(),
+                    "tool": tr.name.clone().unwrap_or_default(),
+                    "timestamp": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                });
+                let bridge = Arc::clone(bridge_state);
+                tokio_handle.block_on(async {
+                    crate::bridge::update_desktop_ai_progress(&bridge, step).await;
+                });
+            }
         }
 
         // 将 assistant 消息和工具结果加入消息列表，继续下一轮流式调用

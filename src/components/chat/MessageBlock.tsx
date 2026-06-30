@@ -6,6 +6,8 @@ import rehypeHighlight from "rehype-highlight";
 import type { ChatMessage } from "../../lib/types";
 import { CopyButton } from "./chat-types";
 import { ToolCallCards } from "./ToolCall";
+import AiThoughtProcess from "./AiThoughtProcess";
+import type { AgentProgressMap } from "./AiThoughtProcess";
 
 // ═══════════════════════════════════════════════════════════
 //  思考过程块
@@ -135,9 +137,10 @@ const MarkdownRenderer = memo(function MarkdownRenderer({ content }: { content: 
 //  AI 消息
 // ═══════════════════════════════════════════════════════════
 
-export function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResults }: {
+export function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResults, agentProgresses }: {
   msg: ChatMessage; isStreaming?: boolean; isLast?: boolean; onRetry?: () => void;
   toolResults?: ChatMessage[];
+  agentProgresses?: AgentProgressMap;
 }) {
   const hasToolCalls = msg.tool_calls && msg.tool_calls.length > 0;
 
@@ -160,6 +163,10 @@ export function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResul
         <span className="font-medium text-xs text-muted-foreground">Cebian Agent</span>
       </div>
       {msg.reasoning_content && <ThinkingBlock content={msg.reasoning_content} isLive={isStreaming} />}
+      {/* 浏览器 AI 执行进度可视化 */}
+      {agentProgresses && Object.keys(agentProgresses).length > 0 && (
+        <AiThoughtProcess progresses={agentProgresses} />
+      )}
       {/* 工具调用卡片（每个卡片独立可折叠） */}
       {hasToolCalls && (
         <ToolCallCards tool_calls={msg.tool_calls!} results={toolResultsMap} />

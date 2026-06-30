@@ -10,6 +10,7 @@ import {
   getToolColor,
   getToolDesc,
 } from "./chat-types";
+import AskBrowserAiResult from "./AskBrowserAiResult";
 
 /** 下载进度事件载荷 */
 interface DownloadProgress {
@@ -222,9 +223,13 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
           {result !== undefined && (
             <div className={`px-3.5 py-2.5 bg-background ${hasArgs ? "border-t border-border/50" : ""}`}>
               <div className="text-[0.65rem] text-muted-foreground/60 mb-1.5 font-medium">结果</div>
-              <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono max-h-48 overflow-y-auto">
-                <code>{result}</code>
-              </pre>
+              {toolName === "ask_browser_ai" ? (
+                <AskBrowserAiResult result={result} />
+              ) : (
+                <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono max-h-48 overflow-y-auto">
+                  <code>{result}</code>
+                </pre>
+              )}
             </div>
           )}
         </div>

@@ -7,6 +7,8 @@ import { useStickToBottom } from "./useStickToBottom";
 import { UserMessageBlock, AgentMessageBlock } from "./MessageBlock";
 import { AskUserBlock } from "./AskUser";
 import { ChatInput } from "./ChatInput";
+import { getBridgeAgentProgress } from "../../lib/commands";
+import type { AgentProgressMap } from "./AiThoughtProcess";
 
 // ── 独立回底按钮组件（absolute 定位，放在父 relative 容器内） ──
 // ⚠ 历史踩坑：此组件必须放在父 relative 容器内部（见下方第 300 行附近）。
@@ -91,11 +93,31 @@ export default function ChatView({
   const [inputValue, setInputValue] = useState(() => {
     try { return localStorage.getItem(INPUT_DRAFT_KEY) || ""; } catch { return ""; }
   });
+  const [agentProgresses, setAgentProgresses] = useState<AgentProgressMap>({});
 
   // 输入框内容变化时自动保存到 localStorage，防止断电丢失
   useEffect(() => {
     try { localStorage.setItem(INPUT_DRAFT_KEY, inputValue); } catch {}
   }, [inputValue]);
+
+  // 轮询浏览器 AI 执行进度（仅在 AI 响应流式输出时）
+  useEffect(() => {
+    if (!loading) {
+      setAgentProgresses({});
+      return;
+    }
+    const interval = setInterval(async () => {
+      try {
+        const result = await getBridgeAgentProgress();
+        if (result?.progresses && Object.keys(result.progresses).length > 0) {
+          setAgentProgresses(result.progresses);
+        }
+      } catch {
+        // 轮询错误静默忽略
+      }
+    }, 500);
+    return () => clearInterval(interval);
+  }, [loading]);
 
   const { containerRef, isAtBottom, scrollToBottom } = useStickToBottom();
 
@@ -216,6 +238,7 @@ export default function ChatView({
                     isStreaming={loading && i === messages.length - 1}
                     isLast={i === messages.length - 1} onRetry={onRetry}
                     toolResults={toolResults.length > 0 ? toolResults : undefined}
+                    agentProgresses={agentProgresses}
                   />
                 );
               }

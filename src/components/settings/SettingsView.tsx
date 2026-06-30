@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import {
-  ArrowLeft, Bot, Key, Puzzle, Info, Shield,
+  ArrowLeft, Bot, Key, Puzzle, Info, Shield, Wifi,
 } from "lucide-react";
 import type { AIConfig } from "../../lib/types";
 import { ProvidersSection } from "./sections/ProvidersSection";
 import { PermissionSection } from "./sections/PermissionSection";
 import { SkillsSection } from "./sections/SkillsSection";
+import { BridgeSection } from "./sections/BridgeSection";
 import { AboutSection } from "./sections/AboutSection";
 
 interface SettingsViewProps {
@@ -29,6 +30,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "providers", label: "AI 提供商", icon: Key },
   { id: "permission", label: "AI 权限", icon: Shield },
   { id: "skills", label: "技能", icon: Puzzle },
+  { id: "bridge", label: "双 AI 桥接", icon: Wifi },
   { id: "about", label: "关于", icon: Info },
 ];
 
@@ -37,6 +39,7 @@ function renderSection(props: SettingsViewProps, active: string) {
     case "providers": return <ProvidersSection config={props.config} onChange={props.onConfigChange} />;
     case "permission": return <PermissionSection config={props.config} onChange={props.onConfigChange} />;
     case "skills": return <SkillsSection />;
+    case "bridge": return <BridgeSection config={props.config} onChange={props.onConfigChange} />;
     case "about": return <AboutSection config={props.config} onChange={props.onConfigChange} />;
     default: return null;
   }

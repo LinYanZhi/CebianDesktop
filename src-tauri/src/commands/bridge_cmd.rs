@@ -122,6 +122,81 @@ pub async fn stop_bridge_server(
     Ok(format!("已停止 {} 个桥接服务器", count))
 }
 
+/// 重新加载桥接配置并重启服务器
+///
+/// 从配置文件中读取最新的端口配置，停止旧服务器，启动新服务器。
+#[tauri::command]
+pub async fn reload_bridge_config(
+    server_handle: State<'_, BridgeServerHandle>,
+    bridge_state: State<'_, Arc<BridgeState>>,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    // 1. 停止现有服务器
+    {
+        let mut handles_guard = server_handle.inner.handles.lock().await;
+        for (_, handle) in handles_guard.drain() {
+            handle.abort();
+        }
+    }
+
+    // 2. 清除旧的浏览器连接（端口配置变了，连接需要重建立）
+    {
+        let mut inner = bridge_state.inner.lock().await;
+        inner.browsers.clear();
+        inner.pending_requests.clear();
+    }
+
+    // 3. 从配置文件读取最新端口配置
+    let config = crate::config_storage::load_config(&app_handle)?;
+    let port_configs: Vec<(String, u16)> = config
+        .bridge_ports
+        .iter()
+        .map(|p| (p.name.clone(), p.port))
+        .collect();
+
+    if port_configs.is_empty() {
+        return Ok("桥接端口配置为空，未启动服务".to_string());
+    }
+
+    // 4. 更新端口名称映射
+    {
+        let mut names = server_handle.inner.port_names.lock().await;
+        names.clear();
+        for (name, port) in &port_configs {
+            names.insert(*port, name.clone());
+        }
+    }
+
+    // 5. 启动新服务器
+    let state = bridge_state.inner().clone();
+    let mut handles_guard = server_handle.inner.handles.lock().await;
+
+    for (name, port) in &port_configs {
+        let s = state.clone();
+        let p = *port;
+        let n = name.clone();
+        let handle = tokio::spawn(async move {
+            {
+                let mut inner = s.inner.lock().await;
+                inner.port_configs.insert(p, n);
+            }
+            if let Err(e) = crate::bridge::run_bridge_server(s, p).await {
+                eprintln!("桥接服务器端口 {} 错误: {}", p, e);
+            }
+        });
+        handles_guard.insert(*port, handle);
+    }
+
+    let ports_str: Vec<String> = port_configs
+        .iter()
+        .map(|(n, p)| format!("{}:{}", n, p))
+        .collect();
+    Ok(format!(
+        "桥接服务已重启，端口: {}",
+        ports_str.join(", ")
+    ))
+}
+
 /// 获取所有桥接服务器的运行状态
 #[tauri::command]
 pub async fn get_bridge_status(
@@ -138,8 +213,15 @@ pub async fn get_bridge_status(
             .values()
             .map(|b| {
                 json!({
-                    "name": b.name,
+                    "session_id": b.session_id,
+                    "name": b.client_name,
+                    "port_name": b.port_name,
                     "client_name": b.client_name,
+                    "browser": b.browser_type,
+                    "version": b.version,
+                    "profile": b.profile_name,
+                    "profile_avatar": b.profile_avatar,
+                    "windows": b.window_count,
                     "port": b.port,
                     "connected_at": b.connected_at.elapsed().as_secs(),
                 })
@@ -153,4 +235,15 @@ pub async fn get_bridge_status(
         "browsers": browsers,
         "browser_count": browsers.len(),
     }))
+}
+
+/// 获取浏览器 AI 执行进度
+///
+/// 轮询获取所有正在进行的浏览器 AI（ask_browser_ai）的执行进度。
+/// 前端每隔一段时间调用此命令，获取最新的步骤信息并可视化展示。
+#[tauri::command]
+pub async fn get_bridge_agent_progress(
+    bridge_state: State<'_, Arc<BridgeState>>,
+) -> Result<Value, String> {
+    Ok(crate::bridge::get_all_agent_progresses(&bridge_state).await)
 }

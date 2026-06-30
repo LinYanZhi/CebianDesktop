@@ -93,3 +93,25 @@ export async function exportProvidersConfig(path: string, config: any): Promise<
 export async function importProvidersConfig(path: string): Promise<any[]> {
   return invoke("import_providers_config", { path });
 }
+
+// ─── 桥接服务器命令 ───
+
+export async function getBridgeStatus(): Promise<any> {
+  return invoke("get_bridge_status");
+}
+
+export async function startBridgeServer(): Promise<string> {
+  return invoke("start_bridge_server");
+}
+
+export async function stopBridgeServer(): Promise<string> {
+  return invoke("stop_bridge_server");
+}
+
+export async function reloadBridgeConfig(): Promise<string> {
+  return invoke("reload_bridge_config");
+}
+
+export async function getBridgeAgentProgress(): Promise<any> {
+  return invoke("get_bridge_agent_progress");
+}

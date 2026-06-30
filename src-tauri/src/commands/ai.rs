@@ -1,7 +1,11 @@
 //! AI 调用命令
 
-use crate::ai::{call_llm, AIConfig, ChatMessage};
+use std::sync::Arc;
+
 use tauri::Emitter;
+
+use crate::ai::{call_llm, AIConfig, ChatMessage};
+use crate::bridge::BridgeState;
 
 /// 调用 AI LLM
 ///
@@ -28,23 +32,40 @@ pub fn call_ai(config: AIConfig, messages: Vec<ChatMessage>) -> Result<ChatMessa
 ///
 /// # 参数
 /// * `app_handle` - Tauri 应用句柄
+/// * `bridge_state` - 桥接状态（用于浏览器工具）
 /// * `config` - AI 配置
 /// * `messages` - 聊天消息列表
 #[tauri::command]
 pub async fn call_ai_streaming(
     app_handle: tauri::AppHandle,
+    bridge_state: tauri::State<'_, Arc<BridgeState>>,
     config: AIConfig,
     messages: Vec<ChatMessage>,
 ) -> Result<(), String> {
-    // 在后台线程中运行流式处理，避免阻塞 Tauri 的异步运行时
     let handle = app_handle.clone();
+    let bridge = bridge_state.inner().clone();
+    let tokio_handle = tokio::runtime::Handle::current();
+    // 在后台线程中运行流式处理，避免阻塞 Tauri 的异步运行时
     std::thread::spawn(move || {
         let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            crate::ai::call_llm_streaming(&config, &messages, &handle)
+            crate::ai::call_llm_streaming(&config, &messages, &handle, Some((&bridge, &tokio_handle)))
         }));
         match result {
             Ok(Err(e)) => {
                 let _ = handle.emit("ai:error", serde_json::json!({"error": e}));
+                // 广播错误到所有浏览器
+                let step = serde_json::json!({
+                    "type": "error",
+                    "content": e,
+                    "tool": null,
+                    "timestamp": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                });
+                tokio_handle.block_on(async {
+                    crate::bridge::update_desktop_ai_progress(&bridge, step).await;
+                });
             }
             Err(panic_err) => {
                 let msg = if let Some(s) = panic_err.downcast_ref::<&str>() {
@@ -56,6 +77,19 @@ pub async fn call_ai_streaming(
                 };
                 eprintln!("[call_ai_streaming] thread panicked: {}", msg);
                 let _ = handle.emit("ai:error", serde_json::json!({"error": format!("线程错误: {}", msg)}));
+                // 广播 panic 错误到所有浏览器
+                let step = serde_json::json!({
+                    "type": "error",
+                    "content": format!("桌面 AI 线程崩溃: {}", msg),
+                    "tool": null,
+                    "timestamp": std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_millis() as u64,
+                });
+                tokio_handle.block_on(async {
+                    crate::bridge::update_desktop_ai_progress(&bridge, step).await;
+                });
             }
             _ => {}
         }
