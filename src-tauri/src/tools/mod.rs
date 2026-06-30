@@ -21,6 +21,110 @@ use net_ops::*;
 /// 由 init_allowed_dirs() 在应用启动时初始化
 static ALLOWED_DIRS: OnceLock<Vec<String>> = OnceLock::new();
 
+/// 硬性护栏：禁止 AI 写入的系统关键路径（无论什么模式都拦截）
+const PATH_BLACKLIST: &[&str] = &[
+    "C:\\Windows",
+    "C:\\Windows\\System32",
+    "C:\\Windows\\System",
+    "C:\\Windows\\SysWOW64",
+    "C:\\Program Files",
+    "C:\\Program Files (x86)",
+    "C:\\ProgramData",
+    "C:\\Boot",
+    "C:\\System Volume Information",
+    "C:\\$Recycle.Bin",
+    "C:\\Recovery",
+];
+
+/// 硬性护栏：禁止 AI 执行的破坏性命令（无论什么模式都拦截）
+const COMMAND_BLACKLIST: &[&str] = &[
+    "format",
+    "format.",
+    "format c:",
+    "format C:",
+    "del /f /s",
+    "del /f /q",
+    "rd /s /q",
+    "rmdir /s /q",
+    "rm -rf /",
+    "rm -rf /*",
+    "rm -rf ~",
+    ":(){ :|:& };:",  // fork bomb
+    "dd if=/dev/zero",
+    "dd if=/dev/random",
+    "diskpart",
+    "reg delete",
+    "reg DELETE",
+    "fsutil",
+    "bcdedit",
+    "bootsect",
+    "mbr2gpt",
+    "powercfg -h",
+    "powercfg /h",
+    "vssadmin delete",
+    "cipher /w:",
+    "cipher /w",
+    "shutdown -s",
+    "shutdown /s",
+    "shutdown -r",
+    "shutdown /r",
+    "init 0",
+    "init 6",
+    "reboot",
+    "poweroff",
+    "halt",
+];
+
+/// 检查硬性护栏：拦截写入系统关键路径
+pub(crate) fn check_path_hard_barrier(path: &str, is_read: bool) -> Result<(), String> {
+    if is_read {
+        return Ok(()); // 读取不限制
+    }
+    let p = Path::new(path);
+    // 检查当前路径或父目录是否在黑名单中
+    let path_lower = p.to_string_lossy().to_lowercase();
+    for &blacklisted in PATH_BLACKLIST {
+        if path_lower.starts_with(&blacklisted.to_lowercase()) {
+            return Err(format!(
+                "安全拦截：不允许写入系统关键目录「{}」。这是硬性限制，无法绕过。",
+                blacklisted
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 检查硬性护栏：拦截破坏性命令
+pub(crate) fn check_command_hard_barrier(command: &str) -> Result<(), String> {
+    let cmd_lower = command.to_lowercase().trim().to_string();
+    for &blacklisted in COMMAND_BLACKLIST {
+        if cmd_lower.starts_with(&blacklisted.to_lowercase()) {
+            return Err(format!(
+                "安全拦截：禁止执行破坏性命令「{}」。这是硬性限制，无法绕过。",
+                blacklisted
+            ));
+        }
+    }
+    // 额外检查：禁止禁用 Windows Defender 或 UAC
+    if cmd_lower.contains("disable") && (cmd_lower.contains("defender") || cmd_lower.contains("uac")) {
+        return Err("安全拦截：不允许禁用系统安全组件（Windows Defender / UAC）。这是硬性限制。".into());
+    }
+    Ok(())
+}
+
+/// 获取工具的固有风险等级
+pub(crate) fn get_tool_risk_level(name: &str) -> &'static str {
+    match name {
+        // 🔴 高风险
+        "delete_path" | "run_command" | "skill_delete" => "high",
+        // 🟠 中风险
+        "write_new_file" | "edit_file" | "rename_path" | "system_add_language" 
+        | "capture_screen" | "download_file" | "clipboard_write" => "medium",
+        // 🟢 低风险 / 安全
+        _ => "safe",
+    }
+}
+
 /// 初始化 AI 文件操作的安全目录列表。
 /// 应在应用启动时（setup 阶段）调用一次。
 pub fn init_allowed_dirs(workspace_dir: &str) {
@@ -35,6 +139,9 @@ pub fn init_allowed_dirs(workspace_dir: &str) {
 /// 校验路径是否在安全目录范围内。
 /// 返回 Err 表示路径不在允许范围内。
 pub(crate) fn validate_path(path: &str, allow_read: bool) -> Result<(), String> {
+    // 硬性护栏：阻止写入系统关键路径
+    check_path_hard_barrier(path, allow_read)?;
+
     let p = Path::new(path);
     
     // 如果路径不存在，检查父目录
@@ -459,6 +566,8 @@ pub fn execute_tool(name: &str, args: &Value) -> Result<Value, String> {
         }
         "run_command" => {
             let cmd = arg_str(args, "command")?;
+            // 硬性护栏：拦截破坏性命令
+            check_command_hard_barrier(cmd)?;
             let cwd = args.get("cwd").and_then(|v| v.as_str());
             let output = run_command(cmd, cwd)?;
             Ok(json!({"output": output}))

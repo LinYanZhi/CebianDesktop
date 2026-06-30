@@ -433,6 +433,16 @@ export default function App() {
 
           // 构建 API 消息（含 tool 角色消息）
           let systemPrompt = aiConfig.system_prompt || getDefaultSystemPrompt();
+
+          // 注入安全模式信息
+          const permissionMode = aiConfig.aiPermissionMode || "conservative";
+          const permissionDesc = permissionMode === "trusted"
+            ? "\n\n[安全设置] 当前模式：信任模式 — 所有工具调用自动执行，无需用户确认。请谨慎操作。"
+            : permissionMode === "balanced"
+            ? "\n\n[安全设置] 当前模式：平衡模式 — 仅高风险操作（删除文件/目录、执行命令）需要用户确认。"
+            : "\n\n[安全设置] 当前模式：保守模式 — 写入/编辑/删除文件、执行命令等操作均需用户确认。";
+          systemPrompt += permissionDesc;
+
           const systemMsg: ChatMessage = { role: "system", content: systemPrompt };
 
           const apiMessages: any[] = [systemMsg];
@@ -660,7 +670,7 @@ export default function App() {
 
               // ── 通用执行：调用后端 execute_tool，处理二次确认 ──
               console.log(`[handleSend] 执行工具: ${toolName}`, tc.function.arguments);
-              const result = await executeTool(toolName, args);
+              const result = await executeTool(toolName, args, aiConfig.aiPermissionMode);
 
               if (result && result.needs_confirmation) {
                 // 后端返回 needs_confirmation → 需要用户二次确认

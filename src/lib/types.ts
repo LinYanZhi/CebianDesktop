@@ -1,5 +1,8 @@
 export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high';
 
+/** AI 权限模式 */
+export type PermissionMode = 'conservative' | 'balanced' | 'trusted';
+
 export interface SendAttachment {
   id: string;
   type: 'image' | 'file';
@@ -69,6 +72,8 @@ export interface AIConfig {
   system_prompt?: string;
   /** 主色调色相 (0-360) */
   primary_hue?: number;
+  /** AI 权限模式 */
+  aiPermissionMode?: PermissionMode;
 }
 
 /** 从多 Provider 配置中提取当前激活的扁平配置（向后兼容后端） */

@@ -5,8 +5,8 @@ export async function getTools(): Promise<any[]> {
   return invoke("get_tools");
 }
 
-export async function executeTool(name: string, args: any): Promise<any> {
-  return invoke("execute_tool", { name, args });
+export async function executeTool(name: string, args: any, permissionMode?: string): Promise<any> {
+  return invoke("execute_tool", { name, args, permissionMode: permissionMode || null });
 }
 
 export async function confirmExecution(token: string): Promise<any> {

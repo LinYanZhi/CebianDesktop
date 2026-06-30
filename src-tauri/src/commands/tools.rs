@@ -44,17 +44,14 @@ fn generate_token() -> String {
     format!("{:x}{:016x}", ts, count)
 }
 
-/// 判断工具是否需要用户二次确认
-fn tool_needs_confirmation(name: &str) -> bool {
-    matches!(
-        name,
-        "delete_path"
-            | "write_new_file"
-            | "edit_file"
-            | "rename_path"
-            | "skill_delete"
-            | "run_command"
-    )
+/// 判断工具是否需要用户二次确认（根据安全模式）
+fn tool_needs_confirmation(name: &str, mode: &str) -> bool {
+    let risk = crate::tools::get_tool_risk_level(name);
+    match mode {
+        "trusted" => false,               // 信任模式：全部自动放行
+        "balanced" => risk == "high",      // 平衡模式：仅高风险需确认
+        _ => risk == "high" || risk == "medium", // 保守模式：中高风险都需确认
+    }
 }
 
 /// 获取工具调用的风险详情，用于前端展示
@@ -166,13 +163,16 @@ pub fn get_tools(mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle)
 /// # 参数
 /// * `name` - 工具名称
 /// * `args` - 工具参数（JSON 对象）
+/// * `permission_mode` - 权限模式（conservative / balanced / trusted），可选
 ///
 /// # 返回
 /// 工具执行结果（JSON 格式）
 #[tauri::command]
-pub async fn execute_tool(name: String, args: Value, mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle) -> Result<Value, String> {
-    // ═══ 二次确认拦截（危险工具不立即执行，返回确认请求）═══
-    if tool_needs_confirmation(&name) {
+pub async fn execute_tool(name: String, args: Value, permission_mode: Option<String>, mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle) -> Result<Value, String> {
+    let mode = permission_mode.as_deref().unwrap_or("conservative");
+
+    // ═══ 二次确认拦截（根据安全模式判断，不满足阈值则拦截）═══
+    if tool_needs_confirmation(&name, mode) {
         let token = generate_token();
         let details = get_tool_confirmation_details(&name, &args);
         let pending = PendingExecution {

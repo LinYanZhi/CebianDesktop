@@ -80,6 +80,9 @@ pub struct AIConfig {
     /// 思考模式
     #[serde(default)]
     pub thinking_level: ThinkingLevel,
+    /// 权限模式（conservative / balanced / trusted）
+    #[serde(default)]
+    pub permission_mode: Option<String>,
 }
 
 fn default_model() -> String {
@@ -105,6 +108,7 @@ impl Default for AIConfig {
             system_prompt: String::new(),
             dual_ai: false,
             thinking_level: ThinkingLevel::default(),
+            permission_mode: None,
         }
     }
 }
@@ -154,19 +158,29 @@ fn build_api_messages(config: &AIConfig, messages: &[ChatMessage]) -> Vec<Value>
     let mut api_messages: Vec<Value> = Vec::new();
 
     // 始终注入应用层系统提示词（先于用户自定义提示词），指导 AI 行为规范
+    let permission_mode = config.permission_mode.as_deref().unwrap_or("conservative");
+    let permission_rules = match permission_mode {
+        "trusted" => "当前安全模式：**信任模式** — 你的所有工具调用都会自动执行，无需用户确认。请谨慎操作。",
+        "balanced" => "当前安全模式：**平衡模式** — 高风险操作（删除文件、执行命令、删除技能）需要用户确认，其他操作自动执行。",
+        _ => "当前安全模式：**保守模式** — 中高风险操作（写入/编辑/删除文件、执行命令、修改系统设置）都需要用户确认后才能执行。",
+    };
     let base_system_prompt = format!(
         "{}",
-        "你是 CeBianDesktop 桌面应用的 AI 助手，通过内置工具与用户系统和文件交互。\n\n\
-         核心规则：\n\
-         1. 优先使用内置工具完成任务。不要通过 run_command 自行编写脚本绕过工具限制。\n\
-         2. 一次对话中最多允许 10 轮工具调用（思考→调工具→看结果→再思考的循环），\
-            超限会自动中止。尽量在 5 轮内完成一个独立任务。\n\
-         3. 如果某个工具连续失败 2 次，说明当前方案不可行，应换思路或明确告知用户，不要盲目重试。\n\
-         4. 对于系统管理类操作（安装软件、修改系统设置、添加输入法等），\
-            优先使用专门的内置工具（如 system_add_language），不要用 run_command 拼命令。\n\
-         5. 如果当前环境（沙盒、受限账户等）限制了操作，明确告知用户原因，不要反复尝试。\n\
-         6. 工具执行返回错误时，分析错误原因，不要用相同参数重复调用。\n\
-         7. 你的回答应当简洁、准确，直接给出结果或结论，避免长篇大论。"
+        format!(
+            "你是 CeBianDesktop 桌面应用的 AI 助手，通过内置工具与用户系统和文件交互。\n\n\
+             {}\n\n\
+             核心规则：\n\
+             1. 优先使用内置工具完成任务。不要通过 run_command 自行编写脚本绕过工具限制。\n\
+             2. 一次对话中最多允许 10 轮工具调用（思考→调工具→看结果→再思考的循环），\
+                超限会自动中止。尽量在 5 轮内完成一个独立任务。\n\
+             3. 如果某个工具连续失败 2 次，说明当前方案不可行，应换思路或明确告知用户，不要盲目重试。\n\
+             4. 对于系统管理类操作（安装软件、修改系统设置、添加输入法等），\
+                优先使用专门的内置工具（如 system_add_language），不要用 run_command 拼命令。\n\
+             5. 如果当前环境（沙盒、受限账户等）限制了操作，明确告知用户原因，不要反复尝试。\n\
+             6. 工具执行返回错误时，分析错误原因，不要用相同参数重复调用。\n\
+             7. 你的回答应当简洁、准确，直接给出结果或结论，避免长篇大论。",
+            permission_rules
+        )
     );
     api_messages.push(json!({
         "role": "system",

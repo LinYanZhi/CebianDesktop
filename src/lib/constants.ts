@@ -8,6 +8,7 @@ export const DEFAULT_AI_CONFIG: AIConfig = {
   temperature: 0.7,
   thinking_level: "medium",
   primary_hue: 200,
+  aiPermissionMode: "conservative",
 };
 
 export const TOOL_EXPORT_LABELS: Record<string, { label: string; desc: string }> = {

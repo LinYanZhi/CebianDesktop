@@ -19,6 +19,7 @@ interface AppConfigJson {
   system_prompt: string;
   theme: string;
   primary_hue?: number;
+  ai_permission_mode?: string;
 }
 
 interface ProviderConfigJson {
@@ -58,6 +59,7 @@ export async function loadAIConfig(): Promise<AIConfig | null> {
       thinking_level: (raw.thinking_level as ThinkingLevel) || "medium",
       system_prompt: raw.system_prompt || "",
       primary_hue: raw.primary_hue ?? 200,
+      aiPermissionMode: (raw.ai_permission_mode as any) || "conservative",
     };
   } catch (e) {
     console.error("loadAIConfig 失败:", e);
@@ -87,6 +89,7 @@ export async function saveAIConfig(config: AIConfig): Promise<void> {
       system_prompt: config.system_prompt || "",
       theme: document.documentElement.classList.contains("light") ? "light" : "dark",
       primary_hue: config.primary_hue ?? 200,
+      ai_permission_mode: config.aiPermissionMode || "conservative",
     };
     const ds = json.providers.find(p => p.id === "deepseek");
     console.log("[saveAIConfig] deepseek key save:", ds ? { keyPrefix: ds.api_key.slice(0, 8), keyLen: ds.api_key.length } : "not found");

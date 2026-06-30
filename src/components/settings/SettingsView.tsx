@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import {
   ArrowLeft, Bot, Key, MessageSquare, FileText, Puzzle, Plug,
-  DatabaseBackup, HardDrive, Sliders, Info,
+  DatabaseBackup, HardDrive, Sliders, Info, Shield,
 } from "lucide-react";
 import type { AIConfig } from "../../lib/types";
 import { ProvidersSection } from "./sections/ProvidersSection";
 import { InstructionsSection } from "./sections/InstructionsSection";
+import { PermissionSection } from "./sections/PermissionSection";
 import { PromptsSection } from "./sections/PromptsSection";
 import { SkillsSection } from "./sections/SkillsSection";
 import { MCPSection } from "./sections/MCPSection";
@@ -36,6 +37,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: "providers", label: "AI 提供商", icon: Key },
   { id: "appearance", label: "外观", icon: Bot },
   { id: "instructions", label: "指引", icon: MessageSquare },
+  { id: "permission", label: "AI 权限", icon: Shield },
   { id: "prompts", label: "提示词", icon: FileText },
   { id: "skills", label: "技能", icon: Puzzle },
   { id: "mcp", label: "MCP 服务", icon: Plug },
@@ -50,6 +52,7 @@ function renderSection(props: SettingsViewProps, active: string) {
     case "providers": return <ProvidersSection config={props.config} onChange={props.onConfigChange} />;
     case "appearance": return <AppearanceSection config={props.config} onChange={props.onConfigChange} />;
     case "instructions": return <InstructionsSection config={props.config} onChange={props.onConfigChange} />;
+    case "permission": return <PermissionSection config={props.config} onChange={props.onConfigChange} />;
     case "prompts": return <PromptsSection />;
     case "skills": return <SkillsSection />;
     case "mcp": return (
