@@ -98,7 +98,7 @@ export function PermissionSection({ config, onChange }: { config: AIConfig; onCh
         })}
       </div>
 
-      <div className="mt-6 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+      <div className="mt-6 mb-6 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
         <p className="text-xs text-amber-600 dark:text-amber-400 font-medium mb-1">硬性安全护栏（始终生效）</p>
         <p className="text-xs text-muted-foreground">
           无论选择哪种模式，以下限制始终有效：
