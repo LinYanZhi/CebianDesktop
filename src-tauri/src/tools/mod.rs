@@ -133,6 +133,18 @@ pub fn init_allowed_dirs(workspace_dir: &str) {
     if let Ok(temp) = std::env::temp_dir().canonicalize() {
         dirs.push(temp.to_string_lossy().to_string());
     }
+    // 常用用户目录（桌面、下载、文档）—— 都是用户文件的安全存放位置
+    if let Some(home) = std::env::var("USERPROFILE").ok().or_else(|| std::env::var("HOME").ok()) {
+        let user_dirs = ["Desktop", "Downloads", "Documents"];
+        for sub in &user_dirs {
+            let p = std::path::Path::new(&home).join(sub);
+            if p.exists() {
+                if let Ok(canonical) = p.canonicalize() {
+                    dirs.push(canonical.to_string_lossy().to_string());
+                }
+            }
+        }
+    }
     let _ = ALLOWED_DIRS.set(dirs);
 }
 

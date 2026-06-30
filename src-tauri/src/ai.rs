@@ -510,13 +510,9 @@ pub fn call_llm_streaming(
         .timeout_read(Duration::from_secs(30))
         .build();
 
-    let max_depth = 10u32;
     let mut current_messages: Vec<ChatMessage> = messages.to_vec();
 
-    for depth in 0..=max_depth {
-        if depth == max_depth {
-            return Err("工具调用超过最大递归深度".to_string());
-        }
+    loop {
 
         // 构建请求体
         let api_messages = build_api_messages(config, &current_messages);
@@ -697,8 +693,6 @@ pub fn call_llm_streaming(
         current_messages.extend(tool_results);
         // continue loop for next iteration
     }
-
-    Err("工具调用超过最大递归深度".to_string())
 }
 
 /// 内部结构：用于在 SSE 流式响应中按 index 积累工具调用参数

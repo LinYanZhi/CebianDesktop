@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { Bot, Settings, ArrowDown, FileText } from "lucide-react";
 import type { ChatMessage, AIConfig, SendAttachment } from "../../lib/types";
 import { hasUsableModel } from "../../lib/types";
@@ -9,6 +9,8 @@ import { AskUserBlock } from "./AskUser";
 import { ChatInput } from "./ChatInput";
 
 // ── 独立回底按钮组件（absolute 定位，放在父 relative 容器内） ──
+// ⚠ 历史踩坑：此组件必须放在父 relative 容器内部（见下方第 300 行附近）。
+//   移出 relative 容器会导致按钮定位错乱或消失（已修复 4 次）。
 function ScrollToBottomButton({ visible, onClick }: { visible: boolean; onClick: () => void }) {
   if (!visible) return null;
   return (
@@ -86,9 +88,7 @@ export default function ChatView({
   pendingInteractive, onInteractiveResolve, pendingConfirmation, onConfirmResolve,
 }: ChatViewProps) {
   const [inputValue, setInputValue] = useState("");
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const { isAtBottom, scrollToBottom } = useStickToBottom(containerRef);
+  const { containerRef, isAtBottom, scrollToBottom } = useStickToBottom();
 
   // 发送新消息时强制回底
   const send = (attachments?: SendAttachment[]) => {
@@ -296,9 +296,14 @@ export default function ChatView({
               <span className="inline-block w-1.5 h-4 bg-primary rounded-sm animate-pulse align-text-bottom" />
             </div>
           )}
-          <div />
         </div>
         </div>
+        {/*
+          ═══ 置底按钮 ── ⚠ 绝对不要移出 `min-h-0 relative` 容器 ═══
+          父容器 class="flex-1 min-h-0 relative" 在第 152 行。
+          按钮是 absolute 定位，必须在该容器内才能正确计算 bottom: 1rem。
+          曾因移出到外层 relative 导致按钮消失（已修复 4 次）。
+        */}
         <ScrollToBottomButton visible={!isAtBottom} onClick={() => scrollToBottom({ force: true })} />
       </div>
       <ChatInput inputValue={inputValue} setInputValue={setInputValue}

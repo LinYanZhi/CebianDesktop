@@ -409,12 +409,8 @@ export default function App() {
           }
         }
 
-        // ─── 工具调用循环（最大 10 轮） ──────────────────────
-        const MAX_TOOL_DEPTH = 10;
-        for (let depth = 0; depth <= MAX_TOOL_DEPTH; depth++) {
-          if (depth === MAX_TOOL_DEPTH) {
-            throw new Error("工具调用超过最大递归深度");
-          }
+        // ─── 工具调用循环（无限制，Cebian 浏览器版亦无限制） ──
+        for (let depth = 0; ; depth++) {
 
           // ── 上下文压缩：当消息数超过阈值时压缩早期对话 ──
           if (currentMessages.length > 30) {

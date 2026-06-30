@@ -393,9 +393,14 @@ pub async fn execute_tool(name: String, args: Value, permission_mode: Option<Str
 
     match result {
         Ok(Ok(val)) => Ok(val),
-        Ok(Err(_)) => {
-            // 内置工具未命中 → 尝试作为技能执行
-            crate::tools::execute_skill(&app_handle, &name, &args)
+        Ok(Err(e)) => {
+            if e.starts_with("未知工具:") {
+                // 内置工具未命中 → 尝试作为技能执行
+                crate::tools::execute_skill(&app_handle, &name, &args)
+            } else {
+                // 内置工具命中但执行失败 → 返回真实错误信息
+                Err(e)
+            }
         }
         Err(e) => Ok(json!({"error": format!("工具执行线程崩溃: {}", e)})),
     }

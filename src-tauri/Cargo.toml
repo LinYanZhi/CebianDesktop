@@ -21,7 +21,15 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
-ureq = { version = "2.12", features = ["json"] }
+# ⚠ 用 native-tls 而不是默认的 rustls，因为 rustls 不信任 Windows 系统证书，
+#   导致火绒/代理等 HTTPS 中间人场景下下载工具报 UnknownIssuer 错误。
+#   不要改回 rustls，除非你确认用户不需要证书验证回退。
+ureq = { version = "2.12", features = ["json", "native-tls"], default-features = false }
+# 给 ureq 的 danger_accept_invalid_certs 提供 TLS 连接器
+native-tls = "0.2"
+# ⚠ GBK 解码依赖。用于解码中文 Windows 上 cmd.exe 的 GBK 输出。
+#   之前用 String::from_utf8_lossy，中文直接变乱码。不要删。
+encoding_rs = "0.8"
 winreg = "0.50"
 clipboard-win = "5.4"
 walkdir = "2"

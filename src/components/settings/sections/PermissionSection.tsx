@@ -161,7 +161,7 @@ export function PermissionSection({ config, onChange }: { config: AIConfig; onCh
   // ── 渲染 ──
 
   return (
-    <section>
+    <section className="flex flex-col min-h-0">
       <h2 className="text-base font-semibold mb-1">AI 权限模式</h2>
       <p className="text-sm text-muted-foreground mb-5">
         控制 AI 在什么情况下需要经过你的确认才能执行操作。自定义模式下可为每个工具单独设置权限。
@@ -233,7 +233,7 @@ export function PermissionSection({ config, onChange }: { config: AIConfig; onCh
           {loading ? (
             <div className="p-6 text-center text-sm text-muted-foreground">加载工具列表...</div>
           ) : (
-            <div className="max-h-[360px] overflow-y-auto">
+            <div className="flex-1 overflow-y-auto min-h-0">
               {Object.entries(grouped).map(([category, items]) => (
                 <div key={category}>
                   <div className="sticky top-0 bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground border-b border-border/50 z-10">
