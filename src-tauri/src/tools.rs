@@ -175,12 +175,16 @@ pub fn get_tool_definitions() -> Vec<Value> {
         // ═══════════════════════════════════════════════════════════
         td!("run_command",
             "在终端中执行系统命令并返回输出结果。\
-             \n\n在 Windows 上使用 cmd.exe，在 macOS/Linux 上使用 sh。可以指定工作目录。\
+             \n\nWindows 上使用 cmd.exe（不是 PowerShell），macOS/Linux 上使用 sh。\
              \n\n注意：\
              \n- 命令在用户系统上实际执行，请谨慎操作（尤其是删除、格式化等危险命令）\
              \n- 交互式命令（如需要用户输入）会挂起，应避免使用\
+             \n- 在 Windows 上通过 cmd.exe 执行 PowerShell 脚本时，$ 变量可能被 cmd 错误解析，\
+             \n  导致 PowerShell 命令失败。避免在 run_command 中嵌入复杂 PowerShell 脚本。\
+             \n- 如果连续 2 次尝试相同类型命令均失败，说明此路不通，请换思路或告知用户\
              \n- 返回 stdout 和 stderr 的输出\
-             \n\n适合场景：运行 git 命令、执行构建脚本、启动程序等。",
+             \n\n适合场景：运行简单的系统命令、git 操作、启动程序等。\
+             \n不适合场景：安装软件、修改系统设置、多行脚本等复杂操作。",
             &[("command", "string", "要执行的命令，例如 dir 或 git status"), ("cwd", "string", "工作目录（可选，不指定则使用应用默认目录）")], ["command"]),
 
         td!("system_notify",
@@ -211,6 +215,22 @@ pub fn get_tool_definitions() -> Vec<Value> {
              \n- COMPUTERNAME: 计算机名\
              \n\n适合场景：查看用户目录、检查 PATH 配置、了解系统配置等。",
             &[("name", "string", "环境变量名称（可选），例如 \"PATH\" 或 \"USERPROFILE\"。不传则返回全部。")], []),
+
+        td!("system_get_languages",
+            "获取当前 Windows 系统已安装的语言和输入法列表。\
+             \n返回已安装的语言标签（如 zh-CN、en-US）和对应的本地化名称。\
+             \n\n适合场景：查看当前系统语言、检查是否安装了中文输入法、查看用户使用的语言列表等。",
+            &[], []),
+
+        td!("system_add_language",
+            "向 Windows 系统添加新的语言（包括对应的输入法/键盘布局）。\
+             \n\n注意：\
+             \n- 需要管理员权限，沙盒或受限环境可能失败\
+             \n- 添加后可能需要注销或重启才能生效\
+             \n- 常见语言标签：zh-CN（简体中文中国）、zh-TW（繁体中文台湾）、en-US（英语美国）、ja-JP（日语日本）\
+             \n- 如果添加失败（如无权限），请告知用户原因，不要反复尝试\
+             \n\n适合场景：添加中文输入法、切换系统语言、添加其他语言的键盘布局等。",
+            &[("language_tag", "string", "语言标签，例如 \"zh-CN\" 表示简体中文",), ("language_name", "string", "语言显示名称（可选），例如 \"中文(中华人民共和国)\"")], ["language_tag"]),
 
         // ═══════════════════════════════════════════════════════════
         //  进程与窗口
@@ -460,6 +480,16 @@ pub fn execute_tool(name: &str, args: &Value) -> Result<Value, String> {
         "system_info" => {
             let info = system_info()?;
             Ok(info)
+        }
+        "system_get_languages" => {
+            let languages = system_get_languages()?;
+            Ok(json!({"languages": languages}))
+        }
+        "system_add_language" => {
+            let language_tag = arg_str(args, "language_tag")?;
+            let language_name = args.get("language_name").and_then(|v| v.as_str()).unwrap_or(language_tag);
+            system_add_language(language_tag, language_name)?;
+            Ok(json!({"message": format!("已添加语言: {} ({})", language_name, language_tag)}))
         }
         "get_env" => {
             let name = args.get("name").and_then(|v| v.as_str());
@@ -1012,6 +1042,61 @@ fn system_notify(title: &str, message: &str) -> Result<(), String> {
         .show()
         .map_err(|e| format!("发送通知失败: {}", e))?;
     Ok(())
+}
+
+// ─── 系统语言 ────────────────────────────────────────────
+
+/// 获取 Windows 已安装的语言列表（通过 PowerShell）
+fn system_get_languages() -> Result<Vec<Value>, String> {
+    let ps_script = r#"
+$langs = Get-WinUserLanguageList
+$langs | ForEach-Object {
+    [PSCustomObject]@{
+        LanguageTag = $_.LanguageTag
+        LocalizedName = $_.LocalizedName
+        EnglishName = $_.EnglishName
+        InputMethods = ($_.InputMethodTips -join ", ")
+    }
+} | ConvertTo-Json
+"#;
+
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-Command", ps_script])
+        .output()
+        .map_err(|e| format!("获取语言列表失败: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("获取语言列表失败: {}", stderr.trim()));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if stdout.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let languages: Vec<Value> = serde_json::from_str(&stdout).unwrap_or_default();
+    Ok(languages)
+}
+
+/// 向 Windows 添加语言（包括对应输入法）
+fn system_add_language(language_tag: &str, _language_name: &str) -> Result<(), String> {
+    let ps_script = format!(
+        "$langList = Get-WinUserLanguageList; $langList.Add(\"{}\"); Set-WinUserLanguageList -LanguageList $langList -Force; Write-Output 'OK'",
+        language_tag
+    );
+
+    let output = Command::new("powershell")
+        .args(["-NoProfile", "-Command", &ps_script])
+        .output()
+        .map_err(|e| format!("添加语言失败: {}", e))?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        Err(format!("添加语言失败: {}\n\n可能原因：\n- 当前环境权限不足（沙盒/受限账户）\n- 语言标签无效（常见有效值：zh-CN, en-US, zh-TW, ja-JP）\n- 系统策略限制", stderr.trim()))
+    }
 }
 
 // ─── 技能工具（动态加载自 workspace/skills/） ────────────
