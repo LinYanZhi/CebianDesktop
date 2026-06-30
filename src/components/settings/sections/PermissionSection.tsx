@@ -161,7 +161,7 @@ export function PermissionSection({ config, onChange }: { config: AIConfig; onCh
   // ── 渲染 ──
 
   return (
-    <section className="flex flex-col min-h-0">
+    <section className="flex flex-col min-h-0 flex-1">
       <h2 className="text-base font-semibold mb-1">AI 权限模式</h2>
       <p className="text-sm text-muted-foreground mb-5">
         控制 AI 在什么情况下需要经过你的确认才能执行操作。自定义模式下可为每个工具单独设置权限。
@@ -203,7 +203,7 @@ export function PermissionSection({ config, onChange }: { config: AIConfig; onCh
 
       {/* ── 自定义模式：工具权限列表 ── */}
       {current === "custom" && (
-        <div className="border border-border rounded-lg overflow-hidden mb-5">
+        <div className="border border-border rounded-lg overflow-hidden mb-5 flex flex-col flex-1 min-h-0">
           {/* 统计条 */}
           <div className="flex items-center gap-4 px-3 py-2 bg-muted/30 border-b border-border text-xs text-muted-foreground">
             <span>共 {toolList.length} 个工具</span>
@@ -279,7 +279,7 @@ export function PermissionSection({ config, onChange }: { config: AIConfig; onCh
       )}
 
       {/* 硬性护栏提示 */}
-      <div className="mt-6 mb-4 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
+      <div className="mb-4 p-3 rounded-lg bg-amber-500/5 border border-amber-500/20">
         <p className="text-xs text-amber-600 dark:text-amber-400 font-medium mb-1">硬性安全护栏（始终生效）</p>
         <p className="text-xs text-muted-foreground">
           无论选择哪种模式，以下限制始终有效：

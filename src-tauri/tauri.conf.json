@@ -14,7 +14,7 @@
         "title": "CeBianDesktop",
         "width": 900,
         "height": 700,
-        "minWidth": 380,
+        "minWidth": 440,
         "minHeight": 500,
         "resizable": true
       }

@@ -13,7 +13,6 @@ import { MCPSection } from "./sections/MCPSection";
 import { BackupSection } from "./sections/BackupSection";
 import { StorageSection } from "./sections/StorageSection";
 import { AdvancedSection } from "./sections/AdvancedSection";
-import { AppearanceSection } from "./sections/AppearanceSection";
 import { AboutSection } from "./sections/AboutSection";
 
 interface SettingsViewProps {
@@ -35,7 +34,6 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { id: "providers", label: "AI 提供商", icon: Key },
-  { id: "appearance", label: "外观", icon: Bot },
   { id: "instructions", label: "指引", icon: MessageSquare },
   { id: "permission", label: "AI 权限", icon: Shield },
   { id: "prompts", label: "提示词", icon: FileText },
@@ -50,7 +48,6 @@ const NAV_ITEMS: NavItem[] = [
 function renderSection(props: SettingsViewProps, active: string) {
   switch (active) {
     case "providers": return <ProvidersSection config={props.config} onChange={props.onConfigChange} />;
-    case "appearance": return <AppearanceSection config={props.config} onChange={props.onConfigChange} />;
     case "instructions": return <InstructionsSection config={props.config} onChange={props.onConfigChange} />;
     case "permission": return <PermissionSection config={props.config} onChange={props.onConfigChange} />;
     case "prompts": return <PromptsSection />;
@@ -83,21 +80,20 @@ export default function SettingsView(props: SettingsViewProps) {
     if (measureRef.current) fullWidthRef.current = measureRef.current.scrollWidth;
   }, []);
 
+  // ⚠ 模式检测只用 window.innerWidth，不用 nav.clientWidth。
+  //   因为 compact 模式下 nav 有 min-width: max-content，nav 自身宽度会被内容撑开，
+  //   如果用 nav.clientWidth 检测会导致「nav 变宽→切 medium→文字变多→触发 resize→再切 compact」的死循环。
   useEffect(() => {
     const fullWidth = fullWidthRef.current || 450;
-    const check = (entry?: ResizeObserverEntry) => {
-      const windowW = window.innerWidth;
-      const availableW = entry?.contentBoxSize?.[0]?.inlineSize ?? navRef.current?.clientWidth ?? windowW;
+    const check = () => {
+      const w = window.innerWidth;
       const wideThreshold = fullWidth + 276;
-      if (windowW >= wideThreshold) { setNavMode("wide"); return; }
-      if (availableW >= fullWidth - 8) { setNavMode("medium"); } else { setNavMode("compact"); }
+      if (w >= wideThreshold) { setNavMode("wide"); return; }
+      if (w >= fullWidth) { setNavMode("medium"); } else { setNavMode("compact"); }
     };
     check();
-    const ro = new ResizeObserver((entries) => check(entries[0]));
-    if (navRef.current) ro.observe(navRef.current);
-    const onResize = () => check();
-    window.addEventListener("resize", onResize);
-    return () => { ro.disconnect(); window.removeEventListener("resize", onResize); };
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
   }, []);
 
   return (
@@ -109,7 +105,7 @@ export default function SettingsView(props: SettingsViewProps) {
         <h1 className="text-sm font-semibold">设置</h1>
       </div>
 
-      {/* 隐形测量元素 */}
+      {/* 隐形测量元素（图标+文字），用于计算 medium/compact 切换阈值 */}
       <div ref={measureRef} className="flex gap-1 px-3 py-2 invisible absolute pointer-events-none overflow-hidden" aria-hidden="true">
         {NAV_ITEMS.map((item) => {
           const Icon = item.icon;
@@ -123,13 +119,13 @@ export default function SettingsView(props: SettingsViewProps) {
 
       {navMode === "wide" ? (
         <div className="flex-1 flex min-h-0">
-          <nav className="w-44 border-r border-border bg-card p-2 flex flex-col gap-1 shrink-0 self-stretch overflow-y-auto">
+          <nav className="w-44 border-r border-border bg-card px-3 py-2 flex flex-col gap-1 shrink-0 self-stretch overflow-y-auto">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               return (
                 <button key={item.id} onClick={() => setActive(item.id)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${active === item.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"}`}>
-                  <Icon size={16} /><span>{item.label}</span>
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs leading-none transition-colors ${active === item.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"}`}>
+                  <Icon size={14} /><span>{item.label}</span>
                 </button>
               );
             })}
@@ -140,13 +136,13 @@ export default function SettingsView(props: SettingsViewProps) {
         </div>
       ) : (
         <div className="flex-1 flex flex-col min-h-0">
-          <nav ref={navRef} className="flex gap-1 px-3 py-2 border-b border-border bg-card shrink-0 overflow-x-auto scrollbar-hidden">
+          <nav ref={navRef} className="flex gap-1 px-3 py-2 border-b border-border bg-card shrink-0 scrollbar-hidden">
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = active === item.id;
               return (
                 <button key={item.id} onClick={() => setActive(item.id)}
-                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs whitespace-nowrap transition-colors shrink-0 ${isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"}`}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs leading-none whitespace-nowrap transition-colors shrink-0 ${isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"}`}
                   title={navMode === "compact" ? item.label : undefined}>
                   <Icon size={14} />
                   {navMode === "medium" && <span>{item.label}</span>}

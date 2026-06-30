@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { Settings, MessageSquarePlus, Bot, History, Server, X, Trash2, Sun, Moon } from "lucide-react";
 import ChatView from "./components/chat/ChatView";
 import SettingsView from "./components/settings/SettingsView";
+import { SkinPopover } from "./components/SkinPopover";
 import { getTools, executeTool, confirmExecution, cancelExecution, startMcpServer, stopMcpServer } from "./lib/commands";
 import { loadAIConfig, saveAIConfig, loadConversationsFromStorage, saveConversationsToStorage, loadTheme, saveTheme } from "./lib/db";
 import type { Conversation, ChatMessage, AIConfig, SendAttachment, ToolCall, StreamState } from "./lib/types";
@@ -1036,6 +1037,7 @@ export default function App() {
             title={darkMode ? "切换浅色主题" : "切换深色主题"}>
             {darkMode ? <Sun size={16} /> : <Moon size={16} />}
           </button>
+          <SkinPopover config={aiConfig} onChange={setAiConfig} />
           <button onClick={() => {
             if (currentView !== "settings") {
               historyBeforeSettingsRef.current = showHistory;

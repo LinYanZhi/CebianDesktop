@@ -163,37 +163,44 @@ pub(crate) fn download_file(url: &str, destination: &str) -> Result<String, Stri
         let _ = fs::create_dir_all(parent);
     }
 
+    // 收集所有错误信息，最后全部返回给用户
+    let mut errors: Vec<String> = Vec::new();
+
     // 1. ureq + native-tls（系统证书）
-    match ureq_download(url, destination, false) {
-        Ok(_) => return Ok(format!("已下载到: {}", destination)),
-        Err(e) => {
-            if !(e.contains("certificate") || e.contains("UnknownIssuer") || e.contains("tls")) {
-                return Err(e);
-            }
-            eprintln!("[download] 证书验证失败，尝试 insecure: {}", e);
-        }
+    if let Err(e) = ureq_download(url, destination, false) {
+        eprintln!("[download] ureq native-tls 失败: {}", e);
+        errors.push(format!("ureq: {}", e));
+    } else {
+        return Ok(format!("已下载到: {}", destination));
     }
 
     // 2. ureq + insecure（跳过证书验证）
-    if let Ok(_) = ureq_download(url, destination, true) {
+    if let Err(e) = ureq_download(url, destination, true) {
+        eprintln!("[download] ureq insecure 失败: {}", e);
+        errors.push(format!("ureq insecure: {}", e));
+    } else {
         return Ok(format!("已下载到: {} (跳过证书验证)", destination));
     }
 
     // 3. PowerShell 回退
-    if let Ok(msg) = powershell_download(url, destination) {
-        return Ok(format!("{} (PowerShell)", msg));
+    match powershell_download(url, destination) {
+        Ok(msg) => return Ok(format!("{} (PowerShell)", msg)),
+        Err(e) => errors.push(format!("PowerShell: {}", e)),
     }
 
     // 4. BITS 回退
-    if let Ok(msg) = bits_download(url, destination) {
-        return Ok(format!("{} (BITS)", msg));
+    match bits_download(url, destination) {
+        Ok(msg) => return Ok(format!("{} (BITS)", msg)),
+        Err(e) => errors.push(format!("BITS: {}", e)),
     }
 
     Err(format!(
         "所有下载方式均失败。\n\
+         - 详细错误:\n{}\n\
          - 请检查网络连接和代理设置\n\
          - 或手动在浏览器中打开链接下载:\n\
          {}",
+        errors.iter().map(|e| format!("     {}", e)).collect::<Vec<_>>().join("\n"),
         url
     ))
 }

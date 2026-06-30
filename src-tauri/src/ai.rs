@@ -178,7 +178,10 @@ fn build_api_messages(config: &AIConfig, messages: &[ChatMessage]) -> Vec<Value>
                 优先使用专门的内置工具（如 system_add_language），不要用 run_command 拼命令。\n\
              5. 如果当前环境（沙盒、受限账户等）限制了操作，明确告知用户原因，不要反复尝试。\n\
              6. 工具执行返回错误时，分析错误原因，不要用相同参数重复调用。\n\
-             7. 你的回答应当简洁、准确，直接给出结果或结论，避免长篇大论。",
+             7. 禁止在桌面、文档等用户可见目录创建临时脚本文件（.ps1/.bat/.cmd/.vbs）。\
+                用 run_command 执行内联命令（如 powershell -Command \"...\"），\
+                如需写脚本文件则存到临时目录（%TEMP%）并在执行后立即删除。\n\
+             8. 你的回答应当简洁、准确，直接给出结果或结论，避免长篇大论。",
             permission_rules
         )
     );
