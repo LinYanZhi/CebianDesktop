@@ -134,49 +134,50 @@ export default function ChatView({
   }
 
   return (
-    <div className="flex-1 w-full min-w-0 flex flex-col h-full relative">
-      <div ref={containerRef} className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-        {/* 累计 Token 用量 */}
-        {(() => {
-          const total = messages.reduce((acc, m) => {
-            if (m.role === "assistant" && m.usage) {
-              return acc + m.usage.input + m.usage.output;
-            }
-            return acc;
-          }, 0);
-          if (total <= 0) return null;
-          return (
-            <div className="sticky top-0 z-10 flex justify-center pt-2 pb-1 bg-gradient-to-b from-background to-transparent pointer-events-none">
-              <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-[0.55rem] text-muted-foreground/60 tabular-nums">
-                <span>累计消耗</span>
-                <span className="font-medium">{total.toLocaleString()}</span>
-                <span>tokens</span>
-              </div>
-            </div>
-          );
-        })()}
-        <div className="flex flex-col gap-4 py-4 px-5">
+    <div className="flex-1 w-full min-w-0 flex flex-col h-full">
+      <div className="flex-1 min-h-0 relative">
+        <div ref={containerRef} className="h-full overflow-y-auto overflow-x-hidden">
+          {/* 累计 Token 用量 */}
           {(() => {
-            // 收集后续 tool 消息，用于展示工具调用结果
-            const skipIndices = new Set<number>();
-            const items: React.ReactNode[] = [];
-            for (let i = 0; i < messages.length; i++) {
-              if (skipIndices.has(i)) continue;
-              const msg = messages[i];
+            const total = messages.reduce((acc, m) => {
+              if (m.role === "assistant" && m.usage) {
+                return acc + m.usage.input + m.usage.output;
+              }
+              return acc;
+            }, 0);
+            if (total <= 0) return null;
+            return (
+              <div className="sticky top-0 z-10 flex justify-center pt-2 pb-1 bg-gradient-to-b from-background to-transparent pointer-events-none">
+                <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted/70 border border-border text-[0.55rem] text-muted-foreground/60 tabular-nums">
+                  <span>累计消耗</span>
+                  <span className="font-medium">{total.toLocaleString()}</span>
+                  <span>tokens</span>
+                </div>
+              </div>
+            );
+          })()}
+          <div className="flex flex-col gap-4 py-4 px-5">
+            {(() => {
+              // 收集后续 tool 消息，用于展示工具调用结果
+              const skipIndices = new Set<number>();
+              const items: React.ReactNode[] = [];
+              for (let i = 0; i < messages.length; i++) {
+                if (skipIndices.has(i)) continue;
+                const msg = messages[i];
 
-              if (msg.role === "user") {
-                items.push(<UserMessageBlock key={i} msg={msg} index={i} onRollback={handleRollback} />);
-              } else if (msg.compacted) {
-                items.push(
-                  <div key={i} className="flex justify-center">
-                    <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent/50 border border-border text-[10px] text-muted-foreground">
-                      <FileText size={10} />
-                      <span>上下文已压缩 — 早期对话已折叠为摘要，减少 token 消耗</span>
+                if (msg.role === "user") {
+                  items.push(<UserMessageBlock key={i} msg={msg} index={i} onRollback={handleRollback} />);
+                } else if (msg.compacted) {
+                  items.push(
+                    <div key={i} className="flex justify-center">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent/50 border border-border text-[10px] text-muted-foreground">
+                        <FileText size={10} />
+                        <span>上下文已压缩 — 早期对话已折叠为摘要，减少 token 消耗</span>
+                      </div>
                     </div>
-                  </div>
-                );
-              } else if (msg.role === "assistant") {
-                // 收集紧接着的 tool 消息作为工具结果
+                  );
+                } else if (msg.role === "assistant") {
+                  // 收集紧接着的 tool 消息作为工具结果
                 const toolResults: ChatMessage[] = [];
                 if (msg.tool_calls && msg.tool_calls.length > 0) {
                   let j = i + 1;
@@ -283,20 +284,19 @@ export default function ChatView({
           )}
           <div />
         </div>
-        {/* 回底按钮：用户向上滚动后出现在消息区域右下角 */}
-        {!isAtBottom && (
-          <div className="sticky bottom-4 flex justify-end pr-5">
-            <button
-              onClick={() => scrollToBottom({ force: true })}
-              className="size-8 flex items-center justify-center rounded-full bg-background border border-border/60 shadow-md hover:bg-accent transition-colors"
-              title="回到底部"
-            >
-              <ArrowDown size={14} />
-            </button>
-          </div>
-        )}
       </div>
-      <ChatInput inputValue={inputValue} setInputValue={setInputValue}
+      {/* 回底按钮：用户向上滚动后出现在消息区域右下角 */}
+      {!isAtBottom && (
+        <button
+          onClick={() => scrollToBottom({ force: true })}
+          className="absolute bottom-4 right-5 size-8 flex items-center justify-center rounded-full bg-background border border-border/60 shadow-md hover:bg-accent transition-colors z-10"
+          title="回到底部"
+        >
+          <ArrowDown size={14} />
+        </button>
+      )}
+    </div>
+    <ChatInput inputValue={inputValue} setInputValue={setInputValue}
         onSend={(atts) => send(atts)}
         onStop={onStop}
         loading={loading} aiConfig={aiConfig}
