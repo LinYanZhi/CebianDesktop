@@ -57,7 +57,7 @@ pub const DEFAULT_BRIDGE_PORT: u16 = 37421;
 /// 执行桌面任务（由浏览器 AI 通过 desktop/delegate_task 调用）
 ///
 /// 创建一个独立的 AI 代理会话，让 Desktop AI 自主规划工具调用完成任务。
-pub async fn run_desktop_task(state: &BridgeState, task: &str) -> Result<String, String> {
+pub async fn run_desktop_task(state: &Arc<BridgeState>, task: &str) -> Result<String, String> {
     let app_handle = state
         .app_handle
         .lock()
@@ -86,10 +86,30 @@ pub async fn run_desktop_task(state: &BridgeState, task: &str) -> Result<String,
     let mut messages = vec![
         ChatMessage {
             role: "system".to_string(),
-            content: "你是一个桌面 AI 助手，运行在用户的本地计算机上。\
-                     你有访问本地文件系统、执行命令、操作文件等全套桌面工具。\
-                     请根据用户的任务描述，自主规划并执行工具调用来完成它。\
-                     完成所有必要的操作后，用中文给出最终回复。"
+            content: "你是「桌面 AI」，运行在用户的本地计算机上，拥有本地文件系统、命令执行、文件操作等全套桌面工具。\
+                      你是「双 AI 桥接」架构中的一端，另一端是「浏览器 AI」（运行在浏览器扩展中）。\
+                      \n\n\
+                      ## 核心原则：识别并委托浏览器任务\n\
+                      \n\
+                      如果用户的任务涉及以下内容，请使用 ask_browser_ai 工具委托给浏览器 AI 执行：\n\
+                      - 浏览器本身（Chrome、Edge、Firefox 等）\n\
+                      - 浏览器扩展的技能（Skills）、配置\n\
+                      - 网页操作（搜索、打开网页、读取页面、截图等）\n\
+                      - 任何需要在浏览器中完成的操作\n\
+                      \n\
+                      ## 具体案例\n\
+                      \n\
+                      用户说「帮我读读 edge 的 skill」= Edge 浏览器扩展中的技能，不是桌面的本地技能。\
+                      你应该先用 get_connected_browsers 查看已连接的浏览器，然后用 ask_browser_ai 委托浏览器 AI\
+                      去读取它自己那边的技能。\n\
+                      \n\
+                      ## 你的本地工具（不要误用于浏览器任务）\n\
+                      \n\
+                      - skill_list / skill_read / skill_create 等：这些操作的是桌面端的技能文件，与浏览器扩展的技能完全无关\n\
+                      - 本地文件操作：读写桌面文件、执行命令等\n\
+                      \n\
+                      请根据用户的任务描述，自主规划并执行工具调用来完成它。\
+                      完成所有必要的操作后，用中文给出最终回复。"
                 .to_string(),
             tool_calls: None,
             tool_call_id: None,
@@ -118,7 +138,12 @@ pub async fn run_desktop_task(state: &BridgeState, task: &str) -> Result<String,
         }
 
         let tool_calls = response.tool_calls.clone().unwrap();
-        let results = crate::ai::execute_tool_call(&tool_calls, Some(&app_handle), None);
+        let tokio_handle = tokio::runtime::Handle::current();
+        let results = crate::ai::execute_tool_call(
+            &tool_calls,
+            Some(&app_handle),
+            Some((state, &tokio_handle)),
+        );
 
         messages.push(response);
         messages.extend(results);
@@ -1149,6 +1174,24 @@ pub async fn reset_desktop_ai_progress(state: &BridgeState) {
 pub async fn get_desktop_ai_progress(state: &BridgeState) -> Value {
     let inner = state.inner.lock().await;
     inner.desktop_ai_progress.clone()
+}
+
+/// 取消所有浏览器 AI 任务（用户终止桌面 AI 时调用）
+///
+/// 向所有已连接的浏览器广播 tools/cancel 消息，
+/// 通知浏览器停止正在执行的 agent/prompt 任务。
+pub async fn cancel_browser_ai_tasks(state: &BridgeState) {
+    let msg = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/cancel",
+        "params": {}
+    });
+    let msg_str = msg.to_string();
+    let inner = state.inner.lock().await;
+    for browser in inner.browsers.values() {
+        let _ = browser.ws_sender.send(Message::Text(msg_str.clone().into()));
+    }
+    eprintln!("[bridge] 已向所有浏览器广播取消消息");
 }
 
 /// 对指定浏览器会话发送 ping 并测量延迟（毫秒）

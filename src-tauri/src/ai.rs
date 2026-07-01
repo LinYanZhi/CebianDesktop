@@ -381,8 +381,20 @@ pub fn call_llm(config: &AIConfig, messages: &[ChatMessage]) -> Result<ChatMessa
         request_body["tools"] = Value::Array(openai_tools);
     }
 
+    // 显式创建 native-tls 连接器（不使用 ureq 默认构造，避免 TLS 后端未初始化问题）
+    let tls_connector = native_tls::TlsConnector::builder()
+        .build()
+        .map_err(|e| format!("创建 TLS 连接器失败: {}", e))?;
+
+    let agent = ureq::AgentBuilder::new()
+        .tls_connector(Arc::new(tls_connector))
+        .timeout_connect(Duration::from_secs(10))
+        .timeout(Duration::from_secs(60))
+        .build();
+
     // 发送请求
-    let response = ureq::post(&url)
+    let response = agent
+        .post(&url)
         .set("Authorization", &format!("Bearer {}", api_key))
         .set("Content-Type", "application/json")
         .send_json(&request_body)

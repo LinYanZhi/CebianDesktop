@@ -118,6 +118,7 @@ pub fn run() {
             commands::ping_browser,
             commands::disconnect_browser,
             commands::update_browser_name,
+            commands::cancel_browser_ai,
             commands::save_app_config,
             commands::load_app_config,
             commands::save_conversations,

@@ -17,7 +17,11 @@ interface BridgeStatusData {
   browser_count: number;
 }
 
-export function BridgeStatus() {
+interface BridgeStatusProps {
+  onNavigateToBridge?: () => void;
+}
+
+export function BridgeStatus({ onNavigateToBridge }: BridgeStatusProps) {
   const [status, setStatus] = useState<BridgeStatusData | null>(null);
 
   useEffect(() => {
@@ -38,13 +42,6 @@ export function BridgeStatus() {
   const hasBrowsers = status.running && status.browser_count > 0;
   const noBrowsers = status.running && status.browser_count === 0;
 
-  const getState = () => {
-    if (hasBrowsers) return "connected" as const;
-    if (noBrowsers) return "listening" as const;
-    return "offline" as const;
-  };
-
-  const state = getState();
   const label = hasBrowsers
     ? `${status.browser_count} 个已连接`
     : noBrowsers
@@ -53,7 +50,12 @@ export function BridgeStatus() {
 
   return (
     <div
-      className="relative flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-muted-foreground hover:bg-accent transition-colors cursor-default group"
+      onClick={() => {
+        if (onNavigateToBridge && (hasBrowsers || noBrowsers)) {
+          onNavigateToBridge();
+        }
+      }}
+      className={`relative flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-muted-foreground transition-colors group ${hasBrowsers || noBrowsers ? "hover:bg-accent cursor-pointer" : "cursor-default"}`}
     >
       <span
         className={`w-2 h-2 rounded-full shrink-0 ${
@@ -67,27 +69,42 @@ export function BridgeStatus() {
       <span className="hidden sm:inline">{label}</span>
 
       {/* Tooltip */}
-      <div className="absolute top-full right-0 mt-1 w-56 bg-popover border border-border rounded-lg shadow-lg p-3 hidden group-hover:block z-50 pointer-events-none">
-        <div className="space-y-1 text-[11px]">
-          <div className="font-medium mb-1">
-            {hasBrowsers ? "已连接浏览器：" : noBrowsers ? "等待浏览器连接..." : "桥接未就绪"}
-          </div>
-          {hasBrowsers && status.browsers.map((b, i) => (
-            <div key={i} className="flex items-center gap-2 text-muted-foreground">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500 shrink-0" />
-              <span className="truncate">{b.client_name || b.name}</span>
-              <span className="text-[10px] opacity-60">:{b.port}</span>
-              {b.remote_addr && (
-                <span className="text-[10px] opacity-40 ml-auto">←{b.remote_addr}</span>
-              )}
+      <div className="absolute top-full right-0 mt-1 min-w-72 bg-popover border border-border rounded-lg shadow-lg p-3 hidden group-hover:block z-50 pointer-events-none"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {hasBrowsers ? (
+          <div className="text-[11px] space-y-1">
+            {/* 表头 */}
+            <div className="grid grid-cols-[1fr_auto_1.2fr] gap-x-3 text-[10px] text-muted-foreground/50 font-medium mb-1.5 pb-1 border-b border-border/50">
+              <span>浏览器</span>
+              <span>端口</span>
+              <span className="text-right">IP 地址</span>
             </div>
-          ))}
-          {noBrowsers && (
+            {/* 数据行 */}
+            {status.browsers.map((b, i) => (
+              <div key={i} className="grid grid-cols-[1fr_auto_1.2fr] gap-x-3 items-center py-0.5">
+                <span className="truncate font-medium text-foreground/80">
+                  {b.client_name || b.name}
+                </span>
+                <span className="font-mono tabular-nums text-muted-foreground">{b.port}</span>
+                <span className="text-right font-mono tabular-nums text-muted-foreground/60 break-all">
+                  {b.remote_addr || status.local_addresses?.[0] || "-"}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : noBrowsers ? (
+          <div className="text-[11px] text-muted-foreground">
+            <div className="font-medium mb-1">等待浏览器连接...</div>
             <div className="text-muted-foreground/60">
               本机 IP：{status.local_addresses?.join(" / ") || "获取中..."}
             </div>
-          )}
-        </div>
+          </div>
+        ) : (
+          <div className="text-[11px] text-muted-foreground">
+            <span>桥接未启动</span>
+          </div>
+        )}
       </div>
     </div>
   );

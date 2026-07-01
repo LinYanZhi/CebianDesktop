@@ -289,3 +289,14 @@ pub async fn update_browser_name(
         None => Err(format!("浏览器会话 {} 不存在", session_id)),
     }
 }
+
+/// 取消所有浏览器 AI 任务（用户终止桌面 AI 时由前端调用）
+///
+/// 向所有已连接的浏览器广播取消消息，通知浏览器停止 agent/prompt 任务。
+#[tauri::command]
+pub async fn cancel_browser_ai(
+    bridge_state: State<'_, Arc<BridgeState>>,
+) -> Result<(), String> {
+    crate::bridge::cancel_browser_ai_tasks(&bridge_state).await;
+    Ok(())
+}

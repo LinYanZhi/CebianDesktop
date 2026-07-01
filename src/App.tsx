@@ -64,6 +64,7 @@ async function askConfirmation(
 
 export default function App() {
   const [currentView, setCurrentView] = useState<"chat" | "settings">("chat");
+  const [settingsSection, setSettingsSection] = useState<string | undefined>(undefined);
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -804,6 +805,8 @@ export default function App() {
   // 停止当前会话的流式输出
   const handleStop = useCallback(() => {
     toolCancelledRef.current = true;
+    // 通知桥接层取消浏览器 AI 正在执行的任务
+    invoke("cancel_browser_ai").catch(() => {});
     if (!currentSessionId) return;
     const streamState = activeStreamsRef.current.get(currentSessionId);
     if (streamState) {
@@ -1035,7 +1038,12 @@ export default function App() {
         </span>
 
         <div className="flex items-center gap-1">
-          <BridgeStatus />
+          <BridgeStatus onNavigateToBridge={() => {
+            historyBeforeSettingsRef.current = showHistory;
+            setShowHistory(false);
+            setSettingsSection("bridge");
+            setCurrentView("settings");
+          }} />
           <button onClick={() => setDarkMode(!darkMode)}
             className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
             title={darkMode ? "切换浅色主题" : "切换深色主题"}>
@@ -1046,6 +1054,7 @@ export default function App() {
             if (currentView !== "settings") {
               historyBeforeSettingsRef.current = showHistory;
               setShowHistory(false);
+              setSettingsSection(undefined);
               setCurrentView("settings");
             } else {
               setCurrentView("chat");
@@ -1191,7 +1200,12 @@ export default function App() {
               onStartServer={handleStartServer}
               onStopServer={handleStopServer}
               onPortChange={setServerPort}
-              onBack={() => setCurrentView("chat")}
+              onBack={() => {
+                setCurrentView("chat");
+                setSettingsSection(undefined);
+                setShowHistory(historyBeforeSettingsRef.current);
+              }}
+              defaultSection={settingsSection}
             />
           </div>
         </div>

@@ -18,6 +18,7 @@ interface SettingsViewProps {
   onStopServer: () => void;
   onPortChange: (port: number) => void;
   onBack: () => void;
+  defaultSection?: string;
 }
 
 interface NavItem {
@@ -46,7 +47,14 @@ function renderSection(props: SettingsViewProps, active: string) {
 }
 
 export default function SettingsView(props: SettingsViewProps) {
-  const [active, setActive] = useState("providers");
+  const [active, setActive] = useState(props.defaultSection || "providers");
+
+  // 当 defaultSection 变化时切换（例如从 BridgeStatus 点击过来）
+  useEffect(() => {
+    if (props.defaultSection) {
+      setActive(props.defaultSection);
+    }
+  }, [props.defaultSection]);
   const [navMode, setNavMode] = useState<"wide" | "medium" | "compact">("wide");
   const measureRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLDivElement>(null);
