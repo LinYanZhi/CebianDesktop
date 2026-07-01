@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { useStickToBottom } from "./useStickToBottom";
 import { UserMessageBlock, AgentMessageBlock } from "./MessageBlock";
 import { AskUserBlock } from "./AskUser";
-import { ChatInput } from "./ChatInput";
+import { ChatInput, type ChatMode } from "./ChatInput";
 import { getBridgeAgentProgress } from "../../lib/commands";
 import type { AgentProgressMap } from "./AiThoughtProcess";
 
@@ -29,6 +29,7 @@ function ScrollToBottomButton({ visible, onClick }: { visible: boolean; onClick:
 interface ChatViewProps {
   messages: ChatMessage[];
   onSend: (content: string, attachments?: SendAttachment[]) => void;
+  onSendBrowser?: (content: string) => void;
   onStop: () => void;
   onRetry: () => void;
   loading: boolean;
@@ -79,6 +80,9 @@ interface ChatViewProps {
   } | null;
   /** 用户对二次确认的响应 */
   onConfirmResolve?: (confirmed: boolean) => void;
+  /** 聊天模式（桌面 AI / 浏览器 AI 直接对话） */
+  chatMode?: ChatMode;
+  onChatModeChange?: (mode: ChatMode) => void;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -86,8 +90,9 @@ interface ChatViewProps {
 // ═══════════════════════════════════════════════════════════
 
 export default function ChatView({
-  messages, onSend, onStop, onRetry, loading, aiConfig, onConfigChange, onNavigateSettings, onRollback,
+  messages, onSend, onSendBrowser, onStop, onRetry, loading, aiConfig, onConfigChange, onNavigateSettings, onRollback,
   pendingInteractive, onInteractiveResolve, pendingConfirmation, onConfirmResolve,
+  chatMode, onChatModeChange,
 }: ChatViewProps) {
   const INPUT_DRAFT_KEY = "cebiandesktop_chat_input_draft";
   const [inputValue, setInputValue] = useState(() => {
@@ -100,12 +105,9 @@ export default function ChatView({
     try { localStorage.setItem(INPUT_DRAFT_KEY, inputValue); } catch {}
   }, [inputValue]);
 
-  // 轮询浏览器 AI 执行进度（仅在 AI 响应流式输出时）
+  // 轮询浏览器 AI 执行进度（同时监听 Tauri 事件）
   useEffect(() => {
-    if (!loading) {
-      setAgentProgresses({});
-      return;
-    }
+    if (!loading) return; // 不清理 progress，保持可见
     const interval = setInterval(async () => {
       try {
         const result = await getBridgeAgentProgress();
@@ -119,11 +121,28 @@ export default function ChatView({
     return () => clearInterval(interval);
   }, [loading]);
 
+  // 新消息发送时清空旧进度
+  useEffect(() => {
+    const lastMsg = messages[messages.length - 1];
+    if (lastMsg?.role === "user") {
+      setAgentProgresses({});
+    }
+  }, [messages]);
+
   const { containerRef, isAtBottom, scrollToBottom } = useStickToBottom();
 
   // 发送新消息时强制回底
   const send = (attachments?: SendAttachment[]) => {
     if (!inputValue.trim() || loading) return;
+
+    // 浏览器 AI 直接对话模式
+    if (chatMode === "browser") {
+      onSendBrowser?.(inputValue);
+      setInputValue("");
+      try { localStorage.removeItem(INPUT_DRAFT_KEY); } catch {}
+      return;
+    }
+
     if (!hasUsableModel(aiConfig)) {
       toast.error("请先配置 AI 提供商", {
         action: { label: "前往设置", onClick: onNavigateSettings },
@@ -174,7 +193,8 @@ export default function ChatView({
           onSend={(atts) => send(atts)}
           onStop={onStop}
           loading={loading} aiConfig={aiConfig}
-          onConfigChange={onConfigChange} onNavigateSettings={onNavigateSettings} />
+          onConfigChange={onConfigChange} onNavigateSettings={onNavigateSettings}
+          chatMode={chatMode} onChatModeChange={onChatModeChange} />
       </div>
     );
   }
@@ -343,7 +363,8 @@ export default function ChatView({
         onSend={(atts) => send(atts)}
         onStop={onStop}
         loading={loading} aiConfig={aiConfig}
-        onConfigChange={onConfigChange} onNavigateSettings={onNavigateSettings} />
+        onConfigChange={onConfigChange} onNavigateSettings={onNavigateSettings}
+        chatMode={chatMode} onChatModeChange={onChatModeChange} />
     </div>
   );
 }

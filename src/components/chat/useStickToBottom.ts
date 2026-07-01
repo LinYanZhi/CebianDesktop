@@ -19,8 +19,11 @@ import { useRef, useState, useCallback, useEffect } from "react";
  *    只有窗口/容器自身尺寸变化时 ResizeObserver 才触发。
  *    所以内容变化的触发必须靠 MutationObserver。
  *
- * 4. **程序化滚动后设置 programmaticAtRef**：防止 scrollToBottom 触发的 scroll 事件
- *    把「在底部」状态误覆盖掉。
+ * 4. **位置守卫替代时间守卫**（第 8 次修复）：
+ *    原方案用 80ms 时间窗口阻止程序化滚动触发的 scroll 事件误判。但 AI 流式输出
+ *    频率高时，用户在程序化滚动后 80ms 内的手动滚动被忽略 → 滚不上去。
+ *    改为记录上次程序化滚动设置的 scrollTop 值，scroll 事件中对比当前 scrollTop，
+ *    若相同则认为是程序化滚动触发的合成事件，跳过处理；若不同则一定是用户操作。
  *
  * 5. **按钮必须放在 relative 容器内，不能移出去**（见 ChatView.tsx 注释）。
  *
@@ -35,7 +38,8 @@ export function useStickToBottom() {
   // 用户是否「在底部」—— 不要在初始化时默认为 false，否则刚打开就会有置底按钮
   const stickRef = useRef(true);
   const [atBottom, setAtBottom] = useState(true);
-  const programmaticAtRef = useRef(0);
+  // 记录上次程序化滚动设置的 scrollTop 值，用于合成事件检测（替代旧的时间守卫）
+  const lastProgrammaticTopRef = useRef(-1);
 
   // callback ref：当 React 挂载/卸载容器元素时同步到 state
   const containerRef = useCallback((el: HTMLDivElement | null) => {
@@ -44,9 +48,6 @@ export function useStickToBottom() {
 
   // ⚠ 上次修改：60→4。别再改大了。4px 仅防浮点抖动，>4px 就认为用户离开了底部
   const BOTTOM_THRESHOLD_PX = 4;
-
-  // ⚠ 上次修改：80ms 不动。太短会导致用户滚动时按钮闪烁；太长会吃掉用户第一下滚动
-  const PROGRAMMATIC_GUARD_MS = 80;
 
   const isAtBottomNow = useCallback(() => {
     if (!containerEl) return true;
@@ -63,10 +64,10 @@ export function useStickToBottom() {
       // 用户已向上滚动 → 不抢用户滚动位置
       return;
     }
-    // ⚠ 必须在 el.scrollTop = ... 之前记录时间戳
-    //    否则 scroll 事件触发时守卫判断不到
-    programmaticAtRef.current = Date.now();
-    containerEl.scrollTop = containerEl.scrollHeight;
+    // 记录目标 scrollTop，scroll 事件处理程序通过对比来判断是否为合成事件
+    const targetScrollTop = containerEl.scrollHeight - containerEl.clientHeight;
+    lastProgrammaticTopRef.current = targetScrollTop;
+    containerEl.scrollTop = targetScrollTop;
   }, [containerEl]);
 
   // ═══════════════════════════════════════════════════════════
@@ -75,6 +76,7 @@ export function useStickToBottom() {
   //  之前有 bug：流式输出时每帧调 scrollToBottom → 刷新 programmaticAtRef
   //  → 用户滚动被 80ms 守卫拦截。但 scrollToBottom 内有 !stickRef.current
   //  守卫，用户离开底部后不会滚动，也就不会刷新 programmaticAtRef。
+  //  改用位置守卫后此问题不复存在。
   // ═══════════════════════════════════════════════════════════
   useEffect(() => {
     if (!containerEl) return;
@@ -108,13 +110,17 @@ export function useStickToBottom() {
 
   // ═══════════════════════════════════════════════════════════
   //  用户滚动事件：检测用户是否在底部/离开底部
-  //  程序化滚动后 80ms 静默期，避免 scrollToBottom 触发的 scroll 事件误判。
+  //  采用「位置守卫」而非旧版的「时间守卫」：
+  //  如果当前 scrollTop 与上次程序化滚动设置的值一致，则视为此事件由
+  //  scrollToBottom 触发（合成事件），跳过处理；否则一定是用户手动滚动。
   // ═══════════════════════════════════════════════════════════
   useEffect(() => {
     if (!containerEl) return;
     const onScroll = () => {
-      // 程序化滚动后的静默期：忽略程序化滚动触发的 scroll 事件
-      if (Date.now() - programmaticAtRef.current < PROGRAMMATIC_GUARD_MS) return;
+      // 位置守卫：scrollTop 与上次程序化滚动值相同 → 合成事件 → 忽略
+      if (Math.abs(containerEl.scrollTop - lastProgrammaticTopRef.current) <= BOTTOM_THRESHOLD_PX) {
+        return;
+      }
       const now = isAtBottomNow();
       if (stickRef.current !== now) {
         stickRef.current = now;

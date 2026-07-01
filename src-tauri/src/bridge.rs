@@ -46,6 +46,7 @@ use axum::Router;
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use tauri::Emitter;
 use tokio::sync::{oneshot, Mutex};
 
 use crate::ai::{call_llm, AIConfig, ChatMessage, ThinkingLevel};
@@ -97,11 +98,37 @@ pub async fn run_desktop_task(state: &Arc<BridgeState>, task: &str) -> Result<St
                       - 网页操作（搜索、打开网页、读取页面、截图等）\n\
                       - 任何需要在浏览器中完成的操作\n\
                       \n\
+                      ## 浏览器选择规则（重要：多浏览器场景）\n\
+                      \n\
+                      在调用 ask_browser_ai 前，必须先调用 get_connected_browsers 查看浏览器连接状态。\n\
+                      \n\
+                      如果连接了多个浏览器，**必须使用 ask_user 工具让用户选择**，\
+                      不能自作主张选择某一个。例如：\n\
+                      \n\
+                      1. 调用 get_connected_browsers 获取列表\n\
+                      2. 用 ask_user 的 single_select 或 dropdown 类型展示给用户\n\
+                      3. options 的 value 设为浏览器的 session_id、port_name 或 browser_type+profile\n\
+                      4. label 要清晰，如「Chrome (端口 37422)」「Edge (默认浏览器)」\n\
+                      5. 用户选择后，将选项值传入 ask_browser_ai 的 browser_name 参数\n\
+                      \n\
+                      例外情况（不需要问用户）：\n\
+                      - 用户已经明确说了用哪个浏览器（如「用 Chrome 打开百度」）\n\
+                      - 只有一个浏览器连接\n\
+                      \n\
                       ## 具体案例\n\
                       \n\
                       用户说「帮我读读 edge 的 skill」= Edge 浏览器扩展中的技能，不是桌面的本地技能。\
                       你应该先用 get_connected_browsers 查看已连接的浏览器，然后用 ask_browser_ai 委托浏览器 AI\
                       去读取它自己那边的技能。\n\
+                      \n\
+                      ## 会话延续（重要：多轮协作）\n\
+                      \n\
+                      ask_browser_ai 支持会话延续。每次调用返回的结果中包含 conversation_id 字段。\
+                      如果你需要让浏览器 AI 基于之前的操作继续工作（例如先让浏览器 AI 列出技能，\
+                      读完技能后让它再创建新技能），请把上次返回的 conversation_id 传入下一次 \
+                      ask_browser_ai 调用的 conversation_id 参数中。\n\
+                      \n\
+                      这样浏览器 AI 就会记得它之前做了什么，保持上下文连续性，而不是每次重新开始。\n\
                       \n\
                       ## 你的本地工具（不要误用于浏览器任务）\n\
                       \n\
@@ -440,6 +467,10 @@ async fn relay_from_websocket(
                             if let Some(req_id) = params.get("request_id").and_then(|v| v.as_str()) {
                                 let mut inner = state.inner.lock().await;
                                 inner.pending_progress.insert(req_id.to_string(), params.clone());
+                                // 发射 Tauri 事件，前端可实时接收
+                                if let Some(handle) = state.app_handle.lock().unwrap().clone() {
+                                    let _ = handle.emit("browser-ai-progress", params.clone());
+                                }
                             }
                         }
                         continue;
@@ -788,14 +819,22 @@ pub async fn execute_browser_tool(
     let is_agent_prompt = name == "ask_browser_ai";
     let request = if is_agent_prompt {
         let task = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
+        // 提取 conversation_id，如果有则透传给浏览器以延续会话上下文
+        let conversation_id = args.get("conversation_id")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+        let mut params = json!({
+            "task": task,
+            "timeout": 300_000,
+        });
+        if let Some(cid) = conversation_id {
+            params["conversation_id"] = json!(cid);
+        }
         json!({
             "jsonrpc": "2.0",
             "id": full_id,
             "method": "agent/prompt",
-            "params": {
-                "task": task,
-                "timeout": 300_000,
-            }
+            "params": params,
         })
     } else {
         json!({
@@ -835,6 +874,7 @@ pub async fn execute_browser_tool(
 
     // ── ask_browser_ai 结果后处理 ──
     // 展平返回结构，提取有意义的文本内容，让桌面 AI 直接能看懂
+    // 同时提取浏览器返回的 conversation_id，供后续会话延续
     if is_agent_prompt {
         let task_text = args.get("task").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -844,10 +884,28 @@ pub async fn execute_browser_tool(
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
+        // 提取浏览器返回的 conversation_id（如果浏览器支持会话延续）
+        let browser_conversation_id = raw_result
+            .get("conversation_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
         let success = raw_result
             .get("success")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
+
+        // 构建带 conversation_id 的响应，方便桌面 AI 后续延续对话
+        let make_response = |summary: String| -> Value {
+            let mut resp = json!({
+                "summary": summary,
+            });
+            if !browser_conversation_id.is_empty() {
+                resp["conversation_id"] = json!(browser_conversation_id);
+            }
+            resp
+        };
 
         if !report_text.is_empty() {
             // 检查报告是否包含有意义的工具调用记录或 AI 回复
@@ -867,20 +925,20 @@ pub async fn execute_browser_tool(
                 } else {
                     report_text.to_string()
                 };
-                return Ok(json!(summary));
+                return Ok(make_response(summary));
             }
         }
 
         // 报告为空或没有有意义的内容，生成更友好的替代消息
         if success {
-            Ok(json!(format!(
+            Ok(make_response(format!(
                 "✅ 浏览器 AI 已成功完成任务「{}」。\n\
                  （浏览器 AI 未返回详细执行报告，但操作已执行完毕。\n\
                  桌面 AI 注意：浏览器状态已更新，不需要额外验证或补救操作。）",
                 task_text
             )))
         } else {
-            Ok(json!(format!(
+            Ok(make_response(format!(
                 "❌ 浏览器 AI 执行失败，错误信息: {}",
                 report_text
             )))
@@ -1066,7 +1124,7 @@ pub fn get_browser_tool_definitions() -> Vec<Value> {
         // 工具调用和结果，以及浏览器 AI 的总结。
         json!({
             "name": "ask_browser_ai",
-            "description": "【⭐⭐⭐ 强烈推荐：所有浏览器操作的默认首选】让浏览器端的 AI 助手自主执行一个高层次任务。浏览器 AI 拥有搜索网页、读取页面内容、点击元素、填写表单、执行 JS、截图等完整工具链，会自主规划、执行并返回完整的执行报告（做了什么、结果如何、当前浏览器状态）。\n\n使用原则：\n1. 重要：ask_browser_ai 返回的结果已包含完整的浏览器状态和执行详情，你不需要再额外调用任何工具验证\n2. 对于任何多步骤的浏览器操作（搜索+阅读、打开多个页面、填写表单+提交等），必须使用此工具，不要手动调用多个低级工具\n3. 对于简单的单步操作（如只需要打开一个页面、只需要截图），也可以直接用对应的低级工具\n\n可指定 browser_name 选择目标浏览器。",
+            "description": "【⭐⭐⭐ 强烈推荐：所有浏览器操作的默认首选】让浏览器端的 AI 助手自主执行一个高层次任务。浏览器 AI 拥有搜索网页、读取页面内容、点击元素、填写表单、执行 JS、截图等完整工具链，会自主规划、执行并返回完整的执行报告（做了什么、结果如何、当前浏览器状态）。\n\n使用原则：\n1. 重要：ask_browser_ai 返回的结果已包含完整的浏览器状态和执行详情，你不需要再额外调用任何工具验证\n2. 对于任何多步骤的浏览器操作（搜索+阅读、打开多个页面、填写表单+提交等），必须使用此工具，不要手动调用多个低级工具\n3. 对于简单的单步操作（如只需要打开一个页面、只需要截图），也可以直接用对应的低级工具\n\n可指定 browser_name 选择目标浏览器。\n\n会话延续：如果需要让浏览器 AI 基于之前的操作继续工作（延续上下文），把上次返回的 conversation_id 填入此参数。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1074,7 +1132,11 @@ pub fn get_browser_tool_definitions() -> Vec<Value> {
                         "type": "string",
                         "description": "要浏览器 AI 执行的任务描述。应该是一个高层次的目标，描述清晰完整。例如：\n- 「先打开百度首页 https://www.baidu.com，然后在百度搜索框输入「今日天气」并截图搜索结果」\n- 「打开 B 站热门视频页 https://www.bilibili.com/v/popular，找到播放量最高的 3 个视频并告诉我标题和播放量」\n- 「在 Google 搜索「Cebian 浏览器扩展」并打开搜索结果中的第一个链接，然后读取该页面的内容并总结」"
                     },
-                    "browser_name": browser_param.clone()
+                    "browser_name": browser_param.clone(),
+                    "conversation_id": {
+                        "type": "string",
+                        "description": "（可选）浏览器 AI 会话延续 ID。传入上次 ask_browser_ai 返回结果中的 conversation_id，可以让浏览器 AI 在上次对话的基础上继续工作，保留之前的操作上下文。\n\n首次调用时不需要传，浏览器 AI 会自动创建新会话并在结果中返回 conversation_id。后续如果需要让浏览器 AI 基于前一次的工作继续（例如「刚才打开的页面，再帮我点击某个按钮」），请传入上一次返回的 conversation_id。\n\n每次返回结果都包含 conversation_id，下次继续时传入即可。"
+                    }
                 },
                 "required": ["task"]
             }

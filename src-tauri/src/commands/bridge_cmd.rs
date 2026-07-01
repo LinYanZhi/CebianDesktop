@@ -250,6 +250,25 @@ pub async fn get_bridge_agent_progress(
     Ok(crate::bridge::get_all_agent_progresses(&bridge_state).await)
 }
 
+/// 直接向浏览器 AI 发送消息（用户直接与浏览器 AI 对话）
+///
+/// 将用户输入直接作为 ask_browser_ai 任务发送到浏览器 AI，
+/// 返回浏览器 AI 的执行结果。
+#[tauri::command]
+pub async fn send_browser_message(
+    bridge_state: State<'_, Arc<BridgeState>>,
+    task: String,
+    browser_session_id: Option<String>,
+) -> Result<Value, String> {
+    let result = crate::bridge::execute_browser_tool(
+        &bridge_state,
+        "ask_browser_ai",
+        &serde_json::json!({"task": task}),
+        browser_session_id.as_deref(),
+    ).await?;
+    Ok(result)
+}
+
 /// 对指定浏览器会话进行连通性测试（ping），返回延迟毫秒数
 #[tauri::command]
 pub async fn ping_browser(

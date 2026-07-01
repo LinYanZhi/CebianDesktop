@@ -119,6 +119,8 @@ pub fn run() {
             commands::disconnect_browser,
             commands::update_browser_name,
             commands::cancel_browser_ai,
+            commands::get_bridge_agent_progress,
+            commands::send_browser_message,
             commands::save_app_config,
             commands::load_app_config,
             commands::save_conversations,

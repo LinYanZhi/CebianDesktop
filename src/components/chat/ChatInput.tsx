@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Paperclip, Image, FileText, Mic, Square, ArrowUp, X } from "lucide-react";
+import { Paperclip, Image, FileText, Mic, Square, ArrowUp, X, Monitor, Globe } from "lucide-react";
 import type { AIConfig, SendAttachment } from "../../lib/types";
 import { getActiveConfig } from "../../lib/types";
 import { listPrompts, replaceTemplateVars } from "../../lib/prompts";
@@ -8,6 +8,8 @@ import { useSpeechRecognition } from "../../lib/useSpeechRecognition";
 import { toast } from "sonner";
 import { generateId } from "./chat-types";
 import { ModelSelector, ThinkingLevelSelector } from "./ModelSelector";
+
+export type ChatMode = "desktop" | "browser";
 
 // ═══════════════════════════════════════════════════════════
 //  附件 Chips
@@ -44,10 +46,12 @@ function AttachmentChips({
 
 export function ChatInput({
   inputValue, setInputValue, onSend, onStop, loading, aiConfig, onConfigChange, onNavigateSettings,
+  chatMode, onChatModeChange,
 }: {
   inputValue: string; setInputValue: (v: string) => void;
   onSend: (attachments: SendAttachment[]) => void; onStop: () => void; loading: boolean;
   aiConfig: AIConfig; onConfigChange: (c: AIConfig) => void; onNavigateSettings: () => void;
+  chatMode?: ChatMode; onChatModeChange?: (mode: ChatMode) => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -319,7 +323,7 @@ export function ChatInput({
               adjustHeight();
             }}
             onKeyDown={handleKeyDown}
-            placeholder='输入消息，输入 "/" 可唤起提示词...'
+            placeholder={chatMode === "browser" ? '输入发送给浏览器 AI 的消息...' : '输入消息，输入 "/" 可唤起提示词...'}
             rows={1}
             className="w-full bg-transparent resize-none px-4 py-2 text-sm outline-none placeholder:text-muted-foreground/50"
           />
@@ -328,16 +332,37 @@ export function ChatInput({
           <div className="flex items-center justify-between px-3 pb-3">
             <div className="flex items-center gap-2">
               {/* 模型选择 */}
-              <ModelSelector aiConfig={aiConfig} onNavigate={onNavigateSettings} onModelSelect={handleModelSelect} />
+              {chatMode !== "browser" && (
+                <>
+                  <ModelSelector aiConfig={aiConfig} onNavigate={onNavigateSettings} onModelSelect={handleModelSelect} />
 
-              {/* 思考级别 — 下拉选择（仿 CeBian Popover） */}
-              {(isReasoningModel || aiConfig.thinking_level !== "off") && (
-                <div className="border-l border-border pl-2">
-                  <ThinkingLevelSelector
-                    level={aiConfig.thinking_level}
-                    onSelect={(level) => onConfigChange({ ...aiConfig, thinking_level: level })}
-                  />
-                </div>
+                  {/* 思考级别 — 下拉选择（仿 CeBian Popover） */}
+                  {(isReasoningModel || aiConfig.thinking_level !== "off") && (
+                    <div className="border-l border-border pl-2">
+                      <ThinkingLevelSelector
+                        level={aiConfig.thinking_level}
+                        onSelect={(level) => onConfigChange({ ...aiConfig, thinking_level: level })}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
+
+              {/* AI 目标切换按钮 */}
+              {onChatModeChange && (
+                <button
+                  onClick={() => onChatModeChange(chatMode === "browser" ? "desktop" : "browser")}
+                  disabled={loading}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded-md text-xs transition-colors border ${
+                    chatMode === "browser"
+                      ? "bg-primary/10 text-primary border-primary/30"
+                      : "text-muted-foreground hover:text-foreground border-border hover:bg-accent"
+                  }`}
+                  title={chatMode === "browser" ? "当前：浏览器 AI" : "当前：桌面 AI"}
+                >
+                  {chatMode === "browser" ? <Globe size={12} /> : <Monitor size={12} />}
+                  <span>{chatMode === "browser" ? "浏览器" : "桌面"}</span>
+                </button>
               )}
             </div>
 

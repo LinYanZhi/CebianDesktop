@@ -192,6 +192,11 @@ fn build_api_messages(config: &AIConfig, messages: &[ChatMessage]) -> Vec<Value>
              - 浏览器 AI：执行（打开页面、搜索、点击、填写表单、执行 JS 等所有写入操作）\n\n\
              - 禁止：绝对不要用 execute_js、click_element、fill_form 等低级写入工具直接操作浏览器\n\n\
              ### 任务描述规范\n\n\
+             调用 ask_browser_ai 前，必须先调用 get_connected_browsers 查看浏览器连接状态。\n\n\
+             如果连接了多个浏览器，**必须用 ask_user 工具让用户选择**，不能自作主张。\
+             用 single_select 或 dropdown 展示选项，label 要清晰（如「Chrome (端口 37422)」「Edge」），\
+             value 设 browser_name，用户选择后传入 ask_browser_ai 的 browser_name 参数。\n\n\
+             例外（不需要问）：用户已明确指定浏览器，或只有 1 个浏览器连接。\n\n\
              调用 ask_browser_ai 时，task 参数必须包含：\n\n\
              1. 具体目标 —— 要做什么，包含 URL、搜索词等关键信息\n\n\
              2. 操作步骤 —— 先做什么、再做什么\n\n\

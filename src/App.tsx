@@ -4,7 +4,8 @@ import ChatView from "./components/chat/ChatView";
 import SettingsView from "./components/settings/SettingsView";
 import { SkinPopover } from "./components/SkinPopover";
 import { BridgeStatus } from "./components/BridgeStatus";
-import { getTools, executeTool, confirmExecution, cancelExecution, startMcpServer, stopMcpServer } from "./lib/commands";
+import { getTools, executeTool, confirmExecution, cancelExecution, startMcpServer, stopMcpServer, sendBrowserMessage } from "./lib/commands";
+import type { ChatMode } from "./components/chat/ChatInput";
 import { loadAIConfig, saveAIConfig, loadConversationsFromStorage, saveConversationsToStorage, loadTheme, saveTheme } from "./lib/db";
 import type { Conversation, ChatMessage, AIConfig, SendAttachment, ToolCall, StreamState } from "./lib/types";
 import { getActiveConfig } from "./lib/types";
@@ -78,6 +79,8 @@ export default function App() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [ctxConv, setCtxConv] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [chatMode, setChatMode] = useState<ChatMode>("desktop");
+  const [isBrowserLoading, setIsBrowserLoading] = useState(false);
   const unlistenRef = useRef<(() => void)[]>([]);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -696,9 +699,19 @@ export default function App() {
                   } as ChatMessage);
                 }
               } else {
+                // ask_browser_ai 特殊处理：提取 summary 文本供 AskBrowserAiResult 组件渲染
+                let toolContent: string;
+                if (toolName === "ask_browser_ai" && result && typeof result === "object" && result.summary) {
+                  toolContent = result.summary;
+                  if (result.conversation_id) {
+                    toolContent += `\n\n> 💡 会话延续 ID: \`${result.conversation_id}\` —— 下次调用 ask_browser_ai 时传入此 ID 可延续浏览器 AI 的上下文`;
+                  }
+                } else {
+                  toolContent = JSON.stringify(result, null, 2);
+                }
                 toolResults.push({
                   role: "tool",
-                  content: JSON.stringify(result, null, 2),
+                  content: toolContent,
                   tool_call_id: tc.id,
                   name: toolName,
                 } as ChatMessage);
@@ -907,6 +920,50 @@ export default function App() {
   const handleStopServer = useCallback(async () => {
     try { await stopMcpServer(); setServerRunning(false); } catch {}
   }, []);
+
+  // ── 直接发送消息到浏览器 AI ──
+  const handleSendBrowser = useCallback(async (content: string) => {
+    if (!content.trim()) return;
+    const sessionId = currentSessionId;
+    if (!sessionId) return;
+
+    setIsBrowserLoading(true);
+    // 添加用户消息
+    const userMsg: ChatMessage = { role: "user", content };
+    setMessages(prev => {
+      const updated = [...prev, userMsg, { role: "assistant", content: "" } as ChatMessage];
+      updateCurrentConversation(updated);
+      return updated;
+    });
+
+    try {
+      const result = await sendBrowserMessage(content);
+      const resultStr = typeof result === "string"
+        ? result
+        : (result?.summary || result?.result || JSON.stringify(result));
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role === "assistant") {
+          updated[updated.length - 1] = { ...last, content: resultStr };
+          updateCurrentConversation(updated);
+        }
+        return updated;
+      });
+    } catch (err: any) {
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role === "assistant") {
+          updated[updated.length - 1] = { ...last, content: `❌ 浏览器 AI 执行失败: ${err.message || err}` };
+          updateCurrentConversation(updated);
+        }
+        return updated;
+      });
+    } finally {
+      setIsBrowserLoading(false);
+    }
+  }, [currentSessionId]);
 
   const currentConv = conversations.find((c) => c.id === currentSessionId);
   const isCurrentStreaming = currentSessionId ? activeStreamsRef.current.has(currentSessionId) : false;
@@ -1172,9 +1229,10 @@ export default function App() {
           <ChatView
             messages={messages}
             onSend={handleSend}
+            onSendBrowser={handleSendBrowser}
             onStop={handleStop}
             onRetry={handleRetry}
-            loading={isCurrentStreaming}
+            loading={isCurrentStreaming || isBrowserLoading}
             aiConfig={aiConfig}
             onConfigChange={setAiConfig}
             onNavigateSettings={() => setCurrentView("settings")}
@@ -1183,6 +1241,8 @@ export default function App() {
             onInteractiveResolve={handleInteractiveResolve}
             pendingConfirmation={pendingConfirmation}
             onConfirmResolve={handleConfirmResolve}
+            chatMode={chatMode}
+            onChatModeChange={setChatMode}
           />
 
           <div

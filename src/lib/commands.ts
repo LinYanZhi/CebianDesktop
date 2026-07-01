@@ -127,3 +127,7 @@ export async function reloadBridgeConfig(): Promise<string> {
 export async function getBridgeAgentProgress(): Promise<any> {
   return invoke("get_bridge_agent_progress");
 }
+
+export async function sendBrowserMessage(task: string, browserSessionId?: string): Promise<any> {
+  return invoke("send_browser_message", { task, browserSessionId: browserSessionId || null });
+}
