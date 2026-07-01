@@ -105,6 +105,24 @@ export function getActiveConfig(config: AIConfig): {
   return result;
 }
 
+/** 单条工具执行记录 */
+export interface ToolExecutionRecord {
+  /** 工具调用 ID */
+  toolCallId: string;
+  /** 工具名称 */
+  toolName: string;
+  /** 工具参数（JSON 字符串） */
+  arguments: string;
+  /** 工具执行结果 */
+  result: string;
+  /** 执行是否成功 */
+  success: boolean;
+  /** 执行时间戳 */
+  timestamp: number;
+  /** 属于第几轮工具调用（从 0 开始） */
+  round: number;
+}
+
 export interface Conversation {
   id: string;
   title: string;
@@ -113,6 +131,8 @@ export interface Conversation {
   updatedAt: number;
   /** 最近一次上下文压缩的时间戳 */
   compactedAt?: number;
+  /** 独立的工具执行日志（不会随上下文压缩而丢失） */
+  toolLogs?: ToolExecutionRecord[];
 }
 
 export interface MCPServerStatus {
@@ -132,6 +152,9 @@ export interface StreamState {
   sessionId: string;
   /** 流开始前的消息（含刚发出的用户消息），用于重建完整数组 */
   prevMessages: ChatMessage[];
+  /** 当前工作消息列表（随工具调用轮次动态增长，包含完整 tool_calls + tool results）
+   *  供 visibilitychange 等需要保存最新状态的场景使用 */
+  currentMessages: ChatMessage[];
   fullContent: string;
   fullThinking: string;
   usage?: { input: number; output: number };

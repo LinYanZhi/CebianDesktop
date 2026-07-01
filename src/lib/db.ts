@@ -149,6 +149,7 @@ export async function loadConversationsFromStorage(): Promise<Conversation[]> {
       messages: r.messages || [],
       createdAt: typeof r.createdAt === "number" ? r.createdAt : new Date(r.createdAt || Date.now()).getTime(),
       updatedAt: typeof r.updatedAt === "number" ? r.updatedAt : new Date(r.updatedAt || Date.now()).getTime(),
+      toolLogs: r.toolLogs || r.tool_logs || [],
     }));
   } catch (e) {
     console.error("loadConversations 失败:", e);
@@ -166,6 +167,7 @@ export async function saveConversationsToStorage(conversations: Conversation[]):
       id: c.id,
       title: c.title,
       messages: c.messages,
+      toolLogs: c.toolLogs || [],
       createdAt: typeof c.createdAt === "number" ? new Date(c.createdAt).toISOString() : String(c.createdAt),
       updatedAt: typeof c.updatedAt === "number" ? new Date(c.updatedAt).toISOString() : String(c.updatedAt),
     }));

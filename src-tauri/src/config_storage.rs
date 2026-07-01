@@ -165,6 +165,9 @@ pub struct Conversation {
     pub created_at: String,
     #[serde(rename = "updatedAt")]
     pub updated_at: String,
+    /// 独立的工具执行日志，与 messages 分开存储，避免上下文压缩时丢失
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_logs: Option<Vec<serde_json::Value>>,
 }
 
 fn conversations_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {

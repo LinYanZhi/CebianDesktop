@@ -70,13 +70,18 @@ fn build_agent(insecure: bool, timeout_read_secs: u64) -> Result<ureq::Agent, St
         .timeout_connect(Duration::from_secs(10))
         .timeout_read(Duration::from_secs(timeout_read_secs));
 
-    if insecure {
-        let tls = native_tls::TlsConnector::builder()
+    // 总是配置 TLS 连接器，insecure 仅控制证书验证
+    let tls = if insecure {
+        native_tls::TlsConnector::builder()
             .danger_accept_invalid_certs(true)
             .build()
-            .map_err(|e| format!("创建 TLS 连接器失败: {}", e))?;
-        builder = builder.tls_connector(Arc::new(tls));
-    }
+            .map_err(|e| format!("创建 TLS 连接器失败: {}", e))?
+    } else {
+        native_tls::TlsConnector::builder()
+            .build()
+            .map_err(|e| format!("创建 TLS 连接器失败: {}", e))?
+    };
+    builder = builder.tls_connector(Arc::new(tls));
 
     // 自动读取系统代理
     if let Some(proxy_url) = get_proxy_from_env() {
