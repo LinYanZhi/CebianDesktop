@@ -633,6 +633,31 @@ export default function App() {
               }
             },
 
+            /** 流式工具调用参数逐步构建，实时更新 UI 让用户看到参数在填充 */
+            onToolCallStream: (toolCalls) => {
+              if (sessionIdRef.current === streamSessionId) {
+                setMessages((prev) => {
+                  const updatedMsgs = [...prev];
+                  const last = updatedMsgs[updatedMsgs.length - 1];
+                  // 确保最后一条是 assistant 消息，然后更新 tool_calls
+                  if (last?.role === "assistant") {
+                    updatedMsgs[updatedMsgs.length - 1] = {
+                      ...last,
+                      tool_calls: toolCalls as any,
+                    };
+                  } else {
+                    // 如果还没有 assistant 消息（极少见），追加一条
+                    updatedMsgs.push({
+                      role: "assistant",
+                      content: "",
+                      tool_calls: toolCalls as any,
+                    });
+                  }
+                  return updatedMsgs;
+                });
+              }
+            },
+
             onToolCalls: (_toolCalls, round) => {
               currentRoundRef.current = round;
             },

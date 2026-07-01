@@ -9,10 +9,12 @@ use serde_json::{json, Value};
 
 use crate::workspace;
 
+mod excel_tools;
 mod file_ops;
 mod system_ops;
 mod net_ops;
 
+use excel_tools::*;
 use file_ops::*;
 use system_ops::*;
 use net_ops::*;
@@ -232,6 +234,14 @@ pub fn get_tool_definitions() -> Vec<Value> {
              \n\n注意：路径必须是绝对路径（如 C:\\Users\\用户名\\Desktop\\test.txt）。不支持读取二进制文件（如图片、视频）。\
              \n\n适合场景：查看用户提到的文件内容、阅读代码、检查配置文件、查看日志等。",
             &[("path", "string", "要读取的文件绝对路径，例如 C:\\Users\\用户名\\Desktop\\note.txt")], ["path"]),
+
+        td!("read_excel",
+            "读取 Excel 文件（.xlsx/.xls/.xlsb/.ods）的内容。返回所有 sheet 的名称、行数/列数，以及每 sheet 的数据内容（纯文本，前 200 行）。\
+             \n\n支持格式：.xlsx、.xls、.xlsb、.ods\
+             \n不需要安装 Python 或任何外部库。\
+             \n注意：路径必须是绝对路径。如果文件很大，最多返回前 200 行数据。\
+             \n\n适合场景：查看用户的 Excel 表格数据、分析账单/报表、提取电子表格信息等。",
+            &[("path", "string", "Excel 文件的绝对路径，例如 C:\\Users\\用户名\\Desktop\\报表.xlsx")], ["path"]),
 
         td!("write_new_file",
             "写入内容到文件。如果文件已存在，会被覆盖；如果目录不存在，会自动创建。\
@@ -484,6 +494,184 @@ pub fn get_tool_definitions() -> Vec<Value> {
             &[
                 ("name", "string", "要删除的技能名称"),
             ], ["name"]),
+
+        // ═══════════════════════════════════════════════════════════
+        //  新增：批量文件操作
+        // ═══════════════════════════════════════════════════════════
+        td!("read_local_files",
+            "批量读取多个本地文件。支持图片（返回 base64 data URI）、文本文件和二进制文件。\
+             \n\n参数：paths 为文件绝对路径数组。\
+             \n- 图片（png/jpg/gif/webp/bmp/svg/tiff/ico）：返回 base64 data URI + 宽高\
+             \n- 文本（txt/md/json/xml/js/py/rs 等）：返回纯文本内容\
+             \n- 二进制：返回文件大小和类型信息\
+             \n\n适合场景：一次读取多个文件、读取图片供 AI 分析、批量查看文档内容等。",
+            &[("paths", "array", "文件绝对路径列表，例如 [\"C:\\\\图片\\\\1.png\", \"C:\\\\文档\\\\note.txt\"]")], ["paths"]),
+
+        td!("read_csv_as_json",
+            "读取 CSV 文件并解析为 JSON 格式返回。第一行作为列名，每行数据转为 {列名: 值} 对象。\
+             \n\n适合场景：查看 CSV 数据内容、分析报表、提取表格信息等。",
+            &[("path", "string", "CSV 文件的绝对路径"), ("encoding", "string", "文件编码（可选，默认 utf-8，暂只支持 utf-8）")], ["path"]),
+
+        td!("extract_archive",
+            "解压压缩包（.zip / .tar.gz / .tar）到指定目录。\
+             \n\n如果不指定 target_dir，会解压到压缩包同目录下的同名文件夹。\
+             \n\n适合场景：解压用户下载的压缩包、安装包、导出数据等。",
+            &[("path", "string", "压缩包的绝对路径"), ("target_dir", "string", "解压目标目录（可选，默认压缩包同目录下的同名文件夹")], ["path"]),
+
+        td!("compress_files",
+            "将多个文件或目录压缩为 .zip 文件。\
+             \n\n注意：只支持输出 .zip 格式。目录会递归添加所有子文件。\
+             \n\n适合场景：打包多个文件发送、备份文件、归档项目代码等。",
+            &[("paths", "array", "要压缩的文件/目录路径列表"), ("output", "string", "输出的 .zip 文件绝对路径")], ["paths", "output"]),
+
+        // ═══════════════════════════════════════════════════════════
+        //  新增：Excel 数据处理
+        // ═══════════════════════════════════════════════════════════
+        td!("read_excel_as_json",
+            "读取 Excel 文件（.xlsx/.xls/.xlsb/.ods）的内容，每行数据以列名为键返回 JSON 对象。\
+             \n与 read_excel 不同，此工具返回结构化 JSON（列名+值），适合后续数据处理。\
+             \nsheet_name 可选，不传则读取第一个 sheet。\
+             \n\n适合场景：查看 Excel 数据、为后续 query/transform 等工具做数据准备。",
+            &[("path", "string", "Excel 文件的绝对路径"), ("sheet_name", "string", "工作表名（可选，不传则用第一个 sheet）")], ["path"]),
+
+        td!("excel_query",
+            "对 Excel 文件进行条件筛选、分组聚合、去重、分页查询。\
+             \n\n筛选参数（可组合使用，filter_logic 控制 and/or）：\
+             \n- filter_col + filter_val：精确匹配\
+             \n- filter_col + filter_like：模糊包含\
+             \n- filter_col + filter_in：IN 列表匹配\
+             \n- filter_gt：大于（数字），如 \"100\"\
+             \n- filter_lt：小于（数字），如 \"50\"\
+             \n\n分组聚合：\
+             \n- group_by：按某列分组计数\
+             \n- agg_col + agg_func（sum/avg/max/min）：聚合计算\
+             \n\n去重：\
+             \n- distinct：对某列去重，返回所有唯一值\
+             \n\n分页：\
+             \n- limit：返回行数上限（默认 50）\
+             \n- offset：分页偏移（默认 0）\
+             \n\n适合场景：从 Excel 中筛选出符合条件的行、按维度分组统计、查找不重复的值等。",
+            &[
+                ("path", "string", "Excel 文件路径"),
+                ("sheet", "string", "工作表名（可选）"),
+                ("select", "string", "返回的列，逗号分隔（可选，不传返回全部）"),
+                ("filter_col", "string", "筛选条件列名"),
+                ("filter_val", "string", "筛选值（精确匹配，传 \"null\" 查空值）"),
+                ("filter_like", "string", "模糊匹配关键词"),
+                ("filter_in", "string", "IN 列表（JSON 字符串数组）"),
+                ("filter_gt", "string", "大于（数字值）"),
+                ("filter_lt", "string", "小于（数字值）"),
+                ("filter_logic", "string", "多条件逻辑：and（默认）| or"),
+                ("group_by", "string", "分组列名"),
+                ("agg_col", "string", "聚合列名（配合 group_by）"),
+                ("agg_func", "string", "聚合函数：count/sum/avg/max/min"),
+                ("limit", "string", "返回行数上限，默认 50"),
+                ("offset", "string", "分页偏移，默认 0"),
+                ("distinct", "string", "对某列去重"),
+            ], ["path"]),
+
+        td!("excel_summary",
+            "快速统计 Excel 各列概况：非空值数、唯一值数、数值列求和、样例值。\
+             \n\n适合场景：快速了解 Excel 有多少行、哪些列有缺失值、数值列的总和等概览信息。",
+            &[("path", "string", "Excel 文件路径"), ("sheet", "string", "工作表名（可选）")], ["path"]),
+
+        td!("excel_transform",
+            "对 Excel 某列做正则提取/替换，返回变换结果（不修改原文件）。\
+             \n\n典型场景：从箱唛 \"MH-BIHMO-P-YQ902028-LL1\" 提取后缀 \"LL1\"。\
+             \n\n参数：\
+             \n- source_col：源列名\
+             \n- target_col：新列名\
+             \n- regex：正则表达式，提取第一个捕获组（group 1）或整个匹配\
+             \n- limit：返回样例行数，默认 20",
+            &[
+                ("path", "string", "Excel 文件路径"),
+                ("source_col", "string", "源列名"),
+                ("target_col", "string", "新列名（变换后的结果列）"),
+                ("regex", "string", "正则表达式，提取第一个捕获组 (group 1)"),
+                ("sheet", "string", "工作表名（可选）"),
+                ("limit", "string", "返回样例行数，默认 20"),
+            ], ["path", "source_col", "target_col", "regex"]),
+
+        td!("excel_dedup",
+            "查找 Excel 中的重复行，支持按多列联合判定重复。\
+             \n\naction 参数：\
+             \n- count（默认）：统计重复组数量和有重复的总行数\
+             \n- list：列出重复组详情（key 和重复次数）\
+             \n\n适合场景：检查数据是否有重复录入、找出重复的订单号等。",
+            &[
+                ("path", "string", "Excel 文件路径"),
+                ("key_cols", "string", "判定重复的关键列，逗号分隔，如 \"sku,箱唛\""),
+                ("action", "string", "操作：count（统计）| list（列出详情），默认 count"),
+                ("sheet", "string", "工作表名（可选）"),
+                ("limit", "string", "返回上限，默认 50"),
+            ], ["path", "key_cols"]),
+
+        td!("excel_join",
+            "关联合并两个 Excel 表，支持正则提取关联键。\
+             \n\n典型场景：箱唛 \"MH-BIHMO-P-YQ902028-LL1\" 提取后缀 → 匹配三方采购单。\
+             \n\n参数：\
+             \n- left/right：左右表文件路径\
+             \n- left_key/right_key：关联列名\
+             \n- left_key_extract/right_key_extract：正则提取关联键（可选）\
+             \n- join_type：inner（默认）| left | outer\
+             \n- select：返回列，逗号分隔（可选）\
+             \n- limit：返回行数上限，默认 50",
+            &[
+                ("left", "string", "左表文件路径"),
+                ("left_key", "string", "左表关联列名"),
+                ("right", "string", "右表文件路径"),
+                ("right_key", "string", "右表关联列名"),
+                ("left_sheet", "string", "左表 sheet 名（可选）"),
+                ("right_sheet", "string", "右表 sheet 名（可选）"),
+                ("left_key_extract", "string", "左表关联键正则（可选），用于从列值提取实际 key"),
+                ("right_key_extract", "string", "右表关联键正则（可选），用于从列值提取实际 key"),
+                ("join_type", "string", "关联类型：inner（默认）| left | outer"),
+                ("select", "string", "返回列，逗号分隔（可选，不传返回全部）"),
+                ("limit", "string", "返回行数上限，默认 50"),
+            ], ["left", "left_key", "right", "right_key"]),
+
+        td!("excel_union",
+            "纵向合并多个 Excel 文件（按列对齐，追加行），输出到新文件。\
+             \n\n典型场景：泰.xlsx + 马来.xlsx + 越.xlsx → 东南亚汇总.xlsx。\
+             \n\n适合场景：合并多个结构相同的报表、汇总不同月份的数据等。",
+            &[
+                ("files", "array", "源文件路径列表"),
+                ("output", "string", "输出文件绝对路径"),
+                ("sheet", "string", "工作表名，默认 Sheet1"),
+            ], ["files", "output"]),
+
+        td!("json_to_xlsx",
+            "将 JSON 数组写入 Excel 文件。支持 overwrite（覆盖）和 append（追加）模式。\
+             \n\n典型场景：浏览器爬取的数据 → 保存为 xlsx 供后续分析。\
+             \n\ndata_json 是一个 JSON 数组字符串，如 '[{\"收货单号\":\"PO123\",\"金额\":100}]'。\
+             \noverwrite 为 true 时覆盖已有文件，false 时追加到已有文件。",
+            &[
+                ("path", "string", "目标 xlsx 文件绝对路径"),
+                ("sheet", "string", "工作表名"),
+                ("data_json", "string", "JSON 数组字符串"),
+                ("mode", "string", "写入模式：overwrite（覆盖，默认）| append（追加）"),
+            ], ["path", "sheet", "data_json"]),
+
+        td!("data_pipeline",
+            "一次性执行多步骤数据处理流水线（load → transform → join → query → export）。\
+             \n\npipeline_json 是一个 JSON 配置，描述所有步骤：\
+             \n{\"steps\": [\
+             \n  {\"action\": \"load\", \"path\": \"a.xlsx\", \"as\": \"cargo\"},\
+             \n  {\"action\": \"transform\", \"source\": \"cargo\", \"col\": \"三方采购单\",\
+             \n   \"extract\": \"^(\\\\\\\\w+)\", \"new_col\": \"前缀\"},\
+             \n  {\"action\": \"join\", \"left\": \"cargo\", \"right\": \"malay\",\
+             \n   \"left_key\": \"前缀\", \"right_key\": \"箱唛后缀\", \"type\": \"left\", \"output\": \"merged\"},\
+             \n  {\"action\": \"query\", \"source\": \"merged\",\
+             \n   \"filter_col\": \"收货单号\", \"filter_val\": \"null\", \"output\": \"unmatched\"},\
+             \n  {\"action\": \"export\", \"source\": \"merged\",\
+             \n   \"path\": \"C:/data/结果.xlsx\", \"sheet\": \"result\"}\
+             \n]}\
+             \n\n支持的 action：load, transform, join, query, export\
+             \n\n适合场景：复杂的数据处理流程，避免多次调用独立工具。",
+            &[
+                ("pipeline_json", "string", "JSON 字符串，描述数据处理步骤"),
+                ("limit", "string", "返回步骤摘要数上限，默认 50"),
+            ], ["pipeline_json"]),
     ]
 }
 
@@ -521,6 +709,11 @@ pub fn execute_tool(name: &str, args: &Value, app: Option<&tauri::AppHandle>) ->
             let path = arg_str(args, "path")?;
             validate_path(path, true)?;
             Ok(json!({"content": read_local_file(path)?}))
+        }
+        "read_excel" => {
+            let path = arg_str(args, "path")?;
+            validate_path(path, true)?;
+            read_excel(path)
         }
         "write_new_file" => {
             let path = arg_str(args, "path")?;
@@ -668,6 +861,168 @@ pub fn execute_tool(name: &str, args: &Value, app: Option<&tauri::AppHandle>) ->
                 "options": options,
                 "default": default_val,
             }))
+        }
+        // ═══════════════════════════════════════════════════════════
+        //  批量文件操作
+        // ═══════════════════════════════════════════════════════════
+        "read_local_files" => {
+            let paths = args.get("paths")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| "缺少 paths 参数，需要数组".to_string())?;
+            let path_list: Vec<String> = paths.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string())
+                .collect();
+            if path_list.is_empty() {
+                return Err("paths 数组为空或不包含有效字符串".into());
+            }
+            for p in &path_list {
+                validate_path(p, true)?;
+            }
+            read_local_files(path_list)
+        }
+        "read_csv_as_json" => {
+            let path = arg_str(args, "path")?;
+            validate_path(path, true)?;
+            let encoding = args.get("encoding").and_then(|v| v.as_str());
+            read_csv_as_json(path, encoding)
+        }
+        "extract_archive" => {
+            let path = arg_str(args, "path")?;
+            validate_path(path, true)?;
+            let target_dir = args.get("target_dir").and_then(|v| v.as_str());
+            if let Some(d) = target_dir {
+                validate_path(d, false)?;
+            }
+            extract_archive(path, target_dir)
+        }
+        "compress_files" => {
+            let paths = args.get("paths")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| "缺少 paths 参数，需要数组".to_string())?;
+            let path_list: Vec<String> = paths.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string())
+                .collect();
+            if path_list.is_empty() {
+                return Err("paths 数组为空或不包含有效字符串".into());
+            }
+            let output = arg_str(args, "output")?;
+            validate_path(output, false)?;
+            compress_files(path_list, output)
+        }
+        // ═══════════════════════════════════════════════════════════
+        //  Excel 数据处理
+        // ═══════════════════════════════════════════════════════════
+        "read_excel_as_json" => {
+            let path = arg_str(args, "path")?;
+            validate_path(path, true)?;
+            let sheet_name = args.get("sheet_name").and_then(|v| v.as_str());
+            read_excel_as_json(path, sheet_name)
+        }
+        "excel_query" => {
+            let path = arg_str(args, "path")?;
+            validate_path(path, true)?;
+            let sheet = args.get("sheet").and_then(|v| v.as_str());
+            let select = args.get("select").and_then(|v| v.as_str());
+            let filter_col = args.get("filter_col").and_then(|v| v.as_str());
+            let filter_val = args.get("filter_val").and_then(|v| v.as_str());
+            let filter_like = args.get("filter_like").and_then(|v| v.as_str());
+            let filter_in_raw = args.get("filter_in").and_then(|v| v.as_str());
+            let filter_in: Option<Vec<String>> = filter_in_raw.map(|s| {
+                serde_json::from_str::<Vec<String>>(s).unwrap_or_default()
+            });
+            let filter_gt = args.get("filter_gt").and_then(|v| v.as_str());
+            let filter_lt = args.get("filter_lt").and_then(|v| v.as_str());
+            let filter_logic = args.get("filter_logic").and_then(|v| v.as_str()).unwrap_or("and");
+            let group_by = args.get("group_by").and_then(|v| v.as_str());
+            let agg_col = args.get("agg_col").and_then(|v| v.as_str());
+            let agg_func = args.get("agg_func").and_then(|v| v.as_str()).unwrap_or("count");
+            let limit = args.get("limit").and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<usize>().ok()).unwrap_or(50);
+            let offset = args.get("offset").and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<usize>().ok()).unwrap_or(0);
+            let distinct = args.get("distinct").and_then(|v| v.as_str());
+
+            excel_query(path, sheet, select, filter_col, filter_val, filter_like,
+                filter_in.as_deref(), filter_gt, filter_lt, filter_logic,
+                group_by, agg_col, agg_func, limit, offset, distinct)
+        }
+        "excel_summary" => {
+            let path = arg_str(args, "path")?;
+            validate_path(path, true)?;
+            let sheet = args.get("sheet").and_then(|v| v.as_str());
+            excel_summary(path, sheet)
+        }
+        "excel_transform" => {
+            let path = arg_str(args, "path")?;
+            validate_path(path, true)?;
+            let source_col = arg_str(args, "source_col")?;
+            let target_col = arg_str(args, "target_col")?;
+            let regex = arg_str(args, "regex")?;
+            let sheet = args.get("sheet").and_then(|v| v.as_str());
+            let limit = args.get("limit").and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<usize>().ok()).unwrap_or(20);
+            excel_transform(path, source_col, target_col, regex, sheet, limit)
+        }
+        "excel_dedup" => {
+            let path = arg_str(args, "path")?;
+            validate_path(path, true)?;
+            let key_cols = arg_str(args, "key_cols")?;
+            let action = args.get("action").and_then(|v| v.as_str()).unwrap_or("count");
+            let sheet = args.get("sheet").and_then(|v| v.as_str());
+            let limit = args.get("limit").and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<usize>().ok()).unwrap_or(50);
+            excel_dedup(path, key_cols, action, sheet, limit)
+        }
+        "excel_join" => {
+            let left = arg_str(args, "left")?;
+            validate_path(left, true)?;
+            let left_key = arg_str(args, "left_key")?;
+            let right = arg_str(args, "right")?;
+            validate_path(right, true)?;
+            let right_key = arg_str(args, "right_key")?;
+            let left_sheet = args.get("left_sheet").and_then(|v| v.as_str());
+            let right_sheet = args.get("right_sheet").and_then(|v| v.as_str());
+            let left_key_extract = args.get("left_key_extract").and_then(|v| v.as_str());
+            let right_key_extract = args.get("right_key_extract").and_then(|v| v.as_str());
+            let join_type = args.get("join_type").and_then(|v| v.as_str()).unwrap_or("inner");
+            let select = args.get("select").and_then(|v| v.as_str());
+            let limit = args.get("limit").and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<usize>().ok()).unwrap_or(50);
+            excel_join(left, left_key, right, right_key, left_sheet, right_sheet,
+                left_key_extract, right_key_extract, join_type, select, limit)
+        }
+        "excel_union" => {
+            let files = args.get("files")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| "缺少 files 参数，需要数组".to_string())?;
+            let file_list: Vec<String> = files.iter()
+                .filter_map(|v| v.as_str())
+                .map(|s| s.to_string())
+                .collect();
+            if file_list.is_empty() {
+                return Err("files 数组为空或不包含有效字符串".into());
+            }
+            let output = arg_str(args, "output")?;
+            validate_path(output, false)?;
+            let sheet = args.get("sheet").and_then(|v| v.as_str()).unwrap_or("Sheet1");
+            excel_union(&file_list, output, sheet)
+        }
+        "json_to_xlsx" => {
+            let path = arg_str(args, "path")?;
+            validate_path(path, false)?;
+            let sheet = arg_str(args, "sheet")?;
+            let data_json = arg_str(args, "data_json")?;
+            let mode = args.get("mode").and_then(|v| v.as_str()).unwrap_or("overwrite");
+            let overwrite = mode != "append";
+            json_to_xlsx(path, sheet, data_json, overwrite)
+        }
+        "data_pipeline" => {
+            let pipeline_json = arg_str(args, "pipeline_json")?;
+            let limit = args.get("limit").and_then(|v| v.as_str())
+                .and_then(|s| s.parse::<usize>().ok()).unwrap_or(50);
+            data_pipeline(pipeline_json, limit)
         }
         _ => Err(format!("未知工具: {}", name)),
     }

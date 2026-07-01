@@ -397,6 +397,19 @@ export class Agent {
             if (tc.function?.name) entry.name += tc.function.name;
             if (tc.function?.arguments) entry.arguments += tc.function.arguments;
           }
+          // 实时推送当前正在构建的工具调用，让 UI 能逐步显示参数
+          if (this.events.onToolCallStream) {
+            const indices = Array.from(toolCallMap.keys()).sort((a, b) => a - b);
+            const currentToolCalls: ToolCall[] = indices.map((idx) => {
+              const entry = toolCallMap.get(idx)!;
+              return {
+                id: entry.id,
+                type: "function" as const,
+                function: { name: entry.name, arguments: entry.arguments },
+              };
+            });
+            this.events.onToolCallStream(currentToolCalls);
+          }
         }
       }
     }

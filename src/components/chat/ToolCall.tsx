@@ -87,6 +87,28 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
     // 自动展开卡片以显示实时进度
     setOpen(true);
     let cancelled = false;
+
+    // 先拉取已有进度缓存（避免组件挂载前错过的进度事件）
+    (async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const data: any = await invoke("get_bridge_agent_progress");
+        if (cancelled) return;
+        const progresses = data?.progresses;
+        if (progresses && typeof progresses === "object") {
+          // 取最新的有 steps 的进度
+          const entries = Object.values(progresses) as any[];
+          const latest = entries
+            .filter((p: any) => Array.isArray(p?.steps) && p.steps.length > 0)
+            .sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0))[0];
+          if (latest?.steps) {
+            setBrowserAiSteps(latest.steps);
+          }
+        }
+      } catch { /* 首次拉取失败不影响后续实时监听 */ }
+    })();
+
+    // 注册实时进度监听
     (async () => {
       const { listen } = await import("@tauri-apps/api/event");
       const unlisten = await listen<any>("browser-ai-progress", (event) => {

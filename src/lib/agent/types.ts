@@ -22,6 +22,8 @@ export const enum AgentState {
 export interface AgentEvents {
   /** 流式 token 更新（content 或 thinking 变化） */
   onToken?: (params: { content: string; thinking?: string }) => void;
+  /** 流式工具调用参数更新（工具名称和参数逐步构建中） */
+  onToolCallStream?: (toolCalls: ToolCall[]) => void;
   /** 工具执行前检查（对齐 Cebian beforeToolCall hook）。返回 block=true 阻止执行 */
   onBeforeToolCall?: (toolCall: ToolCall) => Promise<BeforeToolCallResult> | BeforeToolCallResult;
   /** 模型本轮发出了工具调用（包含轮次信息） */
