@@ -31,11 +31,12 @@ async function askUserInteractive(
   args: any,
   setPending: (p: any) => void,
   resolveRef: { current: ((value: string | null) => void) | null },
+  toolCallId?: string,
 ): Promise<string | null> {
   const form = parseAskUserArgs(args);
 
-  // 先设置表单状态
-  setPending({ toolCallId: "", ...form });
+  // 先设置表单状态（带上 toolCallId 用于消息内联匹配）
+  setPending({ toolCallId: toolCallId || "", ...form });
 
   // ── 让出 UI 线程，让 React 渲染表单后再等待用户输入 ──
   await yieldToUI();
@@ -408,8 +409,9 @@ export default function App() {
             args,
             setPendingInteractive,
             interactiveResolveRef,
+            tc.id,
           );
-          if (isCancelled()) break;
+          // 先记录工具结果（即使已取消也要推，让工具卡片状态更新为 "cancelled"）
           toolExecContent = userResponse === null
             ? JSON.stringify({ cancelled: true, message: "用户已取消操作" })
             : JSON.stringify({ response: userResponse });
@@ -417,6 +419,7 @@ export default function App() {
             role: "tool", content: toolExecContent,
             tool_call_id: tc.id, name: toolName,
           } as ChatMessage);
+          if (isCancelled()) break;
           continue;
         }
 
@@ -761,7 +764,8 @@ export default function App() {
     if (interactiveResolveRef.current) {
       interactiveResolveRef.current(null);
       interactiveResolveRef.current = null;
-      setPendingInteractive(null);
+      // 标记为已解决（保留表单展示只读已取消视图，而非直接消失）
+      setPendingInteractive(prev => prev ? { ...prev, _resolved: true, _submittedValue: null } : null);
     }
 
     // 2. 关闭待处理的二次确认对话框
