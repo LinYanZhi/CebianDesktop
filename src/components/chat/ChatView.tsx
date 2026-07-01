@@ -6,9 +6,7 @@ import { toast } from "sonner";
 import { useStickToBottom } from "./useStickToBottom";
 import { UserMessageBlock, AgentMessageBlock } from "./MessageBlock";
 import { AskUserBlock } from "./AskUser";
-import { ChatInput, type ChatMode } from "./ChatInput";
-import { getBridgeAgentProgress } from "../../lib/commands";
-import type { AgentProgressMap } from "./AiThoughtProcess";
+import { ChatInput } from "./ChatInput";
 
 // ── 独立回底按钮组件（absolute 定位，放在父 relative 容器内） ──
 // ⚠ 历史踩坑：此组件必须放在父 relative 容器内部（见下方第 300 行附近）。
@@ -29,7 +27,6 @@ function ScrollToBottomButton({ visible, onClick }: { visible: boolean; onClick:
 interface ChatViewProps {
   messages: ChatMessage[];
   onSend: (content: string, attachments?: SendAttachment[]) => void;
-  onSendBrowser?: (content: string) => void;
   onStop: () => void;
   onRetry: () => void;
   loading: boolean;
@@ -64,6 +61,9 @@ interface ChatViewProps {
       step?: number;
       step_title?: string;
     }>;
+    /** 表单已提交，保留作只读展示 */
+    _resolved?: boolean;
+    _submittedValue?: string | null;
   } | null;
   /** 用户对交互式工具的响应（传入 JSON 字符串或 null 取消） */
   onInteractiveResolve?: (value: string | null) => void;
@@ -80,9 +80,6 @@ interface ChatViewProps {
   } | null;
   /** 用户对二次确认的响应 */
   onConfirmResolve?: (confirmed: boolean) => void;
-  /** 聊天模式（桌面 AI / 浏览器 AI 直接对话） */
-  chatMode?: ChatMode;
-  onChatModeChange?: (mode: ChatMode) => void;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -90,58 +87,24 @@ interface ChatViewProps {
 // ═══════════════════════════════════════════════════════════
 
 export default function ChatView({
-  messages, onSend, onSendBrowser, onStop, onRetry, loading, aiConfig, onConfigChange, onNavigateSettings, onRollback,
+  messages, onSend, onStop, onRetry, loading, aiConfig, onConfigChange, onNavigateSettings, onRollback,
   pendingInteractive, onInteractiveResolve, pendingConfirmation, onConfirmResolve,
-  chatMode, onChatModeChange,
 }: ChatViewProps) {
   const INPUT_DRAFT_KEY = "cebiandesktop_chat_input_draft";
   const [inputValue, setInputValue] = useState(() => {
     try { return localStorage.getItem(INPUT_DRAFT_KEY) || ""; } catch { return ""; }
   });
-  const [agentProgresses, setAgentProgresses] = useState<AgentProgressMap>({});
 
   // 输入框内容变化时自动保存到 localStorage，防止断电丢失
   useEffect(() => {
     try { localStorage.setItem(INPUT_DRAFT_KEY, inputValue); } catch {}
   }, [inputValue]);
 
-  // 轮询浏览器 AI 执行进度（同时监听 Tauri 事件）
-  useEffect(() => {
-    if (!loading) return; // 不清理 progress，保持可见
-    const interval = setInterval(async () => {
-      try {
-        const result = await getBridgeAgentProgress();
-        if (result?.progresses && Object.keys(result.progresses).length > 0) {
-          setAgentProgresses(result.progresses);
-        }
-      } catch {
-        // 轮询错误静默忽略
-      }
-    }, 500);
-    return () => clearInterval(interval);
-  }, [loading]);
-
-  // 新消息发送时清空旧进度
-  useEffect(() => {
-    const lastMsg = messages[messages.length - 1];
-    if (lastMsg?.role === "user") {
-      setAgentProgresses({});
-    }
-  }, [messages]);
-
   const { containerRef, isAtBottom, scrollToBottom } = useStickToBottom();
 
   // 发送新消息时强制回底
   const send = (attachments?: SendAttachment[]) => {
     if (!inputValue.trim() || loading) return;
-
-    // 浏览器 AI 直接对话模式
-    if (chatMode === "browser") {
-      onSendBrowser?.(inputValue);
-      setInputValue("");
-      try { localStorage.removeItem(INPUT_DRAFT_KEY); } catch {}
-      return;
-    }
 
     if (!hasUsableModel(aiConfig)) {
       toast.error("请先配置 AI 提供商", {
@@ -193,8 +156,7 @@ export default function ChatView({
           onSend={(atts) => send(atts)}
           onStop={onStop}
           loading={loading} aiConfig={aiConfig}
-          onConfigChange={onConfigChange} onNavigateSettings={onNavigateSettings}
-          chatMode={chatMode} onChatModeChange={onChatModeChange} />
+          onConfigChange={onConfigChange} onNavigateSettings={onNavigateSettings} />
       </div>
     );
   }
@@ -242,6 +204,15 @@ export default function ChatView({
                       </div>
                     </div>
                   );
+                } else if (msg.role === "compactionSummary") {
+                  items.push(
+                    <div key={i} className="flex justify-center">
+                      <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent/50 border border-border text-[10px] text-muted-foreground">
+                        <FileText size={10} />
+                        <span>上下文已压缩 — 早期对话已折叠为摘要，减少 token 消耗</span>
+                      </div>
+                    </div>
+                  );
                 } else if (msg.role === "assistant") {
                   // 收集紧接着的 tool 消息作为工具结果
                 const toolResults: ChatMessage[] = [];
@@ -258,7 +229,6 @@ export default function ChatView({
                     isStreaming={loading && i === messages.length - 1}
                     isLast={i === messages.length - 1} onRetry={onRetry}
                     toolResults={toolResults.length > 0 ? toolResults : undefined}
-                    agentProgresses={agentProgresses}
                   />
                 );
               }
@@ -275,6 +245,8 @@ export default function ChatView({
               pagination={pendingInteractive.pagination}
               questions={pendingInteractive.questions}
               onResolve={onInteractiveResolve!}
+              resolved={pendingInteractive._resolved}
+              submittedValue={pendingInteractive._submittedValue}
             />
           )}
           {/* ═══ 危险操作二次确认对话框 ═══ */}
@@ -363,8 +335,7 @@ export default function ChatView({
         onSend={(atts) => send(atts)}
         onStop={onStop}
         loading={loading} aiConfig={aiConfig}
-        onConfigChange={onConfigChange} onNavigateSettings={onNavigateSettings}
-        chatMode={chatMode} onChatModeChange={onChatModeChange} />
+        onConfigChange={onConfigChange} onNavigateSettings={onNavigateSettings} />
     </div>
   );
 }

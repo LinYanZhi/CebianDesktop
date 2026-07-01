@@ -112,6 +112,10 @@ export async function updateBrowserName(sessionId: string, name: string): Promis
   return invoke("update_browser_name", { sessionId, name });
 }
 
+export async function toggleBrowserDisabled(sessionId: string, disabled: boolean): Promise<any> {
+  return invoke("toggle_browser_disabled", { sessionId, disabled });
+}
+
 export async function startBridgeServer(): Promise<string> {
   return invoke("start_bridge_server");
 }

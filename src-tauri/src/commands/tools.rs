@@ -148,10 +148,11 @@ pub fn get_tools(mcp: State<'_, McpClientManager>, app_handle: tauri::AppHandle)
             "inputSchema": mcp_tool.input_schema,
         }));
     }
-    // 合并浏览器工具（去重）
+    // 合并浏览器工具（去重）— 只暴露只读工具 + 委托工具给本地 AI，不暴露 search_web/execute_js 等浏览器内部工具
+    let desktop_browser_tools = crate::bridge::get_desktop_browser_tool_names();
     for bt in crate::bridge::get_browser_tool_definitions() {
         let name = bt["name"].as_str().unwrap_or("");
-        if !tools.iter().any(|t| t["name"].as_str() == Some(name)) {
+        if desktop_browser_tools.contains(&name) && !tools.iter().any(|t| t["name"].as_str() == Some(name)) {
             tools.push(bt);
         }
     }
@@ -357,7 +358,7 @@ pub async fn execute_tool(name: String, args: Value, permission_mode: Option<Str
         if let Some(obj) = clean_args.as_object_mut() {
             obj.remove("browser_name");
         }
-        return crate::bridge::execute_browser_tool(&bridge_state, &name, &clean_args, browser_name).await;
+        return crate::bridge::execute_browser_tool(&bridge_state, &name, &clean_args, browser_name, Some(&app_handle)).await;
     }
 
     // 技能管理工具（需要 app_handle）

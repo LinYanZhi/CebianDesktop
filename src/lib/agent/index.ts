@@ -1,4 +1,4 @@
-import type { ChatMessage, ToolCall } from "../types";
+import { getMessageText, type ChatMessage, type ToolCall, type TextContent, type ThinkingContent, type ToolCallContent, type ContentBlock } from "../types";
 import { AgentState, type AgentEvents, type AgentOptions } from "./types";
 
 /** 从 SSE 流中解析单个 JSON chunk（处理 data: 前缀） */
@@ -11,6 +11,38 @@ function parseSSELine(line: string): any | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * 将文本 + 思考 + 工具调用合并为 ContentBlock[]
+ * 顺序：thinking → text → toolCalls（对齐 Cebian AssistantMessage 格式）
+ */
+function buildContentBlocks(
+  text: string,
+  thinking: string,
+  toolCalls: ToolCall[],
+): ContentBlock[] {
+  const blocks: ContentBlock[] = [];
+  if (thinking) blocks.push({ type: 'thinking', thinking } as ThinkingContent);
+  if (text) blocks.push({ type: 'text', text } as TextContent);
+  for (const tc of toolCalls) {
+    try {
+      blocks.push({
+        type: 'toolCall',
+        id: tc.id,
+        name: tc.function.name,
+        arguments: JSON.parse(tc.function.arguments),
+      } as ToolCallContent);
+    } catch {
+      blocks.push({
+        type: 'toolCall',
+        id: tc.id,
+        name: tc.function.name,
+        arguments: {},
+      } as ToolCallContent);
+    }
+  }
+  return blocks;
 }
 
 /**
@@ -145,7 +177,7 @@ export class Agent {
         this.setState(AgentState.stopped);
         const finalMsg: ChatMessage = {
           role: "assistant",
-          content: roundContent,
+          content: buildContentBlocks(roundContent, fullThinking, []),
           reasoning_content: fullThinking || undefined,
           usage: accumulatedUsage,
         };
@@ -154,12 +186,30 @@ export class Agent {
         return;
       }
 
+      // ─── 有工具调用 → beforeToolCall 检查（对齐 Cebian Permission Gate 模式） ───
+      if (this.events.onBeforeToolCall) {
+        let blocked = false;
+        for (const tc of roundToolCalls) {
+          const result = await this.events.onBeforeToolCall(tc);
+          if (result.block) {
+            blocked = true;
+            this.events.onError?.(new Error(`工具调用被阻止: ${tc.function.name} — ${result.reason || '无权限'}`));
+            break;
+          }
+        }
+        if (blocked) {
+          this.setState(AgentState.stopped);
+          this.events.onDone?.(currentMessages, accumulatedUsage);
+          return;
+        }
+      }
+
       // ─── 有工具调用 → 执行工具 ───
       this.events.onToolCalls?.(roundToolCalls, depth);
 
       const assistantMsg: ChatMessage = {
         role: "assistant",
-        content: roundContent,
+        content: buildContentBlocks(roundContent, fullThinking, roundToolCalls),
         tool_calls: roundToolCalls,
         reasoning_content: fullThinking || undefined,
       };
@@ -196,10 +246,11 @@ export class Agent {
     const apiMessages: any[] = [systemMsg];
 
     for (const msg of messages) {
+      const text = getMessageText(msg);
       if (msg.role === "user") {
-        apiMessages.push({ role: "user", content: msg.content });
+        apiMessages.push({ role: "user", content: text });
       } else if (msg.role === "assistant") {
-        const m: any = { role: "assistant", content: msg.content };
+        const m: any = { role: "assistant", content: text };
         if (msg.tool_calls && msg.tool_calls.length > 0) {
           m.tool_calls = msg.tool_calls.map((tc: ToolCall) => ({
             id: tc.id,
@@ -211,11 +262,11 @@ export class Agent {
       } else if (msg.role === "tool") {
         apiMessages.push({
           role: "tool",
-          content: msg.content,
+          content: text,
           tool_call_id: msg.tool_call_id,
         });
       } else {
-        apiMessages.push({ role: msg.role, content: msg.content });
+        apiMessages.push({ role: msg.role, content: text });
       }
     }
     return apiMessages;

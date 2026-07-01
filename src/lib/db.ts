@@ -22,6 +22,7 @@ interface AppConfigJson {
   ai_permission_mode?: string;
   tool_permissions?: Record<string, string>;
   bridge_ports?: { name: string; port: number }[];
+  view_state?: Record<string, string>;
 }
 
 interface ProviderConfigJson {
@@ -64,6 +65,7 @@ export async function loadAIConfig(): Promise<AIConfig | null> {
       aiPermissionMode: (raw.ai_permission_mode as any) || "conservative",
       toolPermissions: (raw.tool_permissions as Record<string, "allow" | "confirm" | "deny">) || {},
       bridgePorts: raw.bridge_ports?.length ? raw.bridge_ports : [{ name: "默认浏览器", port: 37421 }],
+      viewState: raw.view_state || {},
     };
   } catch (e) {
     console.error("loadAIConfig 失败:", e);
@@ -96,6 +98,7 @@ export async function saveAIConfig(config: AIConfig): Promise<void> {
       ai_permission_mode: config.aiPermissionMode || "conservative",
       tool_permissions: config.toolPermissions || {},
       bridge_ports: config.bridgePorts?.length ? config.bridgePorts : [{ name: "默认浏览器", port: 37421 }],
+      view_state: config.viewState || {},
     };
     const ds = json.providers.find(p => p.id === "deepseek");
     console.log("[saveAIConfig] deepseek key save:", ds ? { keyPrefix: ds.api_key.slice(0, 8), keyLen: ds.api_key.length } : "not found");
@@ -149,7 +152,6 @@ export async function loadConversationsFromStorage(): Promise<Conversation[]> {
       messages: r.messages || [],
       createdAt: typeof r.createdAt === "number" ? r.createdAt : new Date(r.createdAt || Date.now()).getTime(),
       updatedAt: typeof r.updatedAt === "number" ? r.updatedAt : new Date(r.updatedAt || Date.now()).getTime(),
-      toolLogs: r.toolLogs || r.tool_logs || [],
     }));
   } catch (e) {
     console.error("loadConversations 失败:", e);
@@ -167,7 +169,6 @@ export async function saveConversationsToStorage(conversations: Conversation[]):
       id: c.id,
       title: c.title,
       messages: c.messages,
-      toolLogs: c.toolLogs || [],
       createdAt: typeof c.createdAt === "number" ? new Date(c.createdAt).toISOString() : String(c.createdAt),
       updatedAt: typeof c.updatedAt === "number" ? new Date(c.updatedAt).toISOString() : String(c.updatedAt),
     }));

@@ -79,6 +79,9 @@ pub struct AppConfig {
     /// 双 AI 桥接端口配置列表
     #[serde(default = "default_bridge_ports")]
     pub bridge_ports: Vec<BridgePortConfig>,
+    /// 界面浏览状态（如当前在设置/对话、设置栏目等）
+    #[serde(default)]
+    pub view_state: HashMap<String, String>,
 }
 
 fn default_bridge_ports() -> Vec<BridgePortConfig> {
@@ -113,6 +116,7 @@ impl Default for AppConfig {
             ai_permission_mode: "conservative".into(),
             tool_permissions: HashMap::new(),
             bridge_ports: default_bridge_ports(),
+            view_state: HashMap::new(),
         }
     }
 }
@@ -165,9 +169,6 @@ pub struct Conversation {
     pub created_at: String,
     #[serde(rename = "updatedAt")]
     pub updated_at: String,
-    /// 独立的工具执行日志，与 messages 分开存储，避免上下文压缩时丢失
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tool_logs: Option<Vec<serde_json::Value>>,
 }
 
 fn conversations_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {

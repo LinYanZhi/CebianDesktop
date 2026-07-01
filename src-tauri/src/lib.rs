@@ -117,6 +117,7 @@ pub fn run() {
             commands::get_bridge_status,
             commands::ping_browser,
             commands::disconnect_browser,
+            commands::toggle_browser_disabled,
             commands::update_browser_name,
             commands::cancel_browser_ai,
             commands::get_bridge_agent_progress,

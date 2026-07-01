@@ -575,10 +575,62 @@ function WizardBlock({
   );
 }
 
+// ─── 已提交只读视图 ──────────────────────────────────────────
+
+function SubmittedView({
+  title, description, questions, submittedValue
+}: {
+  title?: string;
+  description?: string;
+  questions: AskQuestion[];
+  submittedValue?: string | null;
+}) {
+  let parsed: Record<string, any> = {};
+  try { parsed = JSON.parse(submittedValue || "{}"); } catch {}
+
+  return (
+    <div className="my-3 rounded-xl border bg-card/50 shadow-sm overflow-hidden opacity-80">
+      {title && (
+        <div className="px-4 pt-4 pb-1">
+          <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+          {description && (
+            <p className="text-xs text-muted-foreground mt-1 whitespace-pre-wrap">{description}</p>
+          )}
+        </div>
+      )}
+      <div className="px-4 py-3 space-y-3">
+        {questions.map((q) => {
+          const v = parsed[q.id];
+          const display = q.type === "multi_select"
+            ? (Array.isArray(v) ? (v as string[]).join(", ") : "")
+            : (typeof v === "string" ? v : "");
+          return (
+            <div key={q.id}>
+              <label className="block text-xs text-muted-foreground mb-0.5">{q.question}</label>
+              <div className="text-sm text-foreground bg-muted/30 rounded-md px-3 py-2 border border-border/50">
+                {display || "（未填写）"}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="px-4 pb-4">
+        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-[0.6rem] font-medium">
+          <svg className="size-3" viewBox="0 0 16 16" fill="none">
+            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" />
+            <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          已提交
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── 主分发组件 ───
 
 export function AskUserBlock({
-  title, description, submit_label, pagination, questions, onResolve
+  title, description, submit_label, pagination, questions, onResolve, resolved, submittedValue
 }: {
   title?: string;
   description?: string;
@@ -586,7 +638,14 @@ export function AskUserBlock({
   pagination?: PaginationType;
   questions: AskQuestion[];
   onResolve: (value: string | null) => void;
+  resolved?: boolean;
+  submittedValue?: string | null;
 }) {
+  // 已提交 → 只读展示
+  if (resolved) {
+    return <SubmittedView title={title} description={description} questions={questions} submittedValue={submittedValue} />;
+  }
+
   // Mode C: Wizard 分步向导
   if (pagination?.type === "wizard") {
     return (

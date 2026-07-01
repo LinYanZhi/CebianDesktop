@@ -24,15 +24,16 @@ interface DownloadProgress {
 }
 
 /** 工具调用卡片：仿 Cebian ToolCard，每个工具独立可折叠，显示参数+结果 */
-export function ToolCallCards({ tool_calls, results }: {
+export function ToolCallCards({ tool_calls, results, cancelled }: {
   tool_calls: ToolCall[];
   results?: Map<string, string>;
+  cancelled?: boolean;
 }) {
   return (
     <div className="space-y-1.5 my-2">
       {tool_calls.map((tc, i) => {
         const resultContent = results?.get(tc.id);
-        const status = resultContent !== undefined ? "done" : "running";
+        const status = cancelled ? "cancelled" : (resultContent !== undefined ? "done" : "running");
         const argsStr = (() => {
           try {
             return JSON.stringify(JSON.parse(tc.function.arguments), null, 2);
@@ -47,7 +48,7 @@ export function ToolCallCards({ tool_calls, results }: {
 
 /** 单个工具卡片（可折叠） */
 function ToolCardItem({ label, color, toolName, category, status, args, result }: {
-  label: string; color: string; toolName: string; category: ToolCategory; status: 'running' | 'done'; args: string; result?: string;
+  label: string; color: string; toolName: string; category: ToolCategory; status: 'running' | 'done' | 'cancelled'; args: string; result?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
@@ -56,6 +57,50 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
   const desc = getToolDesc(toolName);
   const hasArgs = args !== "{}" && args !== "{\n}";
   const catMeta = TOOL_CATEGORY_META[category];
+
+  // ── Browser AI 实时进度 & 计时 ──
+  const isBrowserAi = toolName === "ask_browser_ai";
+  const [browserAiSteps, setBrowserAiSteps] = useState<any[]>([]);
+  const [elapsed, setElapsed] = useState(0);
+  const finalElapsedRef = useRef(0);
+
+  // 计时器：running 时每秒递增
+  useEffect(() => {
+    if (status !== "running" || !isBrowserAi) { 
+      // done 或 cancelled 时保存最终用时
+      if (!isBrowserAi || status === "cancelled") { setElapsed(0); }
+      return; 
+    }
+    startTimeRef.current = Date.now();
+    const interval = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [status, isBrowserAi]);
+
+  // 监听 browser-ai-progress 事件，流式更新执行步骤
+  useEffect(() => {
+    if (status !== "running" || !isBrowserAi) {
+      setBrowserAiSteps([]);
+      return;
+    }
+    // 自动展开卡片以显示实时进度
+    setOpen(true);
+    let cancelled = false;
+    (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      const unlisten = await listen<any>("browser-ai-progress", (event) => {
+        if (cancelled) return;
+        const steps = event.payload?.steps;
+        if (Array.isArray(steps) && steps.length > 0) {
+          setBrowserAiSteps(steps);
+        }
+      });
+      if (cancelled) { unlisten(); return; }
+      unlistenRef.current = unlisten;
+    })();
+    return () => { cancelled = true; unlistenRef.current?.(); unlistenRef.current = null; };
+  }, [status, isBrowserAi]);
 
   // 解析参数
   const parsedArgs = (() => {
@@ -123,6 +168,15 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
   })();
 
   const statusText = (() => {
+    if (status === 'cancelled') return "已取消";
+    if (isBrowserAi && elapsed > 0) {
+      const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+      const s = String(elapsed % 60).padStart(2, '0');
+      return status === 'running' ? `浏览器 AI 执行中... ${m}:${s}` : `用时 ${m}:${s}`;
+    }
+    if (status === 'running' && isBrowserAi) {
+      return "浏览器 AI 执行中... 00:00";
+    }
     if (!progress) return desc;
     switch (progress.status) {
       case "connecting": return `正在尝试 ${engineLabel || (isDownload ? "下载引擎" : "")}...`;
@@ -158,6 +212,11 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
         {status === 'running' ? (
           <svg className="size-4 text-primary animate-spin shrink-0" viewBox="0 0 16 16" fill="none">
             <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" strokeDasharray="28" strokeDashoffset="8" />
+          </svg>
+        ) : status === 'cancelled' ? (
+          <svg className="size-4 text-muted-foreground shrink-0" viewBox="0 0 16 16" fill="none">
+            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" />
+            <path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
           </svg>
         ) : (
           <svg className="size-4 text-green-500 shrink-0" viewBox="0 0 16 16" fill="none">
@@ -218,6 +277,33 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
               <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono">
                 <code>{args}</code>
               </pre>
+            </div>
+          )}
+          {/* Browser AI 实时执行进度（流式） */}
+          {status === 'running' && isBrowserAi && (
+            <div className="px-3.5 py-2.5 bg-background border-t border-border/50">
+              <div className="text-[0.65rem] text-muted-foreground/60 mb-1.5 font-medium">实时执行过程</div>
+              <div className="space-y-1 max-h-48 overflow-y-auto text-[0.6rem] font-mono leading-relaxed" style={{ scrollbarWidth: 'thin' }}>
+                {browserAiSteps.length === 0 ? (
+                  <div className="text-muted-foreground/50 animate-pulse">等待浏览器 AI 响应...</div>
+                ) : (
+                  browserAiSteps.map((step: any, i: number) => (
+                    <div key={i} className="flex items-start gap-1.5">
+                      <span className={`shrink-0 font-medium ${
+                        step.type === "tool_call" ? "text-amber-500/70" :
+                        step.type === "tool_result" ? "text-emerald-500/70" :
+                        step.type === "error" ? "text-red-500/70" :
+                        "text-muted-foreground/50"
+                      }`}>
+                        [{step.type}]
+                      </span>
+                      <span className="text-muted-foreground/70 break-all">
+                        {step.tool ? `[${step.tool}] ` : ""}{step.content}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
             </div>
           )}
           {result !== undefined && (

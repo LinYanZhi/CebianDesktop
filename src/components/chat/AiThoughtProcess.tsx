@@ -12,33 +12,7 @@ import {
   FileText,
   ExternalLink,
 } from "lucide-react";
-
-// ─── 类型定义 ───────────────────────────────────────────────
-
-export interface AgentProgressStep {
-  type: "thinking" | "tool_call" | "tool_result" | "error";
-  content: string;
-  tool?: string;
-  status?: string;
-  timestamp: number;
-  /** 结构化数据（可选，用于工具结果智能渲染） */
-  resultType?: "screenshot" | "page_content" | "search_result" | "tab_info" | "text";
-}
-
-export interface AgentProgress {
-  task: string;
-  steps: AgentProgressStep[];
-  status: "running" | "completed" | "error";
-  request_id?: string;
-}
-
-export interface AgentProgressMap {
-  [request_id: string]: {
-    task: string;
-    steps: AgentProgressStep[];
-    status: "running" | "completed" | "error";
-  };
-}
+import type { AgentProgressMap, AgentProgressStep } from "../../lib/types";
 
 // ─── 智能内容检测 ──────────────────────────────────────────
 

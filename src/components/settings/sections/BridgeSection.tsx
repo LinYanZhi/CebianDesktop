@@ -1,13 +1,15 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
   Play, Square, RefreshCw, Plus, Trash2, Copy, Check,
-  WifiOff, Globe, Zap, Network, Link2, Bot,
+  WifiOff, Globe, Zap, Network, Link2, Bot, Power,
+  GripVertical, Wifi,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { AIConfig } from "../../../lib/types";
 import {
   getBridgeStatus, startBridgeServer, stopBridgeServer,
   reloadBridgeConfig, pingBrowser, disconnectBrowser, updateBrowserName,
+  toggleBrowserDisabled,
 } from "../../../lib/commands";
 
 interface BridgeSectionProps {
@@ -29,6 +31,7 @@ interface BrowserInfo {
   port: number;
   remote_addr: string | null;
   connected_at: number;
+  disabled?: boolean;
 }
 
 interface BridgeStatusData {
@@ -167,6 +170,10 @@ export function BridgeSection({ config, onChange }: BridgeSectionProps) {
     try { await updateBrowserName(sessionId, name); await pollStatus(); }
     catch (e: any) { toast.error("更新名称失败: " + (e?.toString() || "未知错误")); }
   };
+  const handleToggleDisabled = async (sessionId: string, disabled: boolean) => {
+    try { await toggleBrowserDisabled(sessionId, disabled); await pollStatus(); }
+    catch (e: any) { toast.error("切换状态失败: " + (e?.toString() || "未知错误")); }
+  };
   const handleTestAll = async () => {
     if (!status || status.browsers.length === 0) return;
     setTestRunning(true); setTestResult(null);
@@ -195,31 +202,38 @@ export function BridgeSection({ config, onChange }: BridgeSectionProps) {
   return (
     <div className="flex-1 space-y-5">
       {/* 标题栏 */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-base font-bold tracking-tight">双 AI 桥接</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">网络拓扑视图</p>
+      <div className="flex items-center justify-between bg-card border border-border rounded-xl px-4 py-3">
+        <div className="flex items-center gap-3">
+          <div className={`size-9 rounded-xl flex items-center justify-center ${isRunning ? 'bg-green-500/10' : 'bg-muted'}`}>
+            <Network size={16} className={isRunning ? 'text-green-500' : 'text-muted-foreground/50'} />
+          </div>
+          <div>
+            <h2 className="text-sm font-semibold">AI 桥接</h2>
+            <p className="text-[11px] text-muted-foreground/70 mt-0.5">
+              {isRunning ? '桥接服务运行中，已连接 ' + (status?.browser_count ?? 0) + ' 个浏览器' : '连接本地 AI 与浏览器 AI 的桥梁'}
+            </p>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {isRunning ? (
             <>
-              <span className="flex items-center gap-1.5 text-xs text-green-600 bg-green-500/10 px-2.5 py-1 rounded-full">
+              <div className="flex items-center gap-1.5 text-[11px] text-green-600 bg-green-500/10 px-2.5 py-1 rounded-full whitespace-nowrap">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                {status?.browser_count ?? 0} 连接
-              </span>
+                <span className="font-medium tabular-nums">{status?.browser_count ?? 0}</span> 连接
+              </div>
               <button onClick={handleStop} disabled={loading}
-                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-destructive/10 text-destructive border border-destructive/20 rounded-lg hover:bg-destructive/20 disabled:opacity-50"
-              ><Square size={12} />停止</button>
+                className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium bg-destructive/10 text-destructive border border-destructive/20 rounded-lg hover:bg-destructive/20 disabled:opacity-50 transition-colors"
+              ><Square size={11} />停止</button>
               <button onClick={handleRestart} disabled={loading}
-                className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
-              ><RefreshCw size={12} className={loading ? "animate-spin" : ""} />重启</button>
+                className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 transition-colors"
+              ><RefreshCw size={11} className={loading ? "animate-spin" : ""} />重启</button>
             </>
           ) : (
             <>
-              <span className="text-xs text-muted-foreground bg-muted px-2.5 py-1 rounded-full">未启动</span>
+              <span className="text-[11px] text-muted-foreground bg-muted px-2.5 py-1 rounded-full">未启动</span>
               <button onClick={handleStart} disabled={loading}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
-              ><Play size={12} />启动</button>
+                className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 transition-colors"
+              ><Play size={11} />启动</button>
             </>
           )}
         </div>
@@ -228,6 +242,7 @@ export function BridgeSection({ config, onChange }: BridgeSectionProps) {
       {/* 拓扑图 */}
       {isRunning ? (
         <SvgTopology
+          running={isRunning}
           localAddrs={localAddrs}
           ports={ports}
           browserByPort={browserByPort}
@@ -241,6 +256,7 @@ export function BridgeSection({ config, onChange }: BridgeSectionProps) {
           cancelEditPort={cancelEditPort}
           handleDisconnect={handleDisconnect}
           handleUpdateName={handleUpdateName}
+          handleToggleDisabled={handleToggleDisabled}
           addPort={addPort}
           removePort={removePort}
           handleTestAll={handleTestAll}
@@ -248,37 +264,58 @@ export function BridgeSection({ config, onChange }: BridgeSectionProps) {
           testResult={testResult}
         />
       ) : (
-        <div className="border border-border rounded-xl bg-card p-8 flex flex-col items-center justify-center text-center">
-          <WifiOff size={32} className="text-muted-foreground/30 mb-3" />
-          <p className="text-sm text-muted-foreground mb-1">桥接服务未启动</p>
-          <p className="text-xs text-muted-foreground/60">点击右上角「启动」按钮开启桥接服务</p>
+        <div className="border border-dashed border-border rounded-xl bg-card p-10 flex flex-col items-center justify-center text-center">
+          <div className="size-14 rounded-2xl bg-muted flex items-center justify-center mb-4">
+            <WifiOff size={24} className="text-muted-foreground/30" />
+          </div>
+          <p className="text-sm font-medium text-muted-foreground mb-1">桥接服务未启动</p>
+          <p className="text-xs text-muted-foreground/50 mb-5 max-w-xs">
+            CeBian 浏览器扩展依赖桥接服务连接本地 AI，启动后可查看已连接的浏览器列表和网络状态。
+          </p>
+          <button onClick={handleStart} disabled={loading}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs font-medium bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 transition-colors"
+          ><Play size={11} />启动桥接服务</button>
         </div>
       )}
 
       {/* 端口配置（未运行） */}
       {!isRunning && (
         <div className="border border-border rounded-xl bg-card overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-border flex items-center justify-between">
-            <span className="text-xs font-medium">端口配置</span>
-            <button onClick={addPort} className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 rounded-lg">
-              <Plus size={12} />添加端口
+          <div className="px-4 py-2.5 border-b border-border flex items-center justify-between bg-muted/20">
+            <div className="flex items-center gap-2">
+              <GripVertical size={12} className="text-muted-foreground/30" />
+              <span className="text-xs font-medium">端口配置</span>
+            </div>
+            <button onClick={addPort} className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors">
+              <Plus size={11} />添加端口
             </button>
           </div>
           <div className="divide-y divide-border">
-            {ports.map((p, i) => (
-              <div key={i} className="flex items-center gap-3 px-4 py-2.5">
-                <input value={p.name} onChange={e => onChange({ ...config, bridgePorts: ports.map((pp, j) => j === i ? { ...pp, name: e.target.value } : pp) })}
-                  placeholder="端口名称" className="flex-1 px-2 py-1 text-xs bg-background border border-border rounded outline-none focus:border-primary/50"
-                />
-                <input value={p.port} onChange={e => { const v = parseInt(e.target.value.replace(/\D/g, ''), 10); if (!isNaN(v) && v >= 1024 && v <= 65535) onChange({ ...config, bridgePorts: ports.map((pp, j) => j === i ? { ...pp, port: v } : pp) }); }}
-                  type="text" inputMode="numeric"
-                  className="w-20 px-2 py-1 text-xs bg-background border border-border rounded outline-none focus:border-primary/50 text-center font-mono"
-                />
-                <button onClick={() => removePort(i)} className="p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded">
-                  <Trash2 size={14} />
-                </button>
+            {ports.length === 0 ? (
+              <div className="px-4 py-6 text-center">
+                <p className="text-xs text-muted-foreground/50">暂无端口配置</p>
               </div>
-            ))}
+            ) : (
+              ports.map((p, i) => (
+                <div key={i} className="flex items-center gap-3 px-4 py-2.5 hover:bg-muted/10 transition-colors">
+                  <GripVertical size={12} className="text-muted-foreground/20 shrink-0" />
+                  <input value={p.name} onChange={e => onChange({ ...config, bridgePorts: ports.map((pp, j) => j === i ? { ...pp, name: e.target.value } : pp) })}
+                    placeholder="端口名称（如：默认浏览器）"
+                    className="flex-1 min-w-0 px-2.5 py-1.5 text-xs bg-background border border-border rounded-lg outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all placeholder:text-muted-foreground/30"
+                  />
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className="text-[11px] text-muted-foreground/40 font-mono">端口</span>
+                    <input value={p.port} onChange={e => { const v = parseInt(e.target.value.replace(/\D/g, ''), 10); if (!isNaN(v) && v >= 1024 && v <= 65535) onChange({ ...config, bridgePorts: ports.map((pp, j) => j === i ? { ...pp, port: v } : pp) }); }}
+                      type="text" inputMode="numeric"
+                      className="w-20 px-2 py-1.5 text-xs bg-background border border-border rounded-lg outline-none focus:border-primary/40 focus:ring-1 focus:ring-primary/20 transition-all text-center font-mono"
+                    />
+                    <button onClick={() => removePort(i)} className="p-1.5 text-muted-foreground/30 hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors">
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
       )}
@@ -286,17 +323,20 @@ export function BridgeSection({ config, onChange }: BridgeSectionProps) {
       {/* 连接指引 */}
       {isRunning && localAddrs.length > 0 && status && status.running_ports.length > 0 && (
         <div className="border border-border rounded-xl bg-card overflow-hidden">
-          <div className="px-4 py-2.5 border-b border-border flex items-center gap-2">
-            <Link2 size={14} className="text-muted-foreground" />
+          <div className="px-4 py-2.5 border-b border-border bg-muted/20 flex items-center gap-2">
+            <Link2 size={13} className="text-muted-foreground" />
             <span className="text-xs font-medium">CeBian 扩展连接地址</span>
           </div>
-          <div className="p-3 space-y-1.5">
+          <div className="p-3 space-y-2">
             {localAddrs.flatMap(ip => status.running_ports.map(p => ({ ip, p }))).map(({ ip, p }, i) => (
               <CopyBtn key={i} text={`ws://${ip}:${p}/ws`} />
             ))}
-            <p className="text-[10px] text-muted-foreground/60 pt-1">
-              在 CeBian 扩展设置中添加上述地址即可连接到此桌面
-            </p>
+            <div className="flex items-center gap-2 pt-1.5 border-t border-border mt-1.5">
+              <div className="size-1.5 rounded-full bg-amber-400" />
+              <p className="text-[10px] text-muted-foreground/50">
+                在 CeBian 扩展设置中添加上述地址即可连接到此桌面
+              </p>
+            </div>
           </div>
         </div>
       )}
@@ -316,6 +356,7 @@ const DESKTOP_H = 72;
 const PORT_H = 44;
 
 function SvgTopology(props: {
+  running: boolean;
   localAddrs: string[];
   ports: { name: string; port: number }[];
   browserByPort: Record<number, BrowserInfo[]>;
@@ -329,6 +370,7 @@ function SvgTopology(props: {
   cancelEditPort: () => void;
   handleDisconnect: (sessionId: string) => void;
   handleUpdateName: (sessionId: string, name: string) => void;
+  handleToggleDisabled: (sessionId: string, disabled: boolean) => void;
   addPort: () => void;
   removePort: (index: number) => void;
   handleTestAll: () => void;
@@ -336,10 +378,10 @@ function SvgTopology(props: {
   testResult: string | null;
 }) {
   const {
-    localAddrs, ports, browserByPort, browserList, latencies,
+    running, localAddrs, ports, browserByPort, browserList, latencies,
     editingPort, editPortNum,
     setEditPortNum, startEditPort, saveEditPort, cancelEditPort,
-    handleDisconnect, handleUpdateName, addPort, removePort, handleTestAll, testRunning, testResult,
+    handleDisconnect, handleUpdateName, handleToggleDisabled, addPort, removePort, handleTestAll, testRunning, testResult,
   } = props;
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -438,15 +480,15 @@ function SvgTopology(props: {
 
         {/* 列标签 */}
         <text x={X_DESKTOP + NODE_W / 2} y={labelTop + 10}
-          textAnchor="middle" fill={labelColor} fontSize="11" fontWeight="600"
+          textAnchor="middle" fill={labelColor} fontSize="10" fontWeight="600" letterSpacing="0.5"
           fontFamily="system-ui, sans-serif"
-        >CebianDesktop</text>
+        >本地 AI</text>
         <text x={X_PORT + PORT_W / 2} y={labelTop + 10}
-          textAnchor="middle" fill={labelColor} fontSize="11" fontWeight="600"
+          textAnchor="middle" fill={labelColor} fontSize="10" fontWeight="600" letterSpacing="0.5"
           fontFamily="system-ui, sans-serif"
         >端口</text>
         <text x={X_BROWSER + BROWSER_W / 2} y={labelTop + 10}
-          textAnchor="middle" fill={labelColor} fontSize="11" fontWeight="600"
+          textAnchor="middle" fill={labelColor} fontSize="10" fontWeight="600" letterSpacing="0.5"
           fontFamily="system-ui, sans-serif"
         >浏览器</text>
 
@@ -494,15 +536,21 @@ function SvgTopology(props: {
 
         {/* 【桌面节点】左侧 */}
         <foreignObject x={X_DESKTOP} y={desktopY} width={NODE_W} height={DESKTOP_H}>
-          <div className="w-full h-full flex flex-col items-center justify-center border-2 border-primary/30 bg-primary/5 rounded-xl shadow-sm p-2">
-            <div className="w-9 h-9 rounded-xl bg-primary/15 flex items-center justify-center mb-1">
-              <Bot size={18} className="text-primary" />
+          <div className="w-full h-full flex flex-col items-center justify-center rounded-xl bg-gradient-to-b from-primary/8 to-primary/3 border-2 border-primary/25 shadow-sm p-2">
+            <div className="size-8 rounded-lg bg-primary/15 flex items-center justify-center mb-1.5 shadow-sm">
+              <Bot size={16} className="text-primary" />
             </div>
-            <div className="font-mono text-sm font-bold tracking-tight text-center">{mainIp}</div>
-            {moreIps.map((ip, i) => (
-              <div key={i} className="font-mono text-[10px] text-muted-foreground/60 tracking-tight">{ip}</div>
-            ))}
-            <div className="text-[10px] text-muted-foreground/50 mt-0.5">本地</div>
+            <div className="text-[11px] font-bold tracking-tight text-center leading-tight">CebianDesktop</div>
+            <div className="text-[9px] text-muted-foreground/50 leading-tight">Agent</div>
+            <div className="text-[9px] text-muted-foreground/40 mt-1 font-mono">{mainIp}</div>
+            {moreIps.length > 0 && (
+              <div className="flex flex-wrap justify-center gap-1 mt-0.5">
+                {moreIps.slice(0, 2).map((ip, i) => (
+                  <span key={i} className="text-[8px] text-muted-foreground/30 font-mono">{ip}</span>
+                ))}
+                {moreIps.length > 2 && <span className="text-[8px] text-muted-foreground/30">+{moreIps.length - 2}</span>}
+              </div>
+            )}
           </div>
         </foreignObject>
 
@@ -514,13 +562,13 @@ function SvgTopology(props: {
 
           return (
             <g key={ri}>
-              {/* 桌面到端口的连线状态标识 */}
+              {/* 桌面到端口的连线状态标识：只要服务运行就显示绿色 */}
               <text x={(X_DESKTOP + NODE_W + X_PORT) / 2}
                 y={(desktopCenterY + cy) / 2 - 7}
-                textAnchor="middle" fill={(browserByPort[row.port] ?? []).length > 0 ? "#22c55e" : "#999"}
+                textAnchor="middle" fill={running ? "#22c55e" : "#999"}
                 fontSize="11" fontWeight="bold" fontFamily="system-ui, sans-serif"
               >
-                {(browserByPort[row.port] ?? []).length > 0 ? "✓" : "✕"}
+                {running ? "✓" : "✕"}
               </text>
 
               {/* 端口节点（每个端口在第一行显示） */}
@@ -548,11 +596,14 @@ function SvgTopology(props: {
               {/* 浏览器节点（每行都有） */}
               <foreignObject x={X_BROWSER} y={cy - ROW_H / 2} width={BROWSER_W} height={ROW_H}>
                 {row.browser ? (
-                  <BrowserNodeComp info={row.browser} handleDisconnect={handleDisconnect} handleUpdateName={handleUpdateName} />
+                  <BrowserNodeComp info={row.browser} handleDisconnect={handleDisconnect} handleUpdateName={handleUpdateName} handleToggleDisabled={handleToggleDisabled} />
                 ) : (
-                  <div className="w-full h-full flex items-center justify-center border border-dashed border-border rounded-lg bg-muted/20">
-                    <span className="text-xs text-muted-foreground/40 italic">等待连接...</span>
-                  </div>
+                <div className="w-full h-full flex items-center justify-center border border-dashed border-border/60 rounded-lg bg-muted/5">
+                  <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground/30">
+                    <Wifi size={12} />
+                    等待连接...
+                  </span>
+                </div>
                 )}
               </foreignObject>
             </g>
@@ -561,21 +612,21 @@ function SvgTopology(props: {
       </svg>
 
       {/* 底部操作栏 */}
-      <div className="border-t border-border px-3 py-2 flex items-center justify-between bg-muted/20">
-        <button onClick={addPort} className="flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-primary hover:bg-primary/10 rounded-lg">
-          <Plus size={12} />添加端口
+      <div className="border-t border-border px-3 py-2.5 flex items-center justify-between bg-muted/10">
+        <button onClick={addPort} className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors">
+          <Plus size={11} />添加端口
         </button>
         {browserList.length > 0 && (
           <button onClick={handleTestAll} disabled={testRunning}
-            className="flex items-center gap-1.5 px-3 py-1 text-xs font-medium bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
-            <Zap size={12} className={testRunning ? "animate-pulse" : ""} />{testRunning ? "测试中..." : "全部测试"}
+            <Zap size={11} className={testRunning ? "animate-pulse" : ""} />{testRunning ? "测试中..." : "全部测试"}
           </button>
         )}
       </div>
       {testResult && (
-        <div className="px-3 py-2 border-t border-border flex items-center gap-2 text-xs text-muted-foreground bg-muted/30">
-          <Zap size={12} className={testResult.includes("正") ? "text-green-500" : "text-amber-500"} />
+        <div className="px-3 py-2 border-t border-border flex items-center gap-2 text-[11px] text-muted-foreground bg-muted/20">
+          <div className={`size-1.5 rounded-full ${testResult.includes("正") ? "bg-green-400" : "bg-amber-400"}`} />
           {testResult}
         </div>
       )}
@@ -598,7 +649,7 @@ function PortNodeComp({
 }) {
   if (editingPort === index) {
     return (
-      <div className="w-full h-full flex items-center px-1.5 border border-primary/60 rounded-lg bg-background shadow-sm">
+      <div className="w-full h-full flex items-center px-2 border-2 border-primary/50 rounded-lg bg-background shadow-sm">
         <input value={editPortNum}
           onChange={e => { const v = parseInt(e.target.value.replace(/\D/g, ''), 10); setEditPortNum(v || 0); }}
           onKeyDown={e => { if (e.key === 'Enter') saveEditPort(index); if (e.key === 'Escape') cancelEditPort(); }}
@@ -610,14 +661,15 @@ function PortNodeComp({
     );
   }
   return (
-    <div className="w-full h-full flex items-center px-1.5 border border-border rounded-lg bg-background shadow-sm group cursor-pointer"
+    <div className="w-full h-full flex items-center px-2 rounded-lg bg-card border border-border shadow-sm group cursor-pointer hover:border-primary/30 hover:shadow-md transition-all"
       onClick={() => startEditPort(index)} title="点击编辑端口号"
     >
-      <div className="flex-1 text-center">
-        <span className="font-mono text-sm font-bold">{port}</span>
+      <div className="flex-1 flex flex-col items-center justify-center min-w-0">
+        <span className="text-[10px] text-muted-foreground/40 leading-none">port</span>
+        <span className="font-mono text-sm font-bold tabular-nums">{port}</span>
       </div>
       <button onClick={e => { e.stopPropagation(); removePort(index); }}
-        className="p-0.5 text-muted-foreground/30 hover:text-destructive hover:bg-destructive/10 rounded opacity-0 group-hover:opacity-100 transition-opacity shrink-0"
+        className="p-1 text-muted-foreground/30 hover:text-destructive hover:bg-destructive/10 rounded-md opacity-0 group-hover:opacity-100 transition-all shrink-0"
         title="删除端口"
       >
         <Trash2 size={10} />
@@ -628,15 +680,17 @@ function PortNodeComp({
 
 /* BrowserNodeComp — 浏览器节点 */
 function BrowserNodeComp({
-  info: b, handleDisconnect, handleUpdateName,
+  info: b, handleDisconnect, handleUpdateName, handleToggleDisabled,
 }: {
   info: BrowserInfo;
   handleDisconnect: (sessionId: string) => void;
   handleUpdateName: (sessionId: string, name: string) => void;
+  handleToggleDisabled: (sessionId: string, disabled: boolean) => void;
 }) {
   const meta = getBrowserMeta(b.browser);
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState(b.client_name || b.port_name);
+  const isDisabled = b.disabled ?? false;
 
   const saveName = () => {
     const trimmed = editName.trim();
@@ -651,10 +705,16 @@ function BrowserNodeComp({
   };
 
   return (
-    <div className="w-full h-full flex items-center gap-2 px-3 border border-border rounded-lg bg-background shadow-sm hover:border-primary/30 transition-colors group">
-      <div className="w-11 h-11 rounded-lg flex items-center justify-center bg-background shrink-0">
-        <BrowserIcon browser={b.browser} size={28} />
+    <div className={`w-full h-full flex items-center gap-2.5 px-3 rounded-lg shadow-sm group transition-all ${
+      isDisabled
+        ? "border border-muted/60 bg-muted/5 opacity-55"
+        : "border border-border bg-card hover:border-primary/25 hover:shadow-md"
+    }`}>
+      {/* 浏览器图标 */}
+      <div className="size-10 rounded-lg flex items-center justify-center bg-background border border-border/50 shrink-0 shadow-sm">
+        <BrowserIcon browser={b.browser} size={24} />
       </div>
+      {/* 浏览器信息 */}
       <div className="min-w-0 flex-1 flex flex-col justify-center gap-0.5">
         <div className="flex items-center gap-1.5 flex-wrap min-w-0">
           {editing ? (
@@ -663,29 +723,51 @@ function BrowserNodeComp({
               onKeyDown={e => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') cancelName(); }}
               onBlur={saveName}
               autoFocus
-              className="w-28 px-1 py-0.5 text-sm font-medium border border-primary/60 rounded bg-background outline-none"
+              className="w-28 px-1.5 py-0.5 text-sm font-medium border-2 border-primary/50 rounded-md bg-background outline-none"
             />
           ) : (
-            <span className="text-sm font-medium truncate cursor-pointer hover:text-primary"
+            <span className={`text-sm font-medium truncate cursor-pointer hover:text-primary transition-colors ${isDisabled ? "text-muted-foreground" : ""}`}
               onClick={() => { setEditName(b.client_name || b.port_name); setEditing(true); }}
               title="点击编辑名称"
             >{b.client_name || b.port_name}</span>
           )}
-          <span className="text-[11px] text-muted-foreground bg-muted px-1.5 rounded whitespace-nowrap shrink-0">{meta.label} {b.version}</span>
-          {b.profile && <span className="text-[11px] text-muted-foreground bg-muted px-1.5 rounded whitespace-nowrap shrink-0">{b.profile}</span>}
-          <span className="text-[11px] text-muted-foreground/40 shrink-0" title={`窗口数: ${b.windows}`}>· {b.windows}窗口</span>
+          <span className="text-[10px] text-muted-foreground bg-muted/80 px-1.5 py-0.5 rounded whitespace-nowrap shrink-0">{meta.label} {b.version}</span>
+          {b.profile && <span className="text-[10px] text-muted-foreground bg-muted/80 px-1.5 py-0.5 rounded whitespace-nowrap shrink-0">{b.profile}</span>}
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0">
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground min-w-0">
           <span className="inline-flex items-center gap-1 shrink-0" title={`会话 ID: ${b.session_id}`}><Network size={9} />{b.remote_addr ?? "?"}</span>
-          <span className="shrink-0">· {fmtDuration(b.connected_at)}</span>
+          <span className="shrink-0 text-muted-foreground/50">·</span>
+          <span className="shrink-0 text-muted-foreground/60">{fmtDuration(b.connected_at)}</span>
+          {b.windows > 0 && (
+            <>
+              <span className="shrink-0 text-muted-foreground/50">·</span>
+              <span className="shrink-0 text-muted-foreground/60">{b.windows} 窗口</span>
+            </>
+          )}
+          {isDisabled && (
+            <span className="text-[10px] text-muted-foreground/50 bg-muted/60 px-1.5 py-0.5 rounded whitespace-nowrap shrink-0">已禁用</span>
+          )}
         </div>
       </div>
-      <button onClick={() => handleDisconnect(b.session_id)}
-        className="p-1.5 text-muted-foreground/30 hover:text-destructive hover:bg-destructive/10 rounded opacity-0 group-hover:opacity-100 transition-all shrink-0"
-        title="断开连接"
-      >
-        <Trash2 size={12} />
-      </button>
+      {/* 操作按钮 */}
+      <div className="flex items-center gap-0.5 shrink-0">
+        <button onClick={() => handleToggleDisabled(b.session_id, !isDisabled)}
+          className={`p-1.5 rounded-md transition-all ${
+            isDisabled
+              ? "text-muted-foreground/40 hover:text-green-500 hover:bg-green-500/10"
+              : "text-green-500/70 hover:text-green-600 hover:bg-green-500/10"
+          }`}
+          title={isDisabled ? "启用此浏览器" : "禁用此浏览器"}
+        >
+          <Power size={12} />
+        </button>
+        <button onClick={() => handleDisconnect(b.session_id)}
+          className="p-1.5 text-muted-foreground/30 hover:text-destructive hover:bg-destructive/10 rounded-md opacity-0 group-hover:opacity-100 transition-all"
+          title="断开连接"
+        >
+          <Trash2 size={12} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -700,9 +782,19 @@ function CopyBtn({ text }: { text: string }) {
     setTimeout(() => setCopied(false), 1200);
   };
   return (
-    <button onClick={doCopy} className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-mono bg-background border border-border rounded-lg hover:bg-accent transition-colors group">
-      <span className="truncate max-w-[260px]">{text}</span>
-      {copied ? <Check size={12} className="text-green-500 shrink-0" /> : <Copy size={12} className="opacity-30 group-hover:opacity-60 shrink-0 transition-opacity" />}
+    <button onClick={doCopy}
+      className="inline-flex items-center gap-2 w-full px-3 py-2 text-[11px] font-mono bg-background border border-border rounded-lg hover:bg-accent hover:border-primary/30 transition-all group"
+    >
+      <span className="truncate flex-1 text-left">{text}</span>
+      <span className={`flex items-center gap-1 shrink-0 text-[10px] transition-all ${
+        copied ? "text-green-500" : "text-muted-foreground/40 group-hover:text-muted-foreground/70"
+      }`}>
+        {copied ? (
+          <><Check size={11} />已复制</>
+        ) : (
+          <><Copy size={11} />复制</>
+        )}
+      </span>
     </button>
   );
 }

@@ -32,7 +32,7 @@
 //! { "jsonrpc": "2.0", "id": "desktop_req_xxx", "result": { "content": "文件夹包含 3 个文件..." } }
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -269,6 +269,8 @@ pub(crate) struct BridgeInner {
     pub desktop_ai_progress: Value,
     /// 当前配置的端口列表（用于 WS 处理器识别所属端口名称）
     pub port_configs: HashMap<u16, String>, // port → name
+    /// 用户手动禁用的浏览器 session_id 集合
+    pub disabled_browsers: HashSet<String>,
 }
 
 impl BridgeState {
@@ -282,6 +284,7 @@ impl BridgeState {
                 pending_progress: HashMap::new(),
                 desktop_ai_progress: json!({"steps": [], "status": "idle", "task": ""}),
                 port_configs: HashMap::new(),
+                disabled_browsers: HashSet::new(),
             }),
             app_handle: std::sync::Mutex::new(None),
             local_addresses: addrs,
@@ -721,6 +724,7 @@ pub async fn get_connected_browsers_inner(state: &BridgeState) -> Result<Value, 
                 "windows": b.window_count,
                 "remote_addr": b.remote_addr,
                 "connected_seconds": b.connected_at.elapsed().as_secs_f64().round() as i64,
+                "disabled": inner.disabled_browsers.contains(&b.session_id),
             })
         })
         .collect();
@@ -739,6 +743,7 @@ pub async fn execute_browser_tool(
     name: &str,
     args: &Value,
     browser_name: Option<&str>,
+    app_handle: Option<&tauri::AppHandle>,
 ) -> Result<Value, String> {
     // get_connected_browsers 是内置查询，不转发到浏览器
     if name == "get_connected_browsers" {
@@ -754,7 +759,7 @@ pub async fn execute_browser_tool(
             .as_nanos()
     );
 
-    // 查找目标浏览器（分两步避免双重借用）
+    // 查找可用的浏览器（排除已禁用的，分两步避免双重借用）
     let (ws_sender, found_session_id) = {
         let inner = state.inner.lock().await;
 
@@ -764,11 +769,17 @@ pub async fn execute_browser_tool(
             );
         }
 
-        let session = if let Some(bname) = browser_name {
-            // 按名称查找：支持 port_name、client_name、browser_type、profile_name 匹配
+        // 构建一个排除已禁用浏览器的迭代器辅助函数
+        let enabled_browsers = || {
             inner
                 .browsers
                 .values()
+                .filter(|s| !inner.disabled_browsers.contains(&s.session_id))
+        };
+
+        let session = if let Some(bname) = browser_name {
+            // 按名称查找：支持 port_name、client_name、browser_type、profile_name 匹配
+            enabled_browsers()
                 .find(|s| {
                     s.port_name == bname
                         || s.client_name == bname
@@ -782,26 +793,41 @@ pub async fn execute_browser_tool(
                         || format!("{}", s.port) == bname
                 })
                 .ok_or_else(|| {
-                    let info: Vec<String> = inner
+                    let all_info: Vec<String> = inner
                         .browsers
                         .values()
                         .map(|s| {
+                            let disabled = if inner.disabled_browsers.contains(&s.session_id) { " [已禁用]" } else { "" };
                             if !s.client_name.is_empty() {
-                                format!("「{}」({}:{})", s.client_name, s.browser_type, s.profile_name)
+                                format!("「{}」({}:{}){}", s.client_name, s.browser_type, s.profile_name, disabled)
                             } else {
-                                format!("{}:{}:{}", s.browser_type, s.profile_name, s.port)
+                                format!("{}:{}:{}{}", s.browser_type, s.profile_name, s.port, disabled)
                             }
                         })
                         .collect();
-                    format!(
-                        "未找到浏览器「{}」，当前已连接的浏览器：{}",
-                        bname,
-                        info.join("、")
-                    )
+                    if enabled_browsers().count() == 0 {
+                        format!(
+                            "所有浏览器已被禁用，请在设置中启用至少一个浏览器后再试。\n当前浏览器：{}",
+                            all_info.join("、")
+                        )
+                    } else {
+                        format!(
+                            "未找到浏览器「{}」，当前已连接的浏览器：{}",
+                            bname,
+                            all_info.join("、")
+                        )
+                    }
                 })?
         } else {
-            // 未指定时使用第一个
-            inner.browsers.values().next().ok_or("没有已连接的浏览器")?
+            // 未指定时使用第一个已启用的浏览器
+            enabled_browsers().next().ok_or_else(|| {
+                let all_disabled = inner.browsers.values().all(|s| inner.disabled_browsers.contains(&s.session_id));
+                if all_disabled {
+                    "所有浏览器已被禁用，请在设置中启用至少一个浏览器后再试。".to_string()
+                } else {
+                    "没有已连接的浏览器".to_string()
+                }
+            })?
         };
 
         (session.ws_sender.clone(), session.session_id.clone())
@@ -829,6 +855,23 @@ pub async fn execute_browser_tool(
         });
         if let Some(cid) = conversation_id {
             params["conversation_id"] = json!(cid);
+        }
+        // 附带桌面端的 AI 配置（模型、API Key、endpoint），让浏览器 AI 直接使用，
+        // 避免用户在浏览器扩展中再单独配置一次 AI 模型
+        if let Some(handle) = app_handle {
+            if let Ok(config) = crate::config_storage::load_config(handle) {
+                let active_provider = config.providers
+                    .iter()
+                    .find(|p| p.id == config.active_provider_id);
+                if let Some(provider) = active_provider {
+                    params["ai_config"] = json!({
+                        "model": provider.selected_model,
+                        "api_key": provider.api_key,
+                        "endpoint": provider.endpoint,
+                        "thinking_level": config.thinking_level,
+                    });
+                }
+            }
         }
         json!({
             "jsonrpc": "2.0",
@@ -907,15 +950,27 @@ pub async fn execute_browser_tool(
             resp
         };
 
+        // 尝试解析 report_text 是否为 JSON 格式的错误报告（由 bridge-agent.ts 的 JSON.stringify 生成）
+        let json_error_msg = if !report_text.is_empty() {
+            serde_json::from_str::<Value>(report_text)
+                .ok()
+                .and_then(|v| v.get("error").and_then(|e| e.as_str()).map(|s| s.to_string()))
+        } else {
+            None
+        };
+
         if !report_text.is_empty() {
             // 检查报告是否包含有意义的工具调用记录或 AI 回复
             let has_tool_calls = report_text.contains("执行记录") || report_text.contains("[工具]");
             let has_ai_reply = report_text.contains("浏览器 AI 回复") || report_text.contains("执行总结");
-            let has_error = report_text.contains("错误");
+            let has_error = report_text.contains("错误") || json_error_msg.is_some();
 
             if has_tool_calls || has_ai_reply || has_error {
                 // 报告内容有意义，直接返回。同时附加一条「结果说明」帮助桌面 AI 理解
-                let summary = if has_error {
+                let summary = if let Some(err_msg) = &json_error_msg {
+                    // JSON 格式的错误报告，提取了清晰的错误信息
+                    format!("❌ 浏览器 AI 执行出错：{}", err_msg)
+                } else if has_error {
                     "浏览器 AI 执行出错，详见下方报告。".to_string()
                 } else if report_text.len() > 50 {
                     format!(
@@ -938,9 +993,16 @@ pub async fn execute_browser_tool(
                 task_text
             )))
         } else {
+            let error_detail = json_error_msg.unwrap_or_else(|| {
+                if report_text.is_empty() {
+                    "浏览器返回了空的响应".to_string()
+                } else {
+                    report_text.to_string()
+                }
+            });
             Ok(make_response(format!(
                 "❌ 浏览器 AI 执行失败，错误信息: {}",
-                report_text
+                error_detail
             )))
         }
     } else {
@@ -1144,7 +1206,7 @@ pub fn get_browser_tool_definitions() -> Vec<Value> {
     ]
 }
 
-/// 浏览器工具名称列表
+/// 浏览器工具名称列表（全部）
 pub fn get_browser_tool_names() -> Vec<&'static str> {
     vec![
         "get_connected_browsers",
@@ -1157,6 +1219,19 @@ pub fn get_browser_tool_names() -> Vec<&'static str> {
         "fill_form",
         "click_element",
         "get_page_html",
+        "ask_browser_ai",
+    ]
+}
+
+/// 桌面端 AI 可用的浏览器工具白名单（只读工具 + 委托工具）
+/// 不暴露 search_web/execute_js/fill_form/click_element/get_page_html 等高风险或应由浏览器 AI 自主操作的工具
+pub fn get_desktop_browser_tool_names() -> Vec<&'static str> {
+    vec![
+        "get_connected_browsers",
+        "get_browser_state",
+        "read_current_page",
+        "take_screenshot",
+        "get_tab_info",
         "ask_browser_ai",
     ]
 }

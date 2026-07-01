@@ -19,6 +19,8 @@ interface SettingsViewProps {
   onPortChange: (port: number) => void;
   onBack: () => void;
   defaultSection?: string;
+  /** 设置栏目切换回调 */
+  onSectionChange?: (section: string) => void;
 }
 
 interface NavItem {
@@ -30,8 +32,8 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { id: "providers", label: "AI 提供商", icon: Key },
   { id: "permission", label: "AI 权限", icon: Shield },
+  { id: "bridge", label: "AI 桥接", icon: Wifi },
   { id: "skills", label: "技能", icon: Puzzle },
-  { id: "bridge", label: "双 AI 桥接", icon: Wifi },
   { id: "about", label: "关于", icon: Info },
 ];
 
@@ -55,6 +57,23 @@ export default function SettingsView(props: SettingsViewProps) {
       setActive(props.defaultSection);
     }
   }, [props.defaultSection]);
+
+  // 切换栏目时通知父组件
+  const handleSectionChange = (section: string) => {
+    setActive(section);
+    props.onSectionChange?.(section);
+  };
+
+  // 滚轮切换栏目
+  const handleNavWheel = (e: React.WheelEvent) => {
+    const idx = NAV_ITEMS.findIndex(item => item.id === active);
+    if (idx === -1) return;
+    if (e.deltaY > 0 && idx < NAV_ITEMS.length - 1) {
+      handleSectionChange(NAV_ITEMS[idx + 1].id);
+    } else if (e.deltaY < 0 && idx > 0) {
+      handleSectionChange(NAV_ITEMS[idx - 1].id);
+    }
+  };
   const [navMode, setNavMode] = useState<"wide" | "medium" | "compact">("wide");
   const measureRef = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLDivElement>(null);
@@ -103,29 +122,31 @@ export default function SettingsView(props: SettingsViewProps) {
 
       {navMode === "wide" ? (
         <div className="flex-1 flex min-h-0">
-          <nav className="w-44 border-r border-border bg-card px-3 py-2 flex flex-col gap-1 shrink-0 self-stretch overflow-y-auto">
+          <nav className="w-44 border-r border-border bg-card px-3 py-2 flex flex-col gap-1 shrink-0 self-stretch overflow-y-auto"
+            onWheel={handleNavWheel}>
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               return (
-                <button key={item.id} onClick={() => setActive(item.id)}
+                <button key={item.id} onClick={() => handleSectionChange(item.id)}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs leading-none transition-colors ${active === item.id ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"}`}>
                   <Icon size={14} /><span>{item.label}</span>
                 </button>
               );
             })}
           </nav>
-          <div className={`flex-1 overflow-y-auto min-w-0 flex flex-col min-h-0 ${active === 'skills' ? 'p-0' : 'p-6'}`}>
-            <div className="settings-content flex-1 flex flex-col min-h-0">{renderSection(props, active)}</div>
+          <div className="flex-1 overflow-y-auto min-w-0 flex flex-col min-h-0">
+            <div className={`settings-content flex-1 flex flex-col min-h-0 ${active === 'skills' ? '' : 'p-6'}`}>{renderSection(props, active)}</div>
           </div>
         </div>
       ) : (
         <div className="flex-1 flex flex-col min-h-0">
-          <nav ref={navRef} className="flex gap-1 px-3 py-2 border-b border-border bg-card shrink-0 scrollbar-hidden">
+          <nav ref={navRef} className="flex gap-1 px-3 py-2 border-b border-border bg-card shrink-0 scrollbar-hidden"
+            onWheel={handleNavWheel}>
             {NAV_ITEMS.map((item) => {
               const Icon = item.icon;
               const isActive = active === item.id;
               return (
-                <button key={item.id} onClick={() => setActive(item.id)}
+                <button key={item.id} onClick={() => handleSectionChange(item.id)}
                   className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs leading-none whitespace-nowrap transition-colors shrink-0 ${isActive ? "bg-accent text-foreground" : "text-muted-foreground hover:bg-accent/50"}`}
                   title={navMode === "compact" ? item.label : undefined}>
                   <Icon size={14} />
@@ -134,8 +155,8 @@ export default function SettingsView(props: SettingsViewProps) {
               );
             })}
           </nav>
-          <div className={`flex-1 overflow-y-auto min-w-0 flex flex-col min-h-0 ${active === 'skills' ? 'p-0' : 'p-4'}`}>
-            <div className="settings-content flex-1 flex flex-col min-h-0">{renderSection(props, active)}</div>
+          <div className="flex-1 overflow-y-auto min-w-0 flex flex-col min-h-0">
+            <div className={`settings-content flex-1 flex flex-col min-h-0 ${active === 'skills' ? '' : 'p-4'}`}>{renderSection(props, active)}</div>
           </div>
         </div>
       )}

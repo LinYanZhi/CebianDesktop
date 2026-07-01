@@ -225,6 +225,7 @@ pub async fn get_bridge_status(
                     "port": b.port,
                     "remote_addr": b.remote_addr,
                     "connected_at": b.connected_at.elapsed().as_secs(),
+                    "disabled": inner.disabled_browsers.contains(&b.session_id),
                 })
             })
             .collect::<Vec<_>>()
@@ -259,12 +260,14 @@ pub async fn send_browser_message(
     bridge_state: State<'_, Arc<BridgeState>>,
     task: String,
     browser_session_id: Option<String>,
+    app_handle: tauri::AppHandle,
 ) -> Result<Value, String> {
     let result = crate::bridge::execute_browser_tool(
         &bridge_state,
         "ask_browser_ai",
         &serde_json::json!({"task": task}),
         browser_session_id.as_deref(),
+        Some(&app_handle),
     ).await?;
     Ok(result)
 }
@@ -277,6 +280,25 @@ pub async fn ping_browser(
 ) -> Result<Value, String> {
     let ms = crate::bridge::ping_session(&bridge_state, &session_id).await?;
     Ok(serde_json::json!({ "session_id": session_id, "ping_ms": ms.round() as i64 }))
+}
+
+/// 启用或禁用指定浏览器会话（禁用后 AI 工具路由不会选择该浏览器）
+#[tauri::command]
+pub async fn toggle_browser_disabled(
+    bridge_state: State<'_, Arc<BridgeState>>,
+    session_id: String,
+    disabled: bool,
+) -> Result<Value, String> {
+    let mut inner = bridge_state.inner.lock().await;
+    if !inner.browsers.contains_key(&session_id) {
+        return Err(format!("浏览器会话 {} 不存在", session_id));
+    }
+    if disabled {
+        inner.disabled_browsers.insert(session_id.clone());
+    } else {
+        inner.disabled_browsers.remove(&session_id);
+    }
+    Ok(json!({ "ok": true, "session_id": session_id, "disabled": disabled }))
 }
 
 /// 断开指定浏览器会话

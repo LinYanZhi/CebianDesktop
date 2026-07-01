@@ -4,10 +4,9 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
 import type { ChatMessage } from "../../lib/types";
+import { getMessageText, getMessageThinking } from "../../lib/types";
 import { CopyButton } from "./chat-types";
 import { ToolCallCards } from "./ToolCall";
-import AiThoughtProcess from "./AiThoughtProcess";
-import type { AgentProgressMap } from "./AiThoughtProcess";
 
 // ═══════════════════════════════════════════════════════════
 //  思考过程块
@@ -137,10 +136,9 @@ const MarkdownRenderer = memo(function MarkdownRenderer({ content }: { content: 
 //  AI 消息
 // ═══════════════════════════════════════════════════════════
 
-export function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResults, agentProgresses }: {
+export function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResults }: {
   msg: ChatMessage; isStreaming?: boolean; isLast?: boolean; onRetry?: () => void;
   toolResults?: ChatMessage[];
-  agentProgresses?: AgentProgressMap;
 }) {
   const hasToolCalls = msg.tool_calls && msg.tool_calls.length > 0;
 
@@ -149,8 +147,8 @@ export function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResul
     if (!toolResults || !hasToolCalls) return undefined;
     const map = new Map<string, string>();
     for (const tr of toolResults) {
-      if (tr.tool_call_id && tr.content) {
-        map.set(tr.tool_call_id, tr.content);
+      if (tr.tool_call_id && getMessageText(tr)) {
+        map.set(tr.tool_call_id, getMessageText(tr));
       }
     }
     return map;
@@ -162,27 +160,25 @@ export function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResul
         <Bot size={14} className="text-primary shrink-0" />
         <span className="font-medium text-xs text-muted-foreground">Cebian Agent</span>
       </div>
-      {msg.reasoning_content && <ThinkingBlock content={msg.reasoning_content} isLive={isStreaming} />}
-      {/* 浏览器 AI 执行进度可视化 */}
-      {agentProgresses && Object.keys(agentProgresses).length > 0 && (
-        <AiThoughtProcess progresses={agentProgresses} />
-      )}
-      {/* 工具调用卡片（每个卡片独立可折叠） */}
-      {hasToolCalls && (
-        <ToolCallCards tool_calls={msg.tool_calls!} results={toolResultsMap} />
+      {(msg.reasoning_content || getMessageThinking(msg)) && (
+        <ThinkingBlock content={msg.reasoning_content || getMessageThinking(msg) || ""} isLive={isStreaming} />
       )}
       <div className="text-sm leading-relaxed">
-        <MarkdownRenderer content={msg.content || ""} />
+        <MarkdownRenderer content={getMessageText(msg)} />
         {isStreaming && (
           <span className="inline-block w-1.5 h-4 bg-primary rounded-sm animate-pulse ml-0.5 align-text-bottom" />
         )}
       </div>
+      {/* 工具调用卡片（每个卡片独立可折叠） */}
+      {hasToolCalls && (
+        <ToolCallCards tool_calls={msg.tool_calls!} results={toolResultsMap} cancelled={msg.cancelled} />
+      )}
       {msg.cancelled && (
         <div className="text-xs text-muted-foreground/80 italic mt-1">已取消</div>
       )}
-      {!isStreaming && msg.content && (
+      {!isStreaming && getMessageText(msg) && (
         <div className="flex items-center gap-2 mt-1">
-          <CopyButton text={msg.content} />
+          <CopyButton text={getMessageText(msg)} />
           {msg.usage && (
             <span className="inline-flex items-center gap-1 text-[0.6rem] text-muted-foreground/70 tabular-nums bg-muted/50 px-1.5 py-0.5 rounded-md">
               <span title="输入 token">↑{msg.usage.input}</span>
@@ -217,7 +213,7 @@ export function UserMessageBlock({ msg, index, onRollback }: {
       <div className="flex items-start gap-1.5 max-w-[85%]">
         {onRollback && (
           <button
-            onClick={() => onRollback(index, msg.content)}
+            onClick={() => onRollback(index, getMessageText(msg))}
             className="mt-3 p-1 rounded-md text-muted-foreground/30 hover:text-foreground hover:bg-accent transition-all opacity-0 group-hover:opacity-100 shrink-0"
             title="回滚到此处：删除本条及之后消息，内容保留到输入框"
           >
@@ -225,7 +221,7 @@ export function UserMessageBlock({ msg, index, onRollback }: {
           </button>
         )}
         <div className="bg-card border border-border px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap break-words">
-          {msg.content.trim()}
+          {getMessageText(msg).trim()}
         </div>
       </div>
     </div>

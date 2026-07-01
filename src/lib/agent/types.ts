@@ -1,5 +1,11 @@
 import type { ChatMessage, ToolCall } from "../types";
 
+/** beforeToolCall 返回结果 */
+export interface BeforeToolCallResult {
+  block: boolean;
+  reason?: string;
+}
+
 /** Agent 状态机 */
 export const enum AgentState {
   /** 空闲，可接收新输入 */
@@ -16,6 +22,8 @@ export const enum AgentState {
 export interface AgentEvents {
   /** 流式 token 更新（content 或 thinking 变化） */
   onToken?: (params: { content: string; thinking?: string }) => void;
+  /** 工具执行前检查（对齐 Cebian beforeToolCall hook）。返回 block=true 阻止执行 */
+  onBeforeToolCall?: (toolCall: ToolCall) => Promise<BeforeToolCallResult> | BeforeToolCallResult;
   /** 模型本轮发出了工具调用（包含轮次信息） */
   onToolCalls?: (toolCalls: ToolCall[], round: number) => void;
   /** 单个工具执行完成 */
@@ -54,9 +62,7 @@ export interface AgentConfig {
 /** Agent 选项 */
 export interface AgentOptions {
   config: AgentConfig;
-  tools: any[];
   events: AgentEvents;
-  permissionMode?: string;
   /** 是否启用工具调用 */
   enableTools?: boolean;
 }

@@ -7,6 +7,7 @@ interface BrowserInfo {
   port: number;
   remote_addr: string | null;
   connected_at: number;
+  disabled?: boolean;
 }
 
 interface BridgeStatusData {
@@ -59,10 +60,8 @@ export function BridgeStatus({ onNavigateToBridge }: BridgeStatusProps) {
     >
       <span
         className={`w-2 h-2 rounded-full shrink-0 ${
-          hasBrowsers
+          status.running
             ? "bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.6)]"
-            : noBrowsers
-            ? "bg-amber-400 shadow-[0_0_4px_rgba(251,191,36,0.6)]"
             : "bg-gray-400"
         }`}
       />

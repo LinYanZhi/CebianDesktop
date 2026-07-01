@@ -72,7 +72,7 @@ export const TOOL_LABELS: Record<string, { label: string; color: string; desc: s
   skill_delete: { label: "删除技能", color: "text-red-400", desc: "删除一个技能" },
   // 桥接 / 双 AI 工具
   ask_browser_ai: { label: "浏览器 AI 任务", color: "text-cyan-400", desc: "将任务委派给浏览器 AI 执行" },
-  delegate_desktop_task: { label: "桌面 AI 任务", color: "text-cyan-400", desc: "将任务委派给桌面 AI 执行" },
+  delegate_desktop_task: { label: "本地 AI 任务", color: "text-cyan-400", desc: "将任务委派给本地 AI 执行" },
   get_connected_browsers: { label: "浏览器列表", color: "text-cyan-400", desc: "查看已连接的浏览器" },
   get_browser_state: { label: "浏览器状态", color: "text-cyan-400", desc: "查看浏览器的当前状态（标签页、URL 等）" },
   get_tab_info: { label: "标签页信息", color: "text-cyan-400", desc: "获取指定标签页的详细信息" },

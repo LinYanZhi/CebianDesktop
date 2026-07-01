@@ -14,30 +14,124 @@ export interface SendAttachment {
   size?: number;
 }
 
-export interface ChatMessage {
-  role: 'user' | 'assistant' | 'system' | 'tool';
-  content: string;
-  tool_calls?: ToolCall[];
-  tool_call_id?: string;
-  name?: string;
-  thinking?: string;
-  /** 思考推理过程内容（流式逐 token 积累） */
-  reasoning_content?: string;
-  /** 此消息是否被用户中止生成 */
-  cancelled?: boolean;
-  /** 此消息是否为上下文压缩摘要 */
-  compacted?: boolean;
-  /** 模型返回的 token 用量 */
-  usage?: {
-    input: number;
-    output: number;
-  };
+// ─── ContentBlock 体系（对齐 Cebian / pi-agent-core） ───
+
+export interface TextContent {
+  type: 'text';
+  text: string;
+}
+
+export interface ThinkingContent {
+  type: 'thinking';
+  thinking: string;
+}
+
+export interface ImageContent {
+  type: 'image';
+  data: string;
+  mimeType: string;
+}
+
+export interface ToolCallContent {
+  type: 'toolCall';
+  id: string;
+  name: string;
+  arguments: Record<string, any>;
+}
+
+export type ContentBlock = TextContent | ThinkingContent | ImageContent | ToolCallContent;
+
+/** 上下文压缩摘要消息类型（对齐 Cebian CompactionSummaryMessage） */
+export interface CompactionSummaryMessage {
+  role: 'compactionSummary';
+  summary: string;
+  tokensBefore: number;
+  timestamp: number;
 }
 
 export interface ToolCall {
   id: string;
   type: string;
   function: { name: string; arguments: string };
+}
+
+// ─── 主消息类型 ───
+
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'system' | 'tool' | 'compactionSummary';
+  /** 
+   * 消息内容。可以是纯文本（string）或 ContentBlock[]。
+   * - assistant 消息逐步迁移为 ContentBlock[]（text / thinking / toolCall）
+   * - user / system / tool 消息暂时保持 string，后续也支持 ContentBlock[]
+   */
+  content: string | ContentBlock[];
+  /** 工具调用列表（过渡字段，后续将迁移到 ContentBlock[] 中） */
+  tool_calls?: ToolCall[];
+  /** 工具调用 ID（仅 tool 角色） */
+  tool_call_id?: string;
+  /** 工具名称（仅 tool 角色） */
+  name?: string;
+  /** 从 API 流式获取的思考推理过程（临时保留，后续会迁移到 ContentBlock[] 中） */
+  reasoning_content?: string;
+  /** 此消息是否被用户中止生成 */
+  cancelled?: boolean;
+  /** 此消息是否为老式上下文压缩摘要（compact.ts 生成） */
+  compacted?: boolean;
+  /** 模型返回的 token 用量 */
+  usage?: {
+    input: number;
+    output: number;
+  };
+  /** 消息时间戳 */
+  timestamp?: number;
+}
+
+// ─── 兼容层：CompactionSummaryMessage ↔ ChatMessage 互转 ───
+
+export function compactionSummaryToChatMessage(cs: CompactionSummaryMessage): ChatMessage {
+  return {
+    role: 'compactionSummary',
+    content: cs.summary,
+    timestamp: cs.timestamp,
+  } as ChatMessage;
+}
+
+export function chatMessageToCompactionSummary(msg: ChatMessage): CompactionSummaryMessage | null {
+  if (msg.role === 'compactionSummary') {
+    return {
+      role: 'compactionSummary',
+      summary: typeof msg.content === 'string' ? msg.content : '',
+      tokensBefore: 0,
+      timestamp: msg.timestamp || Date.now(),
+    };
+  }
+  return null;
+}
+
+/** 从消息中提取纯文本（兼容 string / ContentBlock[] 两种格式） */
+export function getMessageText(msg: ChatMessage): string {
+  if (typeof msg.content === 'string') return msg.content;
+  return msg.content
+    .filter((b): b is TextContent => b.type === 'text')
+    .map(b => b.text)
+    .join('');
+}
+
+/** 检查消息是否包含 ThinkingContent 块 */
+export function getMessageThinking(msg: ChatMessage): string | undefined {
+  if (typeof msg.content === 'object' && Array.isArray(msg.content)) {
+    const tb = msg.content.find(b => b.type === 'thinking') as ThinkingContent | undefined;
+    return tb?.thinking;
+  }
+  return undefined;
+}
+
+/** 将消息内容规范化为 ContentBlock[] */
+export function normalizeContent(content: string | ContentBlock[]): ContentBlock[] {
+  if (typeof content === 'string') {
+    return content ? [{ type: 'text' as const, text: content }] : [];
+  }
+  return content;
 }
 
 export interface ProviderInfo {
@@ -80,6 +174,8 @@ export interface AIConfig {
   toolPermissions?: Record<string, ToolPermission>;
   /** 双 AI 桥接端口配置列表 */
   bridgePorts?: { name: string; port: number }[];
+  /** 界面浏览状态（当前视图、设置栏目等） */
+  viewState?: Record<string, string>;
 }
 
 /** 从多 Provider 配置中提取当前激活的扁平配置（向后兼容后端） */
@@ -105,24 +201,6 @@ export function getActiveConfig(config: AIConfig): {
   return result;
 }
 
-/** 单条工具执行记录 */
-export interface ToolExecutionRecord {
-  /** 工具调用 ID */
-  toolCallId: string;
-  /** 工具名称 */
-  toolName: string;
-  /** 工具参数（JSON 字符串） */
-  arguments: string;
-  /** 工具执行结果 */
-  result: string;
-  /** 执行是否成功 */
-  success: boolean;
-  /** 执行时间戳 */
-  timestamp: number;
-  /** 属于第几轮工具调用（从 0 开始） */
-  round: number;
-}
-
 export interface Conversation {
   id: string;
   title: string;
@@ -131,8 +209,6 @@ export interface Conversation {
   updatedAt: number;
   /** 最近一次上下文压缩的时间戳 */
   compactedAt?: number;
-  /** 独立的工具执行日志（不会随上下文压缩而丢失） */
-  toolLogs?: ToolExecutionRecord[];
 }
 
 export interface MCPServerStatus {
@@ -158,4 +234,23 @@ export interface StreamState {
   fullContent: string;
   fullThinking: string;
   usage?: { input: number; output: number };
+}
+
+/** 浏览器 AI / 本地 AI 执行步骤 */
+export interface AgentProgressStep {
+  type: "thinking" | "tool_call" | "tool_result" | "error";
+  content: string;
+  tool?: string;
+  status?: string;
+  timestamp: number;
+  resultType?: "screenshot" | "page_content" | "search_result" | "tab_info" | "text";
+}
+
+/** 浏览器 AI / 本地 AI 执行进度（按 request_id 映射） */
+export interface AgentProgressMap {
+  [request_id: string]: {
+    task: string;
+    steps: AgentProgressStep[];
+    status: "running" | "completed" | "error";
+  };
 }

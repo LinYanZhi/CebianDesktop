@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Settings, MessageSquarePlus, Bot, History, X, Trash2, Sun, Moon } from "lucide-react";
 import ChatView from "./components/chat/ChatView";
-import { ToolLogViewer } from "./components/chat/ToolLogViewer";
+
 import SettingsView from "./components/settings/SettingsView";
 import { SkinPopover } from "./components/SkinPopover";
 import { BridgeStatus } from "./components/BridgeStatus";
-import { getTools, executeTool, confirmExecution, cancelExecution, startMcpServer, stopMcpServer, sendBrowserMessage } from "./lib/commands";
-import type { ChatMode } from "./components/chat/ChatInput";
+import { executeTool, confirmExecution, cancelExecution, startMcpServer, stopMcpServer } from "./lib/commands";
+import { toolRegistry } from "./lib/tools";
 import { loadAIConfig, saveAIConfig, loadConversationsFromStorage, saveConversationsToStorage, loadTheme, saveTheme } from "./lib/db";
-import type { Conversation, ChatMessage, AIConfig, SendAttachment, ToolCall, StreamState, ToolExecutionRecord } from "./lib/types";
+import type { Conversation, ChatMessage, AIConfig, SendAttachment, ToolCall, StreamState } from "./lib/types";
+import { getMessageText } from "./lib/types";
 import { getActiveConfig } from "./lib/types";
 import { Agent } from "./lib/agent";
 import { DEFAULT_AI_CONFIG, TOOL_EXPORT_LABELS } from "./lib/constants";
@@ -81,9 +82,6 @@ export default function App() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [ctxConv, setCtxConv] = useState<{ x: number; y: number; id: string } | null>(null);
-  const [viewingToolLogs, setViewingToolLogs] = useState<string | null>(null);
-  const [chatMode, setChatMode] = useState<ChatMode>("desktop");
-  const [isBrowserLoading, setIsBrowserLoading] = useState(false);
   const unlistenRef = useRef<(() => void)[]>([]);
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -130,16 +128,16 @@ export default function App() {
   const confirmResolveRef = useRef<((value: boolean) => void) | null>(null);
   /** 工具执行取消标记（按 sessionId 隔离） */
   const cancelledSessionsRef = useRef<Set<string>>(new Set());
-  /** 累积当前流的工具执行日志，流结束后持久化到 Conversation.toolLogs */
-  const toolLogsRef = useRef<ToolExecutionRecord[]>([]);
   /** Agent 实例 Map（按 sessionId 隔离，支持多会话并发） */
   const agentMapRef = useRef<Map<string, Agent>>(new Map());
   /** 当前工具调用轮次（由 onToolCalls 更新，供 executeToolCallsForAgent 使用） */
   const currentRoundRef = useRef(0);
 
-  // 切换主题
+  // 切换主题 + HTML 背景色
   useEffect(() => {
     document.documentElement.classList.toggle("light", !darkMode);
+    const bg = darkMode ? "hsl(220,12%,5%)" : "hsl(60,9%,98%)";
+    document.documentElement.style.backgroundColor = bg;
     saveTheme(darkMode).catch(e => console.error("保存主题失败:", e));
   }, [darkMode]);
 
@@ -159,6 +157,13 @@ export default function App() {
         const savedConfig = await loadAIConfig();
         if (savedConfig) {
           setAiConfig(savedConfig);
+          // 恢复上次浏览位置
+          if (savedConfig.viewState?.currentView === "settings") {
+            setCurrentView("settings");
+            if (savedConfig.viewState.settingsSection) {
+              setSettingsSection(savedConfig.viewState.settingsSection);
+            }
+          }
         }
 
         const loaded = await loadConversationsFromStorage();
@@ -196,6 +201,18 @@ export default function App() {
     messagesRef.current = messages;
   }, [messages]);
 
+  // 浏览位置变化时自动保存到配置
+  useEffect(() => {
+    setAiConfig(prev => ({
+      ...prev,
+      viewState: {
+        ...(prev.viewState || {}),
+        currentView,
+        settingsSection: settingsSection || "",
+      },
+    }));
+  }, [currentView, settingsSection]);
+
   // visibilitychange：用户切换页面时，保存所有进行中的流
   useEffect(() => {
     const handler = () => {
@@ -220,7 +237,7 @@ export default function App() {
             msgs = [...state.prevMessages, partial];
           }
           updated = updated.map((c) =>
-            c.id === state.sessionId ? { ...c, messages: msgs, toolLogs: [...(c.toolLogs || []), ...(toolLogsRef.current || [])], updatedAt: Date.now() } : c
+            c.id === state.sessionId ? { ...c, messages: msgs, updatedAt: Date.now() } : c
           );
         }
         persistConversations(updated);
@@ -254,7 +271,6 @@ export default function App() {
             ? {
                 ...c,
                 messages: msgs,
-                toolLogs: [...(toolLogsRef.current || [])],
                 updatedAt: Date.now(),
                 title:
                   title ??
@@ -352,8 +368,14 @@ export default function App() {
     agent: Agent,
     currentMsgs: ChatMessage[],
     sessionId: string,
-    roundDepth: number,
+    _roundDepth: number,
   ) => {
+    // 如果会话已被取消，直接返回
+    if (cancelledSessionsRef.current.has(sessionId)) {
+      agent.resolveTools([]);
+      return;
+    }
+
     // 找到最后一条 assistant 消息中的 tool_calls
     let lastToolCalls: ToolCall[] = [];
     for (let i = currentMsgs.length - 1; i >= 0; i--) {
@@ -374,12 +396,11 @@ export default function App() {
     for (const tc of lastToolCalls) {
       if (isCancelled()) break;
 
-      let toolExecSuccess = false;
       let toolExecContent = "";
+      const toolName = tc.function.name;
 
       try {
         const args = JSON.parse(tc.function.arguments);
-        const toolName = tc.function.name;
 
         // ── ask_user ──
         if (toolName === "ask_user") {
@@ -388,6 +409,7 @@ export default function App() {
             setPendingInteractive,
             interactiveResolveRef,
           );
+          if (isCancelled()) break;
           toolExecContent = userResponse === null
             ? JSON.stringify({ cancelled: true, message: "用户已取消操作" })
             : JSON.stringify({ response: userResponse });
@@ -395,7 +417,6 @@ export default function App() {
             role: "tool", content: toolExecContent,
             tool_call_id: tc.id, name: toolName,
           } as ChatMessage);
-          toolExecSuccess = true;
           continue;
         }
 
@@ -409,15 +430,14 @@ export default function App() {
             result.details, result.token,
             setPendingConfirmation, confirmResolveRef,
           );
+          if (isCancelled()) break;
           if (confirmed) {
             const execResult = await confirmExecution(result.token);
             if (isCancelled()) break;
             toolExecContent = JSON.stringify(execResult, null, 2);
-            toolExecSuccess = true;
           } else {
             await cancelExecution(result.token).catch(() => {});
             toolExecContent = JSON.stringify({ error: `用户取消了 ${toolName} 操作` });
-            toolExecSuccess = true;
           }
         } else {
           if (toolName === "ask_browser_ai" && result && typeof result === "object" && result.summary) {
@@ -426,28 +446,25 @@ export default function App() {
               toolExecContent += `\n\n> 💡 会话延续 ID: \`${result.conversation_id}\` —— 下次调用 ask_browser_ai 时传入此 ID 可延续浏览器 AI 的上下文`;
             }
           } else {
-            toolExecContent = JSON.stringify(result, null, 2);
+          // 剥离大型二进制数据，避免上下文膨胀
+          let processedResult = result;
+          if (result && typeof result === "object" && !Array.isArray(result)) {
+            const r = result as Record<string, unknown>;
+            if ((toolName === "take_screenshot" || toolName === "capture_screen") && typeof r.data === "string" && (r.data as string).length > 1000) {
+              processedResult = { ...r, data: `[base64 data: ${(r.data as string).length} chars]` };
+            }
           }
-          toolExecSuccess = true;
+          toolExecContent = JSON.stringify(processedResult, null, 2);
+        }
         }
       } catch (err: any) {
+        // 如果是取消导致的 AbortError，不记录错误，静默跳过
+        if (isCancelled() || err?.name === "AbortError") break;
         console.error(`[Agent] 工具执行失败: ${tc.function.name}`, err);
         toolExecContent = `工具执行失败: ${err.message || err}`;
-        toolExecSuccess = false;
       }
 
-      // 记录工具执行日志
-      if (!isCancelled()) {
-        toolLogsRef.current.push({
-          toolCallId: tc.id,
-          toolName: tc.function.name,
-          arguments: tc.function.arguments,
-          result: toolExecContent,
-          success: toolExecSuccess,
-          timestamp: Date.now(),
-          round: roundDepth,
-        });
-      }
+      if (isCancelled()) break;
 
       toolResults.push({
         role: "tool", content: toolExecContent,
@@ -476,6 +493,9 @@ export default function App() {
       // 如果这个会话已经在流式，不允许重复发送
       if (activeStreamsRef.current.has(streamSessionId)) return;
 
+      // 新消息发送时清除已提交的表单
+      setPendingInteractive(null);
+
       const userMsg: ChatMessage = { role: "user", content };
       const updated = [...messages, userMsg];
       updateCurrentConversation(updated);
@@ -490,8 +510,6 @@ export default function App() {
       // 注册流状态
       const controller = new AbortController();
       (window as any).__streamController = controller;
-      // 重置本流的工具执行日志
-      toolLogsRef.current = [];
       const streamState: StreamState = {
         controller,
         persistTimer: null,
@@ -539,21 +557,13 @@ export default function App() {
           throw new Error("未配置 API");
         }
 
-        // 获取工具定义
-        let toolDefs: any[] = [];
+        // 获取工具定义（通过 ToolRegistry 统一加载）
         try {
-          toolDefs = await getTools();
+          await toolRegistry.refresh();
         } catch (e) {
-          console.warn("[handleSend] 获取工具列表失败:", e);
+          console.warn("[handleSend] 刷新工具列表失败:", e);
         }
-        const openaiTools = toolDefs.map((t: any) => ({
-          type: "function",
-          function: {
-            name: t.name,
-            description: t.description,
-            parameters: t.inputSchema,
-          },
-        }));
+        const openaiTools = toolRegistry.toOpenAITools();
 
         // 构建 system prompt
         let systemPrompt = aiConfig.system_prompt || getDefaultSystemPrompt();
@@ -578,8 +588,6 @@ export default function App() {
             temperature: active.temperature,
             systemPrompt,
           },
-          tools: toolDefs,
-          permissionMode,
           events: {
             onToken: ({ content, thinking }) => {
               fullContent = content;
@@ -588,15 +596,23 @@ export default function App() {
               streamState.fullThinking = thinking || "";
               if (sessionIdRef.current === streamSessionId) {
                 setMessages((prev) => {
-                  if (prev.length === 0) return prev;
                   const updatedMsgs = [...prev];
                   const last = updatedMsgs[updatedMsgs.length - 1];
                   if (last?.role === "assistant") {
+                    // 更新最后一条 assistant 消息（正常流式场景）
                     updatedMsgs[updatedMsgs.length - 1] = {
                       ...last,
                       content,
                       reasoning_content: thinking || undefined,
                     };
+                  } else {
+                    // 最后一条不是 assistant（如在多轮工具调用后新一轮开始），
+                    // 需要追加新的 assistant 占位，避免覆盖上一轮的思考/工具调用
+                    updatedMsgs.push({
+                      role: "assistant",
+                      content,
+                      reasoning_content: thinking || undefined,
+                    });
                   }
                   return updatedMsgs;
                 });
@@ -611,6 +627,12 @@ export default function App() {
               currentMessages = msgs;
               streamState.currentMessages = msgs;
               persistSessionMessages(streamSessionId, msgs);
+              // 同步 UI 状态，确保下一轮 onToken 时 setMessages 的 prev
+              // 包含完整的消息列表（含上一轮的 assistant + tool 结果），
+              // 避免 onToken 错误地覆盖上一轮的消息
+              if (sessionIdRef.current === streamSessionId) {
+                setMessages(msgs);
+              }
             },
 
             onDone: (finalMessages, usage) => {
@@ -656,14 +678,25 @@ export default function App() {
       } catch (err: any) {
         stopStreamPersist(streamState);
         if (err?.name === "AbortError") {
-          const cancelledMsg: ChatMessage = {
-            role: "assistant",
-            content: fullContent,
-            reasoning_content: fullThinking || undefined,
-            cancelled: true,
-            usage: accumulatedUsage,
-          };
-          const cancelledMsgs = [...currentMessages, cancelledMsg];
+          // 找到最后一个 assistant 消息，标记为已取消（保留 tool_calls）
+          let lastAssistantIdx = -1;
+          for (let i = currentMessages.length - 1; i >= 0; i--) {
+            if ((currentMessages[i] as ChatMessage).role === "assistant") {
+              lastAssistantIdx = i;
+              break;
+            }
+          }
+          let cancelledMsgs: ChatMessage[];
+          if (lastAssistantIdx >= 0) {
+            cancelledMsgs = [...currentMessages];
+            cancelledMsgs[lastAssistantIdx] = {
+              ...cancelledMsgs[lastAssistantIdx],
+              cancelled: true,
+              content: (cancelledMsgs[lastAssistantIdx] as ChatMessage).content || fullContent,
+            };
+          } else {
+            cancelledMsgs = [...currentMessages, { role: "assistant", content: fullContent || "已取消", cancelled: true } as ChatMessage];
+          }
           persistSessionMessages(streamSessionId, cancelledMsgs);
           if (sessionIdRef.current === streamSessionId) {
             setMessages(cancelledMsgs);
@@ -706,7 +739,8 @@ export default function App() {
   const handleInteractiveResolve = useCallback((value: string | null) => {
     interactiveResolveRef.current?.(value);
     interactiveResolveRef.current = null;
-    setPendingInteractive(null);
+    // 保留表单为已提交只读状态，直到用户发送新消息
+    setPendingInteractive(prev => (prev ? { ...prev, _resolved: true, _submittedValue: value } : null));
   }, []);
 
   /** 用户对二次确认对话框的响应 */
@@ -722,15 +756,31 @@ export default function App() {
     if (!sessionId) return;
     // 标记该会话已取消（按 sessionId 隔离）
     cancelledSessionsRef.current.add(sessionId);
-    // 通知桥接层取消浏览器 AI 正在执行的任务
+
+    // 1. 关闭待处理的交互式对话框（ask_user）
+    if (interactiveResolveRef.current) {
+      interactiveResolveRef.current(null);
+      interactiveResolveRef.current = null;
+      setPendingInteractive(null);
+    }
+
+    // 2. 关闭待处理的二次确认对话框
+    if (confirmResolveRef.current) {
+      confirmResolveRef.current(false);
+      confirmResolveRef.current = null;
+      setPendingConfirmation(null);
+    }
+
+    // 3. 通知桥接层取消浏览器 AI 正在执行的任务
     invoke("cancel_browser_ai").catch(() => {});
-    // 优先通过 Agent.stop() 停止（干净的状态机 + 释放挂起的 resolve）
+
+    // 4. 优先通过 Agent.stop() 停止（干净的状态机 + 释放挂起的 resolve）
     const agent = agentMapRef.current.get(sessionId);
+    const streamState = activeStreamsRef.current.get(sessionId);
     if (agent) {
       agent.stop();
       agentMapRef.current.delete(sessionId);
     }
-    const streamState = activeStreamsRef.current.get(sessionId);
     if (streamState) {
       streamState.controller.abort();
       cleanupStream(sessionId);
@@ -751,7 +801,7 @@ export default function App() {
       const lastUserMsg = prev[lastUserIdx];
       const truncated = prev.slice(0, lastUserIdx + 1);
       // 异步发送
-      setTimeout(() => handleSend(lastUserMsg.content), 0);
+      setTimeout(() => handleSend(getMessageText(lastUserMsg)), 0);
       return truncated;
     });
   }, [currentSessionId, handleSend]);
@@ -830,63 +880,6 @@ export default function App() {
     try { await stopMcpServer(); setServerRunning(false); } catch {}
   }, []);
 
-  // ── 直接发送消息到浏览器 AI ──
-  const handleSendBrowser = useCallback(async (content: string) => {
-    if (!content.trim()) return;
-    const sessionId = currentSessionId;
-    if (!sessionId) return;
-
-    setIsBrowserLoading(true);
-    // 添加用户消息
-    const userMsg: ChatMessage = { role: "user", content };
-    // 先更新本地消息显示，再持久化（避免在 setMessages 回调中嵌套 setConversations）
-    setMessages(prev => [...prev, userMsg, { role: "assistant", content: "" } as ChatMessage]);
-    // 立即持久化（在单独的 tick 中，避免嵌套 React 状态更新）
-    await new Promise(r => setTimeout(r, 0));
-    const updated = [...(conversations.find(c => c.id === sessionId)?.messages || []), userMsg];
-    updateCurrentConversation(updated);
-
-    try {
-      const result = await sendBrowserMessage(content);
-      const resultStr = typeof result === "string"
-        ? result
-        : (result?.summary || result?.result || JSON.stringify(result));
-      setMessages(prev => {
-        const updatedMsgs = [...prev];
-        const last = updatedMsgs[updatedMsgs.length - 1];
-        if (last?.role === "assistant") {
-          updatedMsgs[updatedMsgs.length - 1] = { ...last, content: resultStr };
-        }
-        return updatedMsgs;
-      });
-      // 持久化（同样避免嵌套）
-      await new Promise(r => setTimeout(r, 0));
-      const finalMsgs = conversations.find(c => c.id === sessionId)?.messages || [];
-      if (finalMsgs.length > 0) {
-        finalMsgs[finalMsgs.length - 1] = { ...finalMsgs[finalMsgs.length - 1] as any, content: resultStr };
-        updateCurrentConversation(finalMsgs);
-      }
-    } catch (err: any) {
-      const errContent = `❌ 浏览器 AI 执行失败: ${err.message || err}`;
-      setMessages(prev => {
-        const updatedMsgs = [...prev];
-        const last = updatedMsgs[updatedMsgs.length - 1];
-        if (last?.role === "assistant") {
-          updatedMsgs[updatedMsgs.length - 1] = { ...last, content: errContent };
-        }
-        return updatedMsgs;
-      });
-      await new Promise(r => setTimeout(r, 0));
-      const finalMsgs = conversations.find(c => c.id === sessionId)?.messages || [];
-      if (finalMsgs.length > 0) {
-        finalMsgs[finalMsgs.length - 1] = { ...finalMsgs[finalMsgs.length - 1] as any, content: errContent };
-        updateCurrentConversation(finalMsgs);
-      }
-    } finally {
-      setIsBrowserLoading(false);
-    }
-  }, [currentSessionId, conversations, updateCurrentConversation]);
-
   const currentConv = conversations.find((c) => c.id === currentSessionId);
   const isCurrentStreaming = currentSessionId ? activeStreamsRef.current.has(currentSessionId) : false;
 
@@ -934,11 +927,12 @@ export default function App() {
     let md = `# ${conv.title || "对话导出"}\n\n`;
     md += `> 导出时间：${new Date().toLocaleString("zh-CN")}\n\n---\n\n`;
     for (const msg of conv.messages) {
+      const text = getMessageText(msg);
       if (msg.role === "user") {
-        md += `## 用户\n\n${msg.content}\n\n`;
+        md += `## 用户\n\n${text}\n\n`;
       } else if (msg.role === "assistant") {
           if (msg.tool_calls?.length) {
-            md += `## 助手\n\n${msg.content || ""}\n\n`;
+            md += `## 助手\n\n${text || ""}\n\n`;
             for (const tc of msg.tool_calls) {
               const toolName = tc.function.name;
               const toolLabel = TOOL_EXPORT_LABELS[toolName]?.label || toolName;
@@ -950,25 +944,12 @@ export default function App() {
               if (argsStr) md += `${argsStr}\n\n`;
             }
         } else {
-          md += `## 助手\n\n${msg.content}\n\n`;
+          md += `## 助手\n\n${text}\n\n`;
         }
       } else if (msg.role === "tool") {
-        md += `### 工具结果（${msg.name || "tool"}）\n\n\`\`\`\n${msg.content}\n\`\`\`\n\n`;
-      }
-    }
-    // ── 工具执行日志（独立于消息历史） ──
-    if (conv.toolLogs && conv.toolLogs.length > 0) {
-      md += `---\n\n## 工具执行日志\n\n`;
-      md += `> 共 ${conv.toolLogs.length} 条，独立于上下文压缩，完整保留。\n\n`;
-      for (const log of conv.toolLogs) {
-        const toolLabel = TOOL_EXPORT_LABELS[log.toolName]?.label || log.toolName;
-        md += `### ${toolLabel}\n\n`;
-        md += `- **工具名称**: \`${log.toolName}\`\n`;
-        md += `- **调用时间**: ${new Date(log.timestamp).toLocaleString("zh-CN")}\n`;
-        md += `- **状态**: ${log.success ? "✅ 成功" : "❌ 失败"}\n`;
-        md += `- **轮次**: 第 ${log.round + 1} 轮\n\n`;
-        md += `**参数**:\n\`\`\`json\n${(() => { try { return JSON.stringify(JSON.parse(log.arguments), null, 2); } catch { return log.arguments; } })()}\n\`\`\`\n\n`;
-        md += `**结果**:\n\`\`\`\n${log.result}\n\`\`\`\n\n`;
+        md += `### 工具结果（${msg.name || "tool"}）\n\n\`\`\`\n${text}\n\`\`\`\n\n`;
+      } else if (msg.role === "compactionSummary") {
+        md += `## 上下文压缩摘要\n\n${text}\n\n`;
       }
     }
     try {
@@ -1148,11 +1129,6 @@ export default function App() {
                 <span className="size-4 shrink-0 flex items-center justify-center text-[10px]">↓</span>
                 另存为
               </button>
-              <button onClick={() => { setViewingToolLogs(ctxConv.id); setCtxConv(null); }}
-                className="w-full flex items-center gap-2 px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors text-left">
-                <span className="size-4 shrink-0 flex items-center justify-center text-[10px]">📋</span>
-                工具日志
-              </button>
             </div>
           </>
         )}
@@ -1171,10 +1147,9 @@ export default function App() {
           <ChatView
             messages={messages}
             onSend={handleSend}
-            onSendBrowser={handleSendBrowser}
             onStop={handleStop}
             onRetry={handleRetry}
-            loading={isCurrentStreaming || isBrowserLoading}
+            loading={isCurrentStreaming}
             aiConfig={aiConfig}
             onConfigChange={setAiConfig}
             onNavigateSettings={() => setCurrentView("settings")}
@@ -1183,8 +1158,6 @@ export default function App() {
             onInteractiveResolve={handleInteractiveResolve}
             pendingConfirmation={pendingConfirmation}
             onConfirmResolve={handleConfirmResolve}
-            chatMode={chatMode}
-            onChatModeChange={setChatMode}
           />
 
           <div
@@ -1208,26 +1181,12 @@ export default function App() {
                 setShowHistory(historyBeforeSettingsRef.current);
               }}
               defaultSection={settingsSection}
+              onSectionChange={(section) => setSettingsSection(section)}
             />
           </div>
         </div>
       </div>
 
-      {/* 工具执行日志查看器 */}
-      {viewingToolLogs && (() => {
-        const conv = conversations.find(c => c.id === viewingToolLogs);
-        return conv?.toolLogs && conv.toolLogs.length > 0 ? (
-          <ToolLogViewer
-            toolLogs={conv.toolLogs}
-            onClose={() => setViewingToolLogs(null)}
-          />
-        ) : (
-          <ToolLogViewer
-            toolLogs={[]}
-            onClose={() => setViewingToolLogs(null)}
-          />
-        );
-      })()}
     </div>
   );
 }

@@ -307,10 +307,11 @@ fn build_openai_tools(app_handle: Option<&tauri::AppHandle>) -> Vec<Value> {
         })
         .collect();
 
-    // 追加浏览器工具（去重）
+    // 追加浏览器工具（去重）— 仅暴露白名单中的工具给本地 AI
+    let desktop_browser_tools = crate::bridge::get_desktop_browser_tool_names();
     for bt in crate::bridge::get_browser_tool_definitions() {
         let name = bt["name"].as_str().unwrap_or("");
-        if !result.iter().any(|r| r["function"]["name"].as_str() == Some(name)) {
+        if desktop_browser_tools.contains(&name) && !result.iter().any(|r| r["function"]["name"].as_str() == Some(name)) {
             result.push(json!({
                 "type": "function",
                 "function": {
@@ -518,7 +519,7 @@ pub fn execute_tool_call(
                     obj.remove("browser_name");
                 }
                 rt.block_on(
-                    crate::bridge::execute_browser_tool(bs, tool_name, &clean_args, browser_name)
+                    crate::bridge::execute_browser_tool(bs, tool_name, &clean_args, browser_name, app_handle)
                 )
             } else {
                 Err("桥接服务未就绪，无法执行浏览器工具".to_string())
