@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Settings, MessageSquarePlus, Bot, History, X, Trash2, Sun, Moon } from "lucide-react";
 import ChatView from "./components/chat/ChatView";
+import { ToolLogViewer } from "./components/chat/ToolLogViewer";
 import SettingsView from "./components/settings/SettingsView";
 import { SkinPopover } from "./components/SkinPopover";
 import { BridgeStatus } from "./components/BridgeStatus";
@@ -80,6 +81,7 @@ export default function App() {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [ctxConv, setCtxConv] = useState<{ x: number; y: number; id: string } | null>(null);
+  const [viewingToolLogs, setViewingToolLogs] = useState<string | null>(null);
   const [chatMode, setChatMode] = useState<ChatMode>("desktop");
   const [isBrowserLoading, setIsBrowserLoading] = useState(false);
   const unlistenRef = useRef<(() => void)[]>([]);
@@ -936,6 +938,21 @@ export default function App() {
         md += `### 工具结果（${msg.name || "tool"}）\n\n\`\`\`\n${msg.content}\n\`\`\`\n\n`;
       }
     }
+    // ── 工具执行日志（独立于消息历史） ──
+    if (conv.toolLogs && conv.toolLogs.length > 0) {
+      md += `---\n\n## 工具执行日志\n\n`;
+      md += `> 共 ${conv.toolLogs.length} 条，独立于上下文压缩，完整保留。\n\n`;
+      for (const log of conv.toolLogs) {
+        const toolLabel = TOOL_EXPORT_LABELS[log.toolName]?.label || log.toolName;
+        md += `### ${toolLabel}\n\n`;
+        md += `- **工具名称**: \`${log.toolName}\`\n`;
+        md += `- **调用时间**: ${new Date(log.timestamp).toLocaleString("zh-CN")}\n`;
+        md += `- **状态**: ${log.success ? "✅ 成功" : "❌ 失败"}\n`;
+        md += `- **轮次**: 第 ${log.round + 1} 轮\n\n`;
+        md += `**参数**:\n\`\`\`json\n${(() => { try { return JSON.stringify(JSON.parse(log.arguments), null, 2); } catch { return log.arguments; } })()}\n\`\`\`\n\n`;
+        md += `**结果**:\n\`\`\`\n${log.result}\n\`\`\`\n\n`;
+      }
+    }
     try {
       const filePath = await save({
         defaultPath: `${conv.title || "对话"}.md`,
@@ -1113,6 +1130,11 @@ export default function App() {
                 <span className="size-4 shrink-0 flex items-center justify-center text-[10px]">↓</span>
                 另存为
               </button>
+              <button onClick={() => { setViewingToolLogs(ctxConv.id); setCtxConv(null); }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-muted-foreground hover:text-foreground hover:bg-accent transition-colors text-left">
+                <span className="size-4 shrink-0 flex items-center justify-center text-[10px]">📋</span>
+                工具日志
+              </button>
             </div>
           </>
         )}
@@ -1172,6 +1194,22 @@ export default function App() {
           </div>
         </div>
       </div>
+
+      {/* 工具执行日志查看器 */}
+      {viewingToolLogs && (() => {
+        const conv = conversations.find(c => c.id === viewingToolLogs);
+        return conv?.toolLogs && conv.toolLogs.length > 0 ? (
+          <ToolLogViewer
+            toolLogs={conv.toolLogs}
+            onClose={() => setViewingToolLogs(null)}
+          />
+        ) : (
+          <ToolLogViewer
+            toolLogs={[]}
+            onClose={() => setViewingToolLogs(null)}
+          />
+        );
+      })()}
     </div>
   );
 }
