@@ -1035,14 +1035,13 @@ export default function App() {
         </span>
 
         <div className="flex items-center gap-1">
-
+          <BridgeStatus />
           <button onClick={() => setDarkMode(!darkMode)}
             className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
             title={darkMode ? "切换浅色主题" : "切换深色主题"}>
             {darkMode ? <Sun size={16} /> : <Moon size={16} />}
           </button>
           <SkinPopover config={aiConfig} onChange={setAiConfig} />
-          <BridgeStatus />
           <button onClick={() => {
             if (currentView !== "settings") {
               historyBeforeSettingsRef.current = showHistory;

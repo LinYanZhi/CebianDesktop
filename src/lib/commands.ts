@@ -100,6 +100,18 @@ export async function getBridgeStatus(): Promise<any> {
   return invoke("get_bridge_status");
 }
 
+export async function pingBrowser(sessionId: string): Promise<any> {
+  return invoke("ping_browser", { sessionId });
+}
+
+export async function disconnectBrowser(sessionId: string): Promise<any> {
+  return invoke("disconnect_browser", { sessionId });
+}
+
+export async function updateBrowserName(sessionId: string, name: string): Promise<any> {
+  return invoke("update_browser_name", { sessionId, name });
+}
+
 export async function startBridgeServer(): Promise<string> {
   return invoke("start_bridge_server");
 }

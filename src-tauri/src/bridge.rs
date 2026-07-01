@@ -35,8 +35,9 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use axum::extract::connect_info::ConnectInfo;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::State;
 use axum::response::IntoResponse;
@@ -151,6 +152,8 @@ pub(crate) struct BrowserSession {
     pub profile_avatar: String,
     /// 当前窗口数量
     pub window_count: i32,
+    /// 客户端的远程地址（IP:端口）
+    pub remote_addr: Option<String>,
     /// 向浏览器发送消息的通道
     pub ws_sender: tokio::sync::mpsc::UnboundedSender<Message>,
     /// 连接时间
@@ -158,9 +161,49 @@ pub(crate) struct BrowserSession {
 }
 
 /// 桥接服务器共享状态
+/// 获取本机非回环 IPv4 地址
+fn get_local_ip_addresses() -> Vec<String> {
+    let mut addrs = Vec::new();
+    // UDP 连接技巧：连接一个外部地址但不发送数据，内核会选出正确的本地接口
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        if socket.connect("8.8.8.8:80").is_ok() {
+            if let Ok(local) = socket.local_addr() {
+                let ip = local.ip().to_string();
+                if ip != "127.0.0.1" && !addrs.contains(&ip) {
+                    addrs.push(ip);
+                }
+            }
+        }
+    }
+    // 也尝试直接获取主机名解析
+    if addrs.is_empty() {
+        if let Ok(hostname) = std::env::var("COMPUTERNAME")
+            .or_else(|_| std::env::var("HOSTNAME"))
+        {
+            if let Ok(Ok(resolved)) = tokio::task::block_in_place(|| {
+                std::thread::spawn(move || std::net::ToSocketAddrs::to_socket_addrs(&(hostname, 0)))
+                    .join()
+            }) {
+                for addr in resolved {
+                    let ip = addr.ip().to_string();
+                    if !ip.starts_with("127.") && !addrs.contains(&ip) {
+                        addrs.push(ip);
+                    }
+                }
+            }
+        }
+    }
+    if addrs.is_empty() {
+        addrs.push("127.0.0.1".to_string());
+    }
+    addrs
+}
+
 pub struct BridgeState {
     pub(crate) inner: Mutex<BridgeInner>,
     pub(crate) app_handle: std::sync::Mutex<Option<tauri::AppHandle>>,
+    /// 本机 IP 地址列表（用于 UI 展示，方便用户在 Cebian 中配置）
+    pub local_addresses: Vec<String>,
 }
 
 pub(crate) struct BridgeInner {
@@ -179,6 +222,7 @@ pub(crate) struct BridgeInner {
 impl BridgeState {
     /// 创建新的桥接状态
     pub fn new() -> Self {
+        let addrs = get_local_ip_addresses();
         Self {
             inner: Mutex::new(BridgeInner {
                 browsers: HashMap::new(),
@@ -188,6 +232,7 @@ impl BridgeState {
                 port_configs: HashMap::new(),
             }),
             app_handle: std::sync::Mutex::new(None),
+            local_addresses: addrs,
         }
     }
 
@@ -220,8 +265,16 @@ pub async fn start_bridge_servers(
 /// 启动单个端口的 WebSocket 桥接服务器（阻塞，通常在 tokio::spawn 中运行）
 pub async fn run_bridge_server(state: Arc<BridgeState>, port: u16) -> Result<(), String> {
     let app = Router::new()
-        .route("/ws", get(move |ws, state: State<Arc<BridgeState>>| {
-            ws_handler_with_port(ws, state, port)
+        .route("/ws", get({
+            move |ws: WebSocketUpgrade,
+                  State(state): State<Arc<BridgeState>>,
+                  ConnectInfo(remote_addr): ConnectInfo<SocketAddr>| {
+                async move {
+                    ws.on_upgrade(move |socket| {
+                        handle_ws_connection(socket, state, port, Some(remote_addr))
+                    })
+                }
+            }
         }))
         .route("/health", get(health))
         .with_state(state);
@@ -233,9 +286,12 @@ pub async fn run_bridge_server(state: Arc<BridgeState>, port: u16) -> Result<(),
 
     eprintln!("[bridge] WebSocket 服务器已启动，端口: {}", port);
 
-    axum::serve(listener, app)
-        .await
-        .map_err(|e| format!("桥接服务器运行失败（端口 {}）: {}", port, e))
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .map_err(|e| format!("桥接服务器运行失败（端口 {}）: {}", port, e))
 }
 
 /// 健康检查端点
@@ -249,17 +305,13 @@ async fn health() -> impl IntoResponse {
 
 // ─── WebSocket 连接处理 ────────────────────────────────────
 
-/// WebSocket 升级端点（带端口信息，通过闭包传入）
-async fn ws_handler_with_port(
-    ws: WebSocketUpgrade,
-    State(state): State<Arc<BridgeState>>,
-    local_port: u16,
-) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws_connection(socket, state, local_port))
-}
-
 /// 处理 WebSocket 连接
-async fn handle_ws_connection(socket: WebSocket, state: Arc<BridgeState>, local_port: u16) {
+async fn handle_ws_connection(
+    socket: WebSocket,
+    state: Arc<BridgeState>,
+    local_port: u16,
+    remote_addr: Option<SocketAddr>,
+) {
     let (ws_sender, ws_receiver) = socket.split();
 
     // 创建内部消息通道
@@ -286,6 +338,7 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<BridgeState>, local_
     // 创建临时会话占位（防止清理冲突）
     {
         let mut inner = state.inner.lock().await;
+        let remote_addr_str = remote_addr.map(|a| a.to_string());
         inner.browsers.insert(
             temp_key.clone(),
             BrowserSession {
@@ -298,6 +351,7 @@ async fn handle_ws_connection(socket: WebSocket, state: Arc<BridgeState>, local_
                 profile_name: String::new(),
                 profile_avatar: String::new(),
                 window_count: 0,
+                remote_addr: remote_addr_str,
                 ws_sender: tx.clone(),
                 connected_at: Instant::now(),
             },
@@ -609,6 +663,7 @@ pub async fn get_connected_browsers_inner(state: &BridgeState) -> Result<Value, 
                 "profile": b.profile_name,
                 "profile_avatar": b.profile_avatar,
                 "windows": b.window_count,
+                "remote_addr": b.remote_addr,
                 "connected_seconds": b.connected_at.elapsed().as_secs_f64().round() as i64,
             })
         })
@@ -1094,4 +1149,46 @@ pub async fn reset_desktop_ai_progress(state: &BridgeState) {
 pub async fn get_desktop_ai_progress(state: &BridgeState) -> Value {
     let inner = state.inner.lock().await;
     inner.desktop_ai_progress.clone()
+}
+
+/// 对指定浏览器会话发送 ping 并测量延迟（毫秒）
+pub async fn ping_session(state: &BridgeState, session_id: &str) -> Result<f64, String> {
+    let request_id = format!(
+        "ping_{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    );
+
+    let (ws_sender, browser_name) = {
+        let inner = state.inner.lock().await;
+        let session = inner
+            .browsers
+            .get(session_id)
+            .ok_or_else(|| format!("会话 {} 不存在", session_id))?;
+        (session.ws_sender.clone(), session.client_name.clone())
+    };
+
+    let (tx, rx) = oneshot::channel();
+    {
+        let mut inner = state.inner.lock().await;
+        // 设置 5 秒超时
+        inner.pending_requests.insert(request_id.clone(), tx);
+    }
+
+    let ping_msg = json!({"jsonrpc": "2.0", "id": &request_id, "method": "_ping"});
+    ws_sender
+        .send(Message::Text(ping_msg.to_string().into()))
+        .map_err(|_| "发送 ping 失败".to_string())?;
+
+    let start = Instant::now();
+    match tokio::time::timeout(Duration::from_secs(5), rx).await {
+        Ok(Ok(_)) => {
+            let ms = start.elapsed().as_secs_f64() * 1000.0;
+            Ok(ms)
+        }
+        Ok(Err(e)) => Err(format!("ping 响应错误: {}", e)),
+        Err(_) => Err(format!("浏览器「{}」ping 超时（5秒）", browser_name)),
+    }
 }

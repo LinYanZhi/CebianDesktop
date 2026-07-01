@@ -223,6 +223,7 @@ pub async fn get_bridge_status(
                     "profile_avatar": b.profile_avatar,
                     "windows": b.window_count,
                     "port": b.port,
+                    "remote_addr": b.remote_addr,
                     "connected_at": b.connected_at.elapsed().as_secs(),
                 })
             })
@@ -232,6 +233,7 @@ pub async fn get_bridge_status(
     Ok(serde_json::json!({
         "running": running,
         "running_ports": running_ports,
+        "local_addresses": bridge_state.local_addresses,
         "browsers": browsers,
         "browser_count": browsers.len(),
     }))
@@ -246,4 +248,44 @@ pub async fn get_bridge_agent_progress(
     bridge_state: State<'_, Arc<BridgeState>>,
 ) -> Result<Value, String> {
     Ok(crate::bridge::get_all_agent_progresses(&bridge_state).await)
+}
+
+/// 对指定浏览器会话进行连通性测试（ping），返回延迟毫秒数
+#[tauri::command]
+pub async fn ping_browser(
+    bridge_state: State<'_, Arc<BridgeState>>,
+    session_id: String,
+) -> Result<Value, String> {
+    let ms = crate::bridge::ping_session(&bridge_state, &session_id).await?;
+    Ok(serde_json::json!({ "session_id": session_id, "ping_ms": ms.round() as i64 }))
+}
+
+/// 断开指定浏览器会话
+#[tauri::command]
+pub async fn disconnect_browser(
+    bridge_state: State<'_, Arc<BridgeState>>,
+    session_id: String,
+) -> Result<Value, String> {
+    let mut inner = bridge_state.inner.lock().await;
+    match inner.browsers.remove(&session_id) {
+        Some(_) => Ok(json!({ "ok": true, "session_id": session_id })),
+        None => Err(format!("浏览器会话 {} 不存在", session_id)),
+    }
+}
+
+/// 更新浏览器会话的客户端名称（别名）
+#[tauri::command]
+pub async fn update_browser_name(
+    bridge_state: State<'_, Arc<BridgeState>>,
+    session_id: String,
+    name: String,
+) -> Result<Value, String> {
+    let mut inner = bridge_state.inner.lock().await;
+    match inner.browsers.get_mut(&session_id) {
+        Some(session) => {
+            session.client_name = name;
+            Ok(json!({ "ok": true, "session_id": session_id }))
+        }
+        None => Err(format!("浏览器会话 {} 不存在", session_id)),
+    }
 }
