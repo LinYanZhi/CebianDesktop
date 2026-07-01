@@ -59,10 +59,12 @@ export function BridgeStatus({ onNavigateToBridge }: BridgeStatusProps) {
       className={`relative flex items-center gap-1.5 px-2 py-1 rounded-md text-xs text-muted-foreground transition-colors group ${hasBrowsers || noBrowsers ? "hover:bg-accent cursor-pointer" : "cursor-default"}`}
     >
       <span
-        className={`w-2 h-2 rounded-full shrink-0 ${
-          status.running
-            ? "bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.6)]"
-            : "bg-gray-400"
+        className={`w-2 h-2 rounded-full shrink-0 transition-colors ${
+          !status.running
+            ? "bg-gray-400"
+            : hasBrowsers
+              ? "bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.6)]"
+              : "bg-amber-500 shadow-[0_0_4px_rgba(245,158,11,0.6)]"
         }`}
       />
       <span className="hidden sm:inline">{label}</span>

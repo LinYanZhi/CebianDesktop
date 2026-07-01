@@ -15,7 +15,27 @@ export function AboutSection({ config: _config, onChange: _onChange }: AboutSect
           <div className="w-10 h-10 bg-primary/10 rounded-xl flex items-center justify-center shrink-0"><Bot size={22} className="text-primary" /></div>
           <div><p className="text-sm font-semibold">CebianDesktop</p><p className="text-xs text-muted-foreground">版本 0.1.0</p></div>
         </div>
-        <p className="text-sm text-muted-foreground leading-relaxed">CebianDesktop 是 CeBian 浏览器扩展的桌面伴侣应用。</p>
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          CebianDesktop 是 CeBian 浏览器扩展的桌面伴侣应用，采用 <strong className="text-foreground/80">Rust + Tauri</strong> 原生开发，追求极致的运行效率与最小的资源占用。
+        </p>
+        <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+          <div className="bg-background/50 rounded-lg p-2.5 space-y-0.5">
+            <span className="font-medium text-foreground/70 block">⚡ 极致性能</span>
+            <span>纯 Rust 编译，毫秒级工具调度</span>
+          </div>
+          <div className="bg-background/50 rounded-lg p-2.5 space-y-0.5">
+            <span className="font-medium text-foreground/70 block">📦 轻量紧凑</span>
+            <span>安装包极小，内存占用低</span>
+          </div>
+          <div className="bg-background/50 rounded-lg p-2.5 space-y-0.5">
+            <span className="font-medium text-foreground/70 block">🛠️ 功能全面</span>
+            <span>文件/Excel/系统/网络 30+ 工具</span>
+          </div>
+          <div className="bg-background/50 rounded-lg p-2.5 space-y-0.5">
+            <span className="font-medium text-foreground/70 block">🔌 双 AI 桥接</span>
+            <span>桌面 AI ↔ 浏览器 AI 协同</span>
+          </div>
+        </div>
 
         <div className="border-t border-border" />
         <div className="space-y-2">
