@@ -778,11 +778,12 @@ export default function App() {
     // 3. 通知桥接层取消浏览器 AI 正在执行的任务
     invoke("cancel_browser_ai").catch(() => {});
 
-    // 4. 优先通过 Agent.stop() 停止（干净的状态机 + 释放挂起的 resolve）
+    // 4. 优雅地停止 Agent（不调 agent.stop()，因其 fire onDone([]) 会清空消息）
+    //    resolveTools([]) 让 Agent 正常结束循环、保留 currentMessages
     const agent = agentMapRef.current.get(sessionId);
     const streamState = activeStreamsRef.current.get(sessionId);
     if (agent) {
-      agent.stop();
+      agent.resolveTools([]);
       agentMapRef.current.delete(sessionId);
     }
     if (streamState) {
