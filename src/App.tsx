@@ -128,12 +128,12 @@ export default function App() {
     token: string;
   } | null>(null);
   const confirmResolveRef = useRef<((value: boolean) => void) | null>(null);
-  /** 工具执行取消标记：用户点击停止后，后续工具结果丢弃 */
-  const toolCancelledRef = useRef(false);
+  /** 工具执行取消标记（按 sessionId 隔离） */
+  const cancelledSessionsRef = useRef<Set<string>>(new Set());
   /** 累积当前流的工具执行日志，流结束后持久化到 Conversation.toolLogs */
   const toolLogsRef = useRef<ToolExecutionRecord[]>([]);
-  /** Agent 实例引用 */
-  const agentRef = useRef<Agent | null>(null);
+  /** Agent 实例 Map（按 sessionId 隔离，支持多会话并发） */
+  const agentMapRef = useRef<Map<string, Agent>>(new Map());
   /** 当前工具调用轮次（由 onToolCalls 更新，供 executeToolCallsForAgent 使用） */
   const currentRoundRef = useRef(0);
 
@@ -351,6 +351,7 @@ export default function App() {
   const executeToolCallsForAgent = useCallback(async (
     agent: Agent,
     currentMsgs: ChatMessage[],
+    sessionId: string,
     roundDepth: number,
   ) => {
     // 找到最后一条 assistant 消息中的 tool_calls
@@ -367,10 +368,11 @@ export default function App() {
       return;
     }
 
+    const isCancelled = () => cancelledSessionsRef.current.has(sessionId);
     const toolResults: ChatMessage[] = [];
 
     for (const tc of lastToolCalls) {
-      if (toolCancelledRef.current) break;
+      if (isCancelled()) break;
 
       let toolExecSuccess = false;
       let toolExecContent = "";
@@ -400,7 +402,7 @@ export default function App() {
         // ── 通用执行 ──
         console.log(`[Agent] 执行工具: ${toolName}`, tc.function.arguments);
         const result = await executeTool(toolName, args, aiConfig.aiPermissionMode);
-        if (toolCancelledRef.current) break;
+        if (isCancelled()) break;
 
         if (result && result.needs_confirmation) {
           const confirmed = await askConfirmation(
@@ -409,7 +411,7 @@ export default function App() {
           );
           if (confirmed) {
             const execResult = await confirmExecution(result.token);
-            if (toolCancelledRef.current) break;
+            if (isCancelled()) break;
             toolExecContent = JSON.stringify(execResult, null, 2);
             toolExecSuccess = true;
           } else {
@@ -435,7 +437,7 @@ export default function App() {
       }
 
       // 记录工具执行日志
-      if (!toolCancelledRef.current) {
+      if (!isCancelled()) {
         toolLogsRef.current.push({
           toolCallId: tc.id,
           toolName: tc.function.name,
@@ -455,7 +457,7 @@ export default function App() {
       await yieldToUI();
     }
 
-    if (toolCancelledRef.current) {
+    if (isCancelled()) {
       agent.resolveTools([]);
       return;
     }
@@ -482,8 +484,8 @@ export default function App() {
       setMessages([...updated, placeholder]);
       forceRender((n) => n + 1); // 触发重渲染，UI 显示 loading 状态
 
-      // 重置取消标记
-      toolCancelledRef.current = false;
+      // 重置取消标记（按 sessionId 隔离）
+      cancelledSessionsRef.current.delete(streamSessionId);
 
       // 注册流状态
       const controller = new AbortController();
@@ -621,7 +623,7 @@ export default function App() {
               }
               cleanupStream(streamSessionId);
               cleanupListeners();
-              agentRef.current = null;
+              agentMapRef.current.delete(streamSessionId);
             },
 
             onError: (err) => {
@@ -635,18 +637,18 @@ export default function App() {
               }
               cleanupStream(streamSessionId);
               cleanupListeners();
-              agentRef.current = null;
+              agentMapRef.current.delete(streamSessionId);
             },
 
             onStateChange: (state) => {
               if (state === "awaiting_tool" as any) {
-                executeToolCallsForAgent(agent, currentMessages, currentRoundRef.current);
+                executeToolCallsForAgent(agent, currentMessages, streamSessionId, currentRoundRef.current);
               }
             },
           },
         });
 
-        agentRef.current = agent;
+        agentMapRef.current.set(streamSessionId, agent);
         agent.send(currentMessages, openaiTools);
 
         // ─── 异步等待 Agent 完成 ───
@@ -677,7 +679,7 @@ export default function App() {
         }
         cleanupStream(streamSessionId);
         cleanupListeners();
-        agentRef.current = null;
+        agentMapRef.current.delete(streamSessionId);
       } finally {
         delete (window as any).__streamController;
       }
@@ -716,19 +718,22 @@ export default function App() {
 
   // 停止当前会话的流式输出
   const handleStop = useCallback(() => {
-    toolCancelledRef.current = true;
+    const sessionId = currentSessionId;
+    if (!sessionId) return;
+    // 标记该会话已取消（按 sessionId 隔离）
+    cancelledSessionsRef.current.add(sessionId);
     // 通知桥接层取消浏览器 AI 正在执行的任务
     invoke("cancel_browser_ai").catch(() => {});
     // 优先通过 Agent.stop() 停止（干净的状态机 + 释放挂起的 resolve）
-    if (agentRef.current) {
-      agentRef.current.stop();
-      agentRef.current = null;
+    const agent = agentMapRef.current.get(sessionId);
+    if (agent) {
+      agent.stop();
+      agentMapRef.current.delete(sessionId);
     }
-    if (!currentSessionId) return;
-    const streamState = activeStreamsRef.current.get(currentSessionId);
+    const streamState = activeStreamsRef.current.get(sessionId);
     if (streamState) {
       streamState.controller.abort();
-      cleanupStream(currentSessionId);
+      cleanupStream(sessionId);
     }
   }, [currentSessionId, cleanupStream]);
 
@@ -834,11 +839,12 @@ export default function App() {
     setIsBrowserLoading(true);
     // 添加用户消息
     const userMsg: ChatMessage = { role: "user", content };
-    setMessages(prev => {
-      const updated = [...prev, userMsg, { role: "assistant", content: "" } as ChatMessage];
-      updateCurrentConversation(updated);
-      return updated;
-    });
+    // 先更新本地消息显示，再持久化（避免在 setMessages 回调中嵌套 setConversations）
+    setMessages(prev => [...prev, userMsg, { role: "assistant", content: "" } as ChatMessage]);
+    // 立即持久化（在单独的 tick 中，避免嵌套 React 状态更新）
+    await new Promise(r => setTimeout(r, 0));
+    const updated = [...(conversations.find(c => c.id === sessionId)?.messages || []), userMsg];
+    updateCurrentConversation(updated);
 
     try {
       const result = await sendBrowserMessage(content);
@@ -846,28 +852,40 @@ export default function App() {
         ? result
         : (result?.summary || result?.result || JSON.stringify(result));
       setMessages(prev => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
+        const updatedMsgs = [...prev];
+        const last = updatedMsgs[updatedMsgs.length - 1];
         if (last?.role === "assistant") {
-          updated[updated.length - 1] = { ...last, content: resultStr };
-          updateCurrentConversation(updated);
+          updatedMsgs[updatedMsgs.length - 1] = { ...last, content: resultStr };
         }
-        return updated;
+        return updatedMsgs;
       });
+      // 持久化（同样避免嵌套）
+      await new Promise(r => setTimeout(r, 0));
+      const finalMsgs = conversations.find(c => c.id === sessionId)?.messages || [];
+      if (finalMsgs.length > 0) {
+        finalMsgs[finalMsgs.length - 1] = { ...finalMsgs[finalMsgs.length - 1] as any, content: resultStr };
+        updateCurrentConversation(finalMsgs);
+      }
     } catch (err: any) {
+      const errContent = `❌ 浏览器 AI 执行失败: ${err.message || err}`;
       setMessages(prev => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
+        const updatedMsgs = [...prev];
+        const last = updatedMsgs[updatedMsgs.length - 1];
         if (last?.role === "assistant") {
-          updated[updated.length - 1] = { ...last, content: `❌ 浏览器 AI 执行失败: ${err.message || err}` };
-          updateCurrentConversation(updated);
+          updatedMsgs[updatedMsgs.length - 1] = { ...last, content: errContent };
         }
-        return updated;
+        return updatedMsgs;
       });
+      await new Promise(r => setTimeout(r, 0));
+      const finalMsgs = conversations.find(c => c.id === sessionId)?.messages || [];
+      if (finalMsgs.length > 0) {
+        finalMsgs[finalMsgs.length - 1] = { ...finalMsgs[finalMsgs.length - 1] as any, content: errContent };
+        updateCurrentConversation(finalMsgs);
+      }
     } finally {
       setIsBrowserLoading(false);
     }
-  }, [currentSessionId]);
+  }, [currentSessionId, conversations, updateCurrentConversation]);
 
   const currentConv = conversations.find((c) => c.id === currentSessionId);
   const isCurrentStreaming = currentSessionId ? activeStreamsRef.current.has(currentSessionId) : false;
