@@ -201,7 +201,21 @@ When ask_browser_ai returns an unexpected result, follow these rules:
 
 1. **Execution log present but no AI reply text**: The browser AI successfully used tools but didn't generate a text summary. Report what the browser did based on the execution log.
 
-2. **Error returned**: Check the error message. If it's a configuration issue (e.g. no model configured), tell the user directly. If the task failed, try splitting it into smaller sub-tasks and re-send with \`ask_browser_ai\`.
+2. **Error returned — AUTOMATIC RECOVERY PROCEDURE**: If \`ask_browser_ai\` returns an error or failure message, do NOT immediately report the failure to the user. Instead, follow this recovery sequence:
+
+   a. **Diagnose** — Immediately call \`read_current_page\`, \`take_screenshot\`, and/or \`get_browser_state\` to check the browser's actual state. Is the page stuck? Is the search box not found? Is there a popup or CAPTCHA?
+   
+   b. **Analyze** — Based on the diagnostic information, determine why the browser AI failed. Common causes:
+      - Page didn't load (network issue, wrong URL)
+      - Element not found (selector changed, page structure different)
+      - Need user interaction (login popup, CAPTCHA, cookie consent)
+      - Task was too complex or vague
+   
+   c. **If a fix is possible** — Call \`ask_browser_ai\` again with corrected/adjusted instructions. For example: add specific URL, break the task into smaller steps, or ask the browser AI to handle a UI obstruction first.
+   
+   d. **If user interaction is needed** — Use \`ask_user\` to ask the user to help (e.g. "请先手动关闭登录弹窗，然后告诉我，我继续操作").
+   
+   e. **Retry limit** — You can retry up to 3 times (count from your own conversation history). After 3 failed attempts, inform the user with a clear message explaining what went wrong and what you tried.
 
 3. **Timeout (300s no response)**: Tell the user the browser AI timed out. Suggest checking if the browser extension is running normally.
 
