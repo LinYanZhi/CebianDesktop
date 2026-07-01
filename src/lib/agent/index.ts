@@ -63,6 +63,8 @@ export class Agent {
   private config: AgentOptions["config"];
   private events: AgentEvents;
   private enableTools: boolean;
+  /** handleStop 时设置，表示本轮工具结果处理完后 stop，不再发起新一轮 API 请求 */
+  private _gracefulStop = false;
 
   /** 等待工具结果时挂起的 resolve */
   private toolResolve: ((msgs: ChatMessage[]) => void) | null = null;
@@ -100,11 +102,8 @@ export class Agent {
     try {
       await this.runLoop(apiMessages, openaiTools, signal);
     } catch (err: any) {
-      if (err.name === "AbortError") {
-        this.setState(AgentState.stopped);
-        this.events.onDone?.([], undefined);
-        return;
-      }
+      // runLoop 内部已处理 AbortError + gracefulStop 场景，不会走到这里。
+      // 走到这里的都是真正的异常。
       this.setState(AgentState.stopped);
       this.events.onError?.(err);
     }
@@ -124,6 +123,23 @@ export class Agent {
       this.askUserResolve(null);
       this.askUserResolve = null;
     }
+  }
+
+  /**
+   * 优雅停止：不 fire onDone([])，不清除 toolResolve。
+   * 保留 toolResolve 让 executeToolCallsForAgent 能继续推结果 + resolveTools，
+   * 这样工具卡片能收到最终状态（包括 cancelled）。
+   */
+  stopGracefully() {
+    this._gracefulStop = true;
+    this.controller?.abort();
+    this.controller = null;
+    // askUser 必须释放（避免表单卡死）
+    if (this.askUserResolve) {
+      this.askUserResolve(null);
+      this.askUserResolve = null;
+    }
+    // 不释放 toolResolve — 等待 App.tsx 推完结果后主动 resolveTools
   }
 
   // ─── 工具执行回调 ───
@@ -167,8 +183,22 @@ export class Agent {
       const apiMessages = this.buildApiMessages(currentMessages);
 
       // fetch + SSE 解析
-      const { roundContent, roundToolCalls, fullThinking, usage } =
-        await this.fetchStream(apiMessages, openaiTools, signal);
+      let roundContent = "", roundToolCalls: ToolCall[] = [], fullThinking = "", usage: { input: number; output: number } | undefined;
+      try {
+        const result = await this.fetchStream(apiMessages, openaiTools, signal);
+        roundContent = result.roundContent;
+        roundToolCalls = result.roundToolCalls;
+        fullThinking = result.fullThinking;
+        usage = result.usage;
+      } catch (err: any) {
+        if (err.name === "AbortError") {
+          // 优雅停止（stopGracefully）或外部强制停止 → 以当前消息结束
+          this.setState(AgentState.stopped);
+          this.events.onDone?.(currentMessages, accumulatedUsage);
+          return;
+        }
+        throw err; // 真正的网络/HTTP 异常
+      }
 
       if (usage) accumulatedUsage = usage;
 
@@ -222,6 +252,14 @@ export class Agent {
       const toolResults = await new Promise<ChatMessage[]>((resolve) => {
         this.toolResolve = resolve;
       });
+
+      // 优雅停止 → 追加本轮结果后结束（不会发起新一轮 API 请求）
+      if (this._gracefulStop) {
+        this.setState(AgentState.stopped);
+        currentMessages = [...currentMessages, ...toolResults];
+        this.events.onDone?.(currentMessages, accumulatedUsage);
+        return;
+      }
 
       // 如果没有有效结果（用户取消等），结束循环
       if (toolResults.length === 0) {

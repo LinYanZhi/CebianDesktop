@@ -426,21 +426,26 @@ export default function App() {
         // ── 通用执行 ──
         console.log(`[Agent] 执行工具: ${toolName}`, tc.function.arguments);
         const result = await executeTool(toolName, args, aiConfig.aiPermissionMode);
-        if (isCancelled()) break;
 
         if (result && result.needs_confirmation) {
-          const confirmed = await askConfirmation(
-            result.details, result.token,
-            setPendingConfirmation, confirmResolveRef,
-          );
-          if (isCancelled()) break;
-          if (confirmed) {
-            const execResult = await confirmExecution(result.token);
-            if (isCancelled()) break;
-            toolExecContent = JSON.stringify(execResult, null, 2);
+          // 取消时不弹确认框，直接标记已取消
+          if (isCancelled()) {
+            toolExecContent = JSON.stringify({ error: "用户已取消操作" });
           } else {
-            await cancelExecution(result.token).catch(() => {});
-            toolExecContent = JSON.stringify({ error: `用户取消了 ${toolName} 操作` });
+            const confirmed = await askConfirmation(
+              result.details, result.token,
+              setPendingConfirmation, confirmResolveRef,
+            );
+            if (isCancelled()) {
+              await cancelExecution(result.token).catch(() => {});
+              toolExecContent = JSON.stringify({ error: "用户已取消操作" });
+            } else if (confirmed) {
+              const execResult = await confirmExecution(result.token);
+              toolExecContent = JSON.stringify(execResult, null, 2);
+            } else {
+              await cancelExecution(result.token).catch(() => {});
+              toolExecContent = JSON.stringify({ error: `用户取消了 ${toolName} 操作` });
+            }
           }
         } else {
           if (toolName === "ask_browser_ai" && result && typeof result === "object" && result.summary) {
@@ -461,24 +466,30 @@ export default function App() {
         }
         }
       } catch (err: any) {
-        // 如果是取消导致的 AbortError，不记录错误，静默跳过
-        if (isCancelled() || err?.name === "AbortError") break;
-        console.error(`[Agent] 工具执行失败: ${tc.function.name}`, err);
-        toolExecContent = `工具执行失败: ${err.message || err}`;
+        // 取消时也产生结果（标记为 cancelled），让卡片更新状态
+        if (isCancelled() || err?.name === "AbortError") {
+          toolExecContent = JSON.stringify({ cancelled: true, message: "工具执行被中止" });
+        } else {
+          console.error(`[Agent] 工具执行失败: ${tc.function.name}`, err);
+          toolExecContent = `工具执行失败: ${err.message || err}`;
+        }
       }
 
+      // 无论是否取消，都记录工具结果（让卡片能显示最终状态）
+      if (toolExecContent) {
+        toolResults.push({
+          role: "tool", content: toolExecContent,
+          tool_call_id: tc.id, name: tc.function.name,
+        } as ChatMessage);
+      }
       if (isCancelled()) break;
-
-      toolResults.push({
-        role: "tool", content: toolExecContent,
-        tool_call_id: tc.id, name: tc.function.name,
-      } as ChatMessage);
-
       await yieldToUI();
     }
 
     if (isCancelled()) {
-      agent.resolveTools([]);
+      // 把已收集的工具结果传给 Agent（包含 cancelled 状态），让 onDone 包含完整消息
+      agent.resolveTools(toolResults);
+      agentMapRef.current.delete(sessionId);
       return;
     }
 
@@ -778,13 +789,13 @@ export default function App() {
     // 3. 通知桥接层取消浏览器 AI 正在执行的任务
     invoke("cancel_browser_ai").catch(() => {});
 
-    // 4. 优雅地停止 Agent（不调 agent.stop()，因其 fire onDone([]) 会清空消息）
-    //    resolveTools([]) 让 Agent 正常结束循环、保留 currentMessages
+    // 4. 优雅地停止 Agent：保留 toolResolve，让 executeToolCallsForAgent
+    //    能推完已执行工具的结果后主动 resolveTools，工具卡片更新最终状态
     const agent = agentMapRef.current.get(sessionId);
     const streamState = activeStreamsRef.current.get(sessionId);
     if (agent) {
-      agent.resolveTools([]);
-      agentMapRef.current.delete(sessionId);
+      agent.stopGracefully();
+      // 不 delete — executeToolCallsForAgent 推完结果后会 resolveTools + 清理
     }
     if (streamState) {
       streamState.controller.abort();
