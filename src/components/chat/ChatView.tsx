@@ -231,24 +231,27 @@ export default function ChatView({
                     toolResults={toolResults.length > 0 ? toolResults : undefined}
                   />
                 );
+                // 如果这条消息的 tool_calls 中有正在等待用户填写的 ask_user 表单，
+                // 内联渲染在消息块后面（"哪里调用就放哪里"）
+                if (pendingInteractive?.toolCallId && msg.tool_calls?.some(tc => tc.id === pendingInteractive.toolCallId)) {
+                  items.push(
+                    <AskUserBlock key={`ask-${i}`}
+                      title={pendingInteractive.title}
+                      description={pendingInteractive.description}
+                      submit_label={pendingInteractive.submit_label}
+                      pagination={pendingInteractive.pagination}
+                      questions={pendingInteractive.questions}
+                      onResolve={onInteractiveResolve!}
+                      resolved={pendingInteractive._resolved}
+                      submittedValue={pendingInteractive._submittedValue}
+                    />
+                  );
+                }
               }
               // tool 消息跳过（已在 Assistant 的 toolResults 中展示）
             }
             return items;
           })()}
-          {/* 交互式工具卡片（ask_user） */}
-          {pendingInteractive && (
-            <AskUserBlock
-              title={pendingInteractive.title}
-              description={pendingInteractive.description}
-              submit_label={pendingInteractive.submit_label}
-              pagination={pendingInteractive.pagination}
-              questions={pendingInteractive.questions}
-              onResolve={onInteractiveResolve!}
-              resolved={pendingInteractive._resolved}
-              submittedValue={pendingInteractive._submittedValue}
-            />
-          )}
           {/* ═══ 危险操作二次确认对话框 ═══ */}
           {pendingConfirmation && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">

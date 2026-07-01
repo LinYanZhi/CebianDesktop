@@ -1324,7 +1324,14 @@ pub async fn cancel_browser_ai_tasks(state: &BridgeState) {
         "params": {}
     });
     let msg_str = msg.to_string();
-    let inner = state.inner.lock().await;
+    let mut inner = state.inner.lock().await;
+
+    // 先清理所有待处理的请求（丢弃 oneshot sender → receiver 立即收到 Err，
+    // 让 execute_browser_tool 等函数立刻返回，前端不再等待）
+    let pending_count = inner.pending_requests.len();
+    inner.pending_requests.clear();
+    eprintln!("[bridge] 已清理 {} 个待处理的浏览器请求", pending_count);
+
     for browser in inner.browsers.values() {
         let _ = browser.ws_sender.send(Message::Text(msg_str.clone().into()));
     }
