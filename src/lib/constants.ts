@@ -18,6 +18,7 @@ export const TOOL_EXPORT_LABELS: Record<string, { label: string; desc: string }>
   list_directory: { label: "浏览目录", desc: "列出目录中的文件和子目录" },
   create_directory: { label: "创建目录", desc: "新建文件夹" },
   rename_path: { label: "重命名", desc: "重命名文件或文件夹" },
+  copy_path: { label: "复制文件", desc: "复制文件到指定位置" },
   delete_path: { label: "删除", desc: "删除文件或文件夹" },
   search_files: { label: "搜索文件", desc: "按名称或内容搜索文件" },
   download_file: { label: "下载文件", desc: "从 URL 下载文件到本地" },

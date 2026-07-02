@@ -124,6 +124,43 @@ pub(crate) fn list_directory(path: &str) -> Result<Vec<Value>, String> {
     Ok(entries)
 }
 
+pub(crate) fn copy_path(source: &str, destination: &str) -> Result<Value, String> {
+    let src = Path::new(source);
+    if !src.exists() {
+        return Err(format!("源路径不存在: {}", source));
+    }
+    if src.is_dir() {
+        return Err("暂不支持复制目录，请使用 rename_path 移动目录".into());
+    }
+
+    let dest = Path::new(destination);
+
+    // 如果目标路径是一个已存在的目录，在目录内保留原文件名
+    let dest_path = if dest.is_dir() {
+        let filename = src.file_name()
+            .ok_or_else(|| "无法获取源文件名".to_string())?;
+        dest.join(filename)
+    } else {
+        if let Some(parent) = dest.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                fs::create_dir_all(parent)
+                    .map_err(|e| format!("创建目标目录失败: {}", e))?;
+            }
+        }
+        dest.to_path_buf()
+    };
+
+    let copied_size = fs::copy(&src, &dest_path)
+        .map_err(|e| format!("复制文件失败: {}", e))?;
+
+    Ok(json!({
+        "success": true,
+        "source": source,
+        "destination": dest_path.to_string_lossy().to_string(),
+        "size": copied_size,
+    }))
+}
+
 pub(crate) fn rename_path(old_path: &str, new_path: &str) -> Result<(), String> {
     if !Path::new(old_path).exists() { return Err(format!("路径不存在: {}", old_path)); }
     if let Some(parent) = Path::new(new_path).parent() {

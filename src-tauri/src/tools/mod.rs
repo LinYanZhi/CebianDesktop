@@ -137,7 +137,7 @@ pub(crate) fn get_tool_risk_level(name: &str) -> &'static str {
         // 🔴 高风险
         "delete_path" | "run_command" | "skill_delete" => "high",
         // 🟠 中风险
-        "write_new_file" | "edit_file" | "rename_path" | "batch_rename" | "system_add_language" 
+        "write_new_file" | "edit_file" | "rename_path" | "batch_rename" | "copy_path" | "system_add_language" 
         | "capture_screen" | "download_file" | "clipboard_write" => "medium",
         // 🟢 以下安全工具由 Rust 处理，不走 fallback
         "get_file_info" => "safe",
@@ -316,6 +316,15 @@ pub fn get_tool_definitions() -> Vec<Value> {
              \n\n安全限制：仅允许在工作区目录和临时目录下操作。\
              \n\n适合场景：批量重命名图片、批量整理文件名、批量移动文件到新位置等。",
             &[("operations", "array", "重命名操作列表，每个元素为 {\"old_path\": \"原路径\", \"new_path\": \"新路径\"}")], ["operations"]),
+
+        td!("copy_path",
+            "复制文件到指定位置。注意：只支持复制文件，不支持复制目录（目录请使用 rename_path 移动）。\
+             \n\n如果目标路径是一个已存在的目录，会自动在目录内保留原文件名。\
+             \n如果目标路径是一个不存在的文件路径，且其父目录存在，会直接创建为文件。\
+             \n如果目标路径的父目录不存在，会自动创建。\
+             \n\n安全限制：源路径必须是允许读取的路径，目标路径必须允许写入。\
+             \n\n适合场景：复制文件到另一个目录、备份文件、将文件复制到桌面等。",
+            &[("source", "string", "源文件绝对路径"), ("destination", "string", "目标绝对路径（可以是文件路径或目录路径）")], ["source", "destination"]),
 
         td!("delete_path",
             "删除文件或目录。支持单次删除和批量删除。\
@@ -829,6 +838,13 @@ pub fn execute_tool(name: &str, args: &Value, app: Option<&tauri::AppHandle>) ->
                 return Err("operations 数组为空".into());
             }
             batch_rename(ops)
+        }
+        "copy_path" => {
+            let source = arg_str(args, "source")?;
+            let destination = arg_str(args, "destination")?;
+            validate_path(source, true)?;   // 源只读
+            validate_path(destination, false)?; // 目标可写
+            copy_path(source, destination)
         }
         "delete_path" => {
             // 检查是否批量删除
