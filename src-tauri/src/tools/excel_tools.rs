@@ -392,7 +392,8 @@ pub(crate) fn excel_query(
 /// 各列统计概览
 ///
 /// 对每列统计：非空数量、空值数量、唯一值数量。
-/// 对数值列额外统计：最小值、最大值、总和、平均值。
+/// 对数值列额外统计：最小值、最大值、中位数、总和、平均值。
+/// 对文本列额外统计：前 5 个样例值。
 pub(crate) fn excel_summary(path: &str, sheet: Option<&str>) -> Result<Value, String> {
     let (headers, rows, actual_name) = read_sheet(path, sheet)?;
     let dicts = rows_to_dicts(&headers, &rows);
@@ -436,12 +437,37 @@ pub(crate) fn excel_summary(path: &str, sheet: Option<&str>) -> Result<Value, St
             let avg = total / numeric_values.len() as f64;
             let min = numeric_values.iter().cloned().reduce(f64::min).unwrap_or(0.0);
             let max = numeric_values.iter().cloned().reduce(f64::max).unwrap_or(0.0);
+            // 中位数
+            let mut sorted = numeric_values.clone();
+            sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+            let median = if sorted.len() % 2 == 0 {
+                (sorted[sorted.len() / 2 - 1] + sorted[sorted.len() / 2]) / 2.0
+            } else {
+                sorted[sorted.len() / 2]
+            };
             col_info.insert("min".to_string(), json!(min));
             col_info.insert("max".to_string(), json!(max));
+            col_info.insert("median".to_string(), json!(median));
             col_info.insert("sum".to_string(), json!(total));
             col_info.insert("avg".to_string(), json!(avg));
             col_info.insert("type".to_string(), json!("numeric"));
         } else {
+            // 文本列：提取前 5 个不同的非空样例值
+            let mut sample_values: Vec<String> = Vec::new();
+            for row in &dicts {
+                if let Some(val) = row.get(h) {
+                    if !val.is_null() {
+                        let s = val.to_string();
+                        if !sample_values.contains(&s) {
+                            sample_values.push(s);
+                            if sample_values.len() >= 5 {
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            col_info.insert("sample_values".to_string(), json!(sample_values));
             col_info.insert("type".to_string(), json!("text"));
         }
 

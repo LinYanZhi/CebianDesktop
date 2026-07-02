@@ -571,8 +571,8 @@ pub fn get_tool_definitions() -> Vec<Value> {
             ], ["path"]),
 
         td!("excel_summary",
-            "快速统计 Excel 各列概况：非空值数、唯一值数、数值列求和、样例值。\
-             \n\n适合场景：快速了解 Excel 有多少行、哪些列有缺失值、数值列的总和等概览信息。",
+            "快速统计 Excel 各列概况：非空值数、唯一值数、数值列最小值/最大值/中位数/总和/平均值、文本列样例值。\
+             \n\n适合场景：快速了解 Excel 有多少行、哪些列有缺失值、数值分布范围、文本列有哪些典型值等概览信息。",
             &[("path", "string", "Excel 文件路径"), ("sheet", "string", "工作表名（可选）")], ["path"]),
 
         td!("excel_transform",

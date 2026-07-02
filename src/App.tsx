@@ -15,6 +15,7 @@ import { Agent } from "./lib/agent";
 import { DEFAULT_AI_CONFIG, TOOL_EXPORT_LABELS } from "./lib/constants";
 import { yieldToUI, parseAskUserArgs, createNewConversation } from "./lib/utils";
 import { getDefaultSystemPrompt } from "./lib/prompts";
+import { compactMessages } from "./lib/compact";
 import { toast } from "sonner";
 import { save } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
@@ -562,6 +563,13 @@ export default function App() {
             (msg as any).tool_call_id = `fallback_${i}`;
           }
         }
+      }
+
+      // 上下文压缩：当消息数超过 30 条时，自动将旧消息压缩为摘要
+      try {
+        currentMessages = await compactMessages(currentMessages, aiConfig);
+      } catch {
+        // compactMessages 失败不影响主流程
       }
 
       try {

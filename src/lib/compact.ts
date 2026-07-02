@@ -2,10 +2,10 @@ import type { ChatMessage, AIConfig } from "./types";
 import { getActiveConfig } from "./types";
 
 /**
- * 对话上下文压缩 —— 将较旧的对话消息用 AI 总结为一段摘要，
- * 替换为一条 compacted system 消息，减少 token 消耗。
+ * Conversation context compression — summarize older conversation messages
+ * using the AI model into a single system message, reducing token consumption.
  *
- * 阈值：总消息数 > 30 条时触发，保留最后 8 条消息不压缩。
+ * Threshold: triggers when total messages > 30, keeps the last 8 messages intact.
  */
 async function compactMessages(
   messages: ChatMessage[],
@@ -22,19 +22,19 @@ async function compactMessages(
   const active = getActiveConfig(aiConfig);
   if (!active.api_key) return messages;
 
-  // 构建压缩请求
-  const compactPrompt = `请用中文简要总结以下对话内容。保留关键信息：用户的要求、AI 执行了哪些操作和工具、重要的文件路径和结果。保持客观，不要添加对话中没有的信息。以下是需要总结的对话内容：
+  // Build compaction request
+  const compactPrompt = `Summarize the following conversation concisely in English. Keep key information: user requests, AI actions and tools used, important file paths and results. Be objective and do not add information not present in the conversation. Here is the conversation to summarize:
 
 ${toCompact.map(m => {
-  const role = m.role === "user" ? "用户" : m.role === "assistant" ? "AI" : m.role === "tool" ? "工具结果" : "系统";
+  const role = m.role === "user" ? "User" : m.role === "assistant" ? "Assistant" : m.role === "tool" ? "Tool Result" : "System";
   let text = `[${role}]: ${m.content.slice(0, 500)}`;
   if (m.tool_calls?.length) {
-    text += `\n[调用了工具: ${m.tool_calls.map(tc => tc.function.name).join(", ")}]`;
+    text += `\n[Called tools: ${m.tool_calls.map(tc => tc.function.name).join(", ")}]`;
   }
   return text;
 }).join("\n\n")}
 
-请用 3-5 句话总结以上对话的核心内容和已完成的步骤。`;
+Summarize the core content and completed steps in 3-5 sentences.`;
 
   try {
     const resp = await fetch(`${active.endpoint}/chat/completions`, {
@@ -54,7 +54,7 @@ ${toCompact.map(m => {
     });
 
     if (!resp.ok) {
-      console.warn("[compactMessages] 压缩请求失败:", resp.status);
+      console.warn("[compactMessages] Compaction request failed:", resp.status);
       return messages;
     }
 
@@ -63,16 +63,16 @@ ${toCompact.map(m => {
 
     if (!summary) return messages;
 
-    // 替换压缩部分为一条 system 摘要消息
+    // Replace compacted portion with a system summary message
     const compactedMsg: ChatMessage = {
       role: "system",
-      content: `以下是对之前对话的压缩摘要，帮助你保持上下文连贯性，无需重复已完成的步骤：\n\n${summary}`,
+      content: `Below is a compressed summary of the earlier conversation to help maintain continuity. No need to repeat completed steps:\n\n${summary}`,
       compacted: true,
     };
 
     return [compactedMsg, ...keep];
   } catch (e) {
-    console.warn("[compactMessages] 压缩失败:", e);
+    console.warn("[compactMessages] Compaction failed:", e);
     return messages;
   }
 }

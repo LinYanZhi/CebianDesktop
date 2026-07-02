@@ -4,7 +4,7 @@ import { DEFAULT_PROVIDERS } from "./types";
 export const DEFAULT_AI_CONFIG: AIConfig = {
   providers: DEFAULT_PROVIDERS.map(p => ({ ...p })),
   activeProviderId: "openai",
-  max_tokens: 4096,
+  max_tokens: 8192,
   temperature: 0.7,
   thinking_level: "medium",
   primary_hue: 200,
