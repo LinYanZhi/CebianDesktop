@@ -38,6 +38,7 @@ interface ChatViewProps {
   /** 待响应的交互式表单（ask_user） */
   pendingInteractive?: {
     toolCallId: string;
+    sessionId: string;
     title?: string;
     description?: string;
     submit_label?: string;
@@ -67,6 +68,8 @@ interface ChatViewProps {
   } | null;
   /** 用户对交互式工具的响应（传入 JSON 字符串或 null 取消） */
   onInteractiveResolve?: (value: string | null) => void;
+  /** 当前会话 ID（用于按会话隔离弹窗） */
+  currentSessionId?: string;
   /** 待响应的危险操作二次确认 */
   pendingConfirmation?: {
     details: {
@@ -77,6 +80,7 @@ interface ChatViewProps {
       args_detail: string;
     };
     token: string;
+    sessionId: string;
   } | null;
   /** 用户对二次确认的响应 */
   onConfirmResolve?: (confirmed: boolean) => void;
@@ -89,6 +93,7 @@ interface ChatViewProps {
 export default function ChatView({
   messages, onSend, onStop, onRetry, loading, aiConfig, onConfigChange, onNavigateSettings, onRollback,
   pendingInteractive, onInteractiveResolve, pendingConfirmation, onConfirmResolve,
+  currentSessionId,
 }: ChatViewProps) {
   const INPUT_DRAFT_KEY = "cebiandesktop_chat_input_draft";
   const [inputValue, setInputValue] = useState(() => {
@@ -232,8 +237,8 @@ export default function ChatView({
                   />
                 );
                 // 如果这条消息的 tool_calls 中有正在等待用户填写的 ask_user 表单，
-                // 内联渲染在消息块后面（"哪里调用就放哪里"）
-                if (pendingInteractive?.toolCallId && msg.tool_calls?.some(tc => tc.id === pendingInteractive.toolCallId)) {
+                // 内联渲染在消息块后面（"哪里调用就放哪里"），仅限当前会话
+                if (pendingInteractive?.toolCallId && pendingInteractive.sessionId === currentSessionId && msg.tool_calls?.some(tc => tc.id === pendingInteractive.toolCallId)) {
                   items.push(
                     <AskUserBlock key={`ask-${i}`}
                       title={pendingInteractive.title}
@@ -252,69 +257,6 @@ export default function ChatView({
             }
             return items;
           })()}
-          {/* ═══ 危险操作二次确认对话框 ═══ */}
-          {pendingConfirmation && (
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-              <div className="w-full max-w-md mx-4 bg-background border border-border rounded-xl shadow-2xl overflow-hidden">
-                {/* 头部 */}
-                <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-                  <div className={`size-10 rounded-full flex items-center justify-center text-lg font-bold ${
-                    pendingConfirmation.details.risk === "high"
-                      ? "bg-red-500/10 text-red-500"
-                      : "bg-amber-500/10 text-amber-500"
-                  }`}>
-                    {pendingConfirmation.details.risk === "high" ? "⚠" : "!"}
-                  </div>
-                  <div>
-                    <h3 className="text-sm font-semibold">确认{pendingConfirmation.details.action}</h3>
-                    <p className="text-xs text-muted-foreground">
-                      风险等级：{pendingConfirmation.details.risk === "high" ? "高" : "中"}
-                    </p>
-                  </div>
-                </div>
-                {/* 内容 */}
-                <div className="px-5 py-4 space-y-3">
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">操作描述</p>
-                    <p className="text-sm">{pendingConfirmation.details.description}</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">目标对象</p>
-                    <pre className="text-sm font-mono bg-muted rounded-md px-3 py-2 break-all whitespace-pre-wrap">
-                      {pendingConfirmation.details.target}
-                    </pre>
-                  </div>
-                  {pendingConfirmation.details.args_detail && (
-                    <div>
-                      <p className="text-xs text-muted-foreground mb-1">详细参数</p>
-                      <pre className="text-[0.75rem] font-mono bg-muted rounded-md px-3 py-2 whitespace-pre-wrap" style={{ scrollbarWidth: 'thin', overflowX: 'auto' }}>
-                        {pendingConfirmation.details.args_detail}
-                      </pre>
-                    </div>
-                  )}
-                </div>
-                {/* 操作按钮 */}
-                <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border bg-muted/30">
-                  <button
-                    onClick={() => onConfirmResolve?.(false)}
-                    className="px-4 py-1.5 text-sm rounded-lg border border-border bg-background hover:bg-accent transition-colors text-muted-foreground"
-                  >
-                    取消
-                  </button>
-                  <button
-                    onClick={() => onConfirmResolve?.(true)}
-                    className={`px-4 py-1.5 text-sm rounded-lg text-white transition-colors ${
-                      pendingConfirmation.details.risk === "high"
-                        ? "bg-red-500 hover:bg-red-600"
-                        : "bg-amber-500 hover:bg-amber-600"
-                    }`}
-                  >
-                    运行
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
           {loading && messages[messages.length - 1]?.role !== "assistant" && !pendingInteractive && (
             <div className="self-start w-full">
               <div className="flex items-center gap-2 mb-1.5">
@@ -326,6 +268,72 @@ export default function ChatView({
           )}
         </div>
         </div>
+        {/*
+          ═══ 危险操作二次确认对话框 ── absolute 定位于对话区域内 ═══
+          作用域限定在 ChatView 的 relative 容器内，不会溢出到设置视图。
+        */}
+        {pendingConfirmation && pendingConfirmation.sessionId === currentSessionId && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 backdrop-blur-sm">
+            <div className="w-full max-w-md mx-4 bg-background border border-border rounded-xl shadow-2xl overflow-hidden">
+              {/* 头部 */}
+              <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
+                <div className={`size-10 rounded-full flex items-center justify-center text-lg font-bold ${
+                  pendingConfirmation.details.risk === "high"
+                    ? "bg-red-500/10 text-red-500"
+                    : "bg-amber-500/10 text-amber-500"
+                }`}>
+                  {pendingConfirmation.details.risk === "high" ? "⚠" : "!"}
+                </div>
+                <div>
+                  <h3 className="text-sm font-semibold">确认{pendingConfirmation.details.action}</h3>
+                  <p className="text-xs text-muted-foreground">
+                    风险等级：{pendingConfirmation.details.risk === "high" ? "高" : "中"}
+                  </p>
+                </div>
+              </div>
+              {/* 内容 */}
+              <div className="px-5 py-4 space-y-3">
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">操作描述</p>
+                  <p className="text-sm">{pendingConfirmation.details.description}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-muted-foreground mb-1">目标对象</p>
+                  <pre className="text-sm font-mono bg-muted rounded-md px-3 py-2 break-all whitespace-pre-wrap">
+                    {pendingConfirmation.details.target}
+                  </pre>
+                </div>
+                {pendingConfirmation.details.args_detail && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">详细参数</p>
+                    <pre className="text-[0.75rem] font-mono bg-muted rounded-md px-3 py-2 whitespace-pre-wrap" style={{ scrollbarWidth: 'thin', overflowX: 'auto' }}>
+                      {pendingConfirmation.details.args_detail}
+                    </pre>
+                  </div>
+                )}
+              </div>
+              {/* 操作按钮 */}
+              <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border bg-muted/30">
+                <button
+                  onClick={() => onConfirmResolve?.(false)}
+                  className="px-4 py-1.5 text-sm rounded-lg border border-border bg-background hover:bg-accent transition-colors text-muted-foreground"
+                >
+                  取消
+                </button>
+                <button
+                  onClick={() => onConfirmResolve?.(true)}
+                  className={`px-4 py-1.5 text-sm rounded-lg text-white transition-colors ${
+                    pendingConfirmation.details.risk === "high"
+                      ? "bg-red-500 hover:bg-red-600"
+                      : "bg-amber-500 hover:bg-amber-600"
+                  }`}
+                >
+                  运行
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {/*
           ═══ 置底按钮 ── ⚠ 绝对不要移出 `min-h-0 relative` 容器 ═══
           父容器 class="flex-1 min-h-0 relative" 在第 152 行。

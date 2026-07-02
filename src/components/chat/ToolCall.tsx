@@ -334,7 +334,7 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
               {toolName === "ask_browser_ai" ? (
                 <AskBrowserAiResult result={result} />
               ) : (
-                <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono max-h-48 overflow-y-auto">
+                <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono">
                   <code>{result}</code>
                 </pre>
               )}

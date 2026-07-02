@@ -585,8 +585,11 @@ function SubmittedView({
   questions: AskQuestion[];
   submittedValue?: string | null;
 }) {
+  const isCancelled = submittedValue === null || submittedValue === undefined;
   let parsed: Record<string, any> = {};
-  try { parsed = JSON.parse(submittedValue || "{}"); } catch {}
+  if (!isCancelled) {
+    try { parsed = JSON.parse(submittedValue || "{}"); } catch {}
+  }
 
   return (
     <div className="my-3 rounded-xl border bg-card/50 shadow-sm overflow-hidden opacity-80">
@@ -599,28 +602,48 @@ function SubmittedView({
         </div>
       )}
       <div className="px-4 py-3 space-y-3">
-        {questions.map((q) => {
-          const v = parsed[q.id];
-          const display = q.type === "multi_select"
-            ? (Array.isArray(v) ? (v as string[]).join(", ") : "")
-            : (typeof v === "string" ? v : "");
-          return (
-            <div key={q.id}>
-              <label className="block text-xs text-muted-foreground mb-0.5">{q.question}</label>
-              <div className="text-sm text-foreground bg-muted/30 rounded-md px-3 py-2 border border-border/50">
-                {display || "（未填写）"}
+        {isCancelled ? (
+          <p className="text-sm text-muted-foreground">用户已取消</p>
+        ) : (
+          questions.map((q) => {
+            const v = parsed[q.id];
+            const display = q.type === "multi_select"
+              ? (Array.isArray(v) ? (v as string[]).join(", ") : "")
+              : (typeof v === "string" ? v : "");
+            return (
+              <div key={q.id}>
+                <label className="block text-xs text-muted-foreground mb-0.5">{q.question}</label>
+                <div className="text-sm text-foreground bg-muted/30 rounded-md px-3 py-2 border border-border/50">
+                  {display || "（未填写）"}
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
       <div className="px-4 pb-4">
-        <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 text-primary text-[0.6rem] font-medium">
-          <svg className="size-3" viewBox="0 0 16 16" fill="none">
-            <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" />
-            <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          已提交
+        <div className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[0.6rem] font-medium ${
+          isCancelled
+            ? "bg-muted/50 text-muted-foreground"
+            : "bg-primary/10 text-primary"
+        }`}>
+          {isCancelled ? (
+            <>
+              <svg className="size-3" viewBox="0 0 16 16" fill="none">
+                <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" />
+                <path d="M5.5 5.5l5 5M10.5 5.5l-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+              已取消
+            </>
+          ) : (
+            <>
+              <svg className="size-3" viewBox="0 0 16 16" fill="none">
+                <circle cx="8" cy="8" r="6" stroke="currentColor" strokeWidth="2" />
+                <path d="M5 8l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              已提交
+            </>
+          )}
         </div>
       </div>
     </div>

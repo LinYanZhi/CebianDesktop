@@ -30,14 +30,15 @@ import { invoke } from "@tauri-apps/api/core";
  */
 async function askUserInteractive(
   args: any,
+  sessionId: string,
   setPending: (p: any) => void,
   resolveRef: { current: ((value: string | null) => void) | null },
   toolCallId?: string,
 ): Promise<string | null> {
   const form = parseAskUserArgs(args);
 
-  // 先设置表单状态（带上 toolCallId 用于消息内联匹配）
-  setPending({ toolCallId: toolCallId || "", ...form });
+  // 先设置表单状态（带上 toolCallId + sessionId 用于会话内联匹配与隔离）
+  setPending({ toolCallId: toolCallId || "", sessionId, ...form });
 
   // ── 让出 UI 线程，让 React 渲染表单后再等待用户输入 ──
   await yieldToUI();
@@ -57,10 +58,11 @@ async function askUserInteractive(
 async function askConfirmation(
   details: any,
   token: string,
+  sessionId: string,
   setPending: (p: any) => void,
   resolveRef: { current: ((value: boolean) => void) | null },
 ): Promise<boolean> {
-  setPending({ details, token });
+  setPending({ details, token, sessionId });
   await yieldToUI();
   await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
   return new Promise<boolean>((resolve) => {
@@ -93,9 +95,10 @@ export default function App() {
   /** 所有进行中的流，key = 会话 ID */
   const activeStreamsRef = useRef<Map<string, StreamState>>(new Map());
 
-  /** 交互式工具（ask_user）的等待状态 */
+  /** 交互式工具（ask_user）的等待状态（按 sessionId 隔离） */
   const [pendingInteractive, setPendingInteractive] = useState<{
     toolCallId: string;
+    sessionId: string;
     title?: string;
     description?: string;
     submit_label?: string;
@@ -122,10 +125,11 @@ export default function App() {
   } | null>(null);
   const interactiveResolveRef = useRef<((value: string | null) => void) | null>(null);
 
-  /** 危险操作二次确认状态 */
+  /** 危险操作二次确认状态（按 sessionId 隔离） */
   const [pendingConfirmation, setPendingConfirmation] = useState<{
     details: any;
     token: string;
+    sessionId: string;
   } | null>(null);
   const confirmResolveRef = useRef<((value: boolean) => void) | null>(null);
   /** 工具执行取消标记（按 sessionId 隔离） */
@@ -407,7 +411,7 @@ export default function App() {
         // ── ask_user ──
         if (toolName === "ask_user") {
           const userResponse = await askUserInteractive(
-            args,
+            args, sessionId,
             setPendingInteractive,
             interactiveResolveRef,
             tc.id,
@@ -434,7 +438,7 @@ export default function App() {
             toolExecContent = JSON.stringify({ error: "用户已取消操作" });
           } else {
             const confirmed = await askConfirmation(
-              result.details, result.token,
+              result.details, result.token, sessionId,
               setPendingConfirmation, confirmResolveRef,
             );
             if (isCancelled()) {
@@ -508,8 +512,10 @@ export default function App() {
       // 如果这个会话已经在流式，不允许重复发送
       if (activeStreamsRef.current.has(streamSessionId)) return;
 
-      // 新消息发送时清除已提交的表单
-      setPendingInteractive(null);
+      // 新消息发送时清除已提交的表单（仅当前会话的）
+      if (pendingInteractive?.sessionId === streamSessionId) {
+        setPendingInteractive(null);
+      }
 
       const userMsg: ChatMessage = { role: "user", content };
       const updated = [...messages, userMsg];
@@ -767,7 +773,7 @@ export default function App() {
     [
       messages, aiConfig, currentSessionId,
       updateCurrentConversation, persistSessionMessages, cleanupListeners,
-      executeToolCallsForAgent,
+      executeToolCallsForAgent, pendingInteractive,
     ]
   );
 
@@ -804,16 +810,16 @@ export default function App() {
     // 标记该会话已取消（按 sessionId 隔离）
     cancelledSessionsRef.current.add(sessionId);
 
-    // 1. 关闭待处理的交互式对话框（ask_user）
-    if (interactiveResolveRef.current) {
+    // 1. 关闭待处理的交互式对话框（ask_user，仅当前会话的）
+    if (interactiveResolveRef.current && pendingInteractive?.sessionId === sessionId) {
       interactiveResolveRef.current(null);
       interactiveResolveRef.current = null;
       // 标记为已解决（保留表单展示只读已取消视图，而非直接消失）
       setPendingInteractive(prev => prev ? { ...prev, _resolved: true, _submittedValue: null } : null);
     }
 
-    // 2. 关闭待处理的二次确认对话框
-    if (confirmResolveRef.current) {
+    // 2. 关闭待处理的二次确认对话框（仅当前会话的）
+    if (confirmResolveRef.current && pendingConfirmation?.sessionId === sessionId) {
       confirmResolveRef.current(false);
       confirmResolveRef.current = null;
       setPendingConfirmation(null);
@@ -834,7 +840,7 @@ export default function App() {
       streamState.controller.abort();
       cleanupStream(sessionId);
     }
-  }, [currentSessionId, cleanupStream]);
+  }, [currentSessionId, cleanupStream, pendingConfirmation, pendingInteractive]);
 
   // 重试：删除最后一条助手消息，重新发送最后一条用户消息
   const handleRetry = useCallback(() => {
@@ -1143,14 +1149,16 @@ export default function App() {
                         className="w-full bg-background border border-ring rounded px-1 py-0.5 text-xs outline-none"
                       />
                     ) : (
-                      <p className="truncate flex items-center gap-1.5">
+                      <p className="truncate">
                         {conv.title}
-                        {isSessionStreaming(conv.id) && (
-                          <span className="text-[0.55rem] text-primary font-medium">· 响应中</span>
-                        )}
                       </p>
                     )}
-                    <p className="text-xs text-muted-foreground">{formatTime(conv.updatedAt)}</p>
+                    <p className="text-xs text-muted-foreground flex items-center gap-1">
+                      {isSessionStreaming(conv.id) && (
+                        <span className="text-primary font-medium">· 响应中</span>
+                      )}
+                      <span>{formatTime(conv.updatedAt)}</span>
+                    </p>
                   </div>
                   <button onClick={(e) => handleDeleteSession(e, conv.id)}
                     className="p-1 rounded hover:bg-background text-muted-foreground hover:text-destructive transition-colors">
@@ -1203,6 +1211,7 @@ export default function App() {
             onConfigChange={setAiConfig}
             onNavigateSettings={() => setCurrentView("settings")}
             onRollback={handleRollback}
+            currentSessionId={currentSessionId}
             pendingInteractive={pendingInteractive}
             onInteractiveResolve={handleInteractiveResolve}
             pendingConfirmation={pendingConfirmation}
