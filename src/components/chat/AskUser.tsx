@@ -259,9 +259,62 @@ function AskUserCompactBlock({
     );
   }
 
-  // 有 options → single_select 紧凑模式（选项按钮 + 可取消）
+  // ── 有 options ──
   const hasOptions = (field.options && field.options.length > 0) || false;
   if (hasOptions) {
+    // multi_select → 渲染复选框
+    if (field.type === "multi_select") {
+      const selected = (value as string[]) || [];
+      return (
+        <div className="my-3 p-4 rounded-xl border bg-card shadow-sm animate-form-enter">
+          <div className="text-sm whitespace-pre-wrap text-foreground mb-3">{field.question}</div>
+          <div className="space-y-1.5">
+            {field.options?.map((opt) => {
+              const isChecked = selected.includes(opt.value);
+              return (
+                <label key={opt.value}
+                  className={`flex items-center gap-2 px-2.5 py-1.5 rounded-md border cursor-pointer text-xs transition-colors hover:bg-accent/50 ${
+                    isChecked ? "border-primary bg-primary/10" : "border-border"
+                  }`}
+                >
+                  <input type="checkbox" value={opt.value}
+                    checked={isChecked}
+                    onChange={() => {
+                      if (isChecked) {
+                        setValue(selected.filter(v => v !== opt.value));
+                      } else {
+                        setValue([...selected, opt.value]);
+                      }
+                      setError(null);
+                    }}
+                    className="size-3.5 accent-primary rounded shrink-0"
+                  />
+                  <span className="flex-1">{opt.label}</span>
+                </label>
+              );
+            })}
+          </div>
+          {error && <p className="text-xs text-red-400 mt-1.5">{error}</p>}
+          <div className="flex gap-2 mt-3">
+            <button onClick={() => {
+              if (selected.length === 0) { setError("请至少选择一项"); return; }
+              const result: Record<string, any> = {};
+              result[field.id] = selected;
+              onResolve(JSON.stringify(result));
+            }}
+              className="px-4 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors">
+              确认
+            </button>
+            <button onClick={() => onResolve(null)}
+              className="px-4 py-1.5 rounded-lg border border-border text-muted-foreground text-sm hover:bg-accent transition-colors">
+              取消
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // single_select → 渲染单选按钮（已有的紧凑按钮模式）
     return (
       <div className="my-3 p-4 rounded-xl border bg-card shadow-sm animate-form-enter">
         <div className="text-sm whitespace-pre-wrap text-foreground mb-3">{field.question}</div>

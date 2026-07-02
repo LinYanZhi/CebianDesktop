@@ -325,9 +325,19 @@ function StepItem({ step, isLast }: { step: AgentProgressStep; isLast: boolean }
               {open ? "收起详情" : "查看详情"}
             </button>
             {open && (
-              <pre className="mt-1 p-2 rounded-md bg-muted/50 border border-border text-[0.6rem] font-mono leading-relaxed whitespace-pre-wrap break-words max-h-48 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
-                {step.content}
-              </pre>
+              <>
+                <pre className="mt-1 p-2 rounded-md bg-muted/50 border border-border text-[0.6rem] font-mono leading-relaxed whitespace-pre-wrap break-words max-h-48 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+                  {step.content}
+                </pre>
+                {/* 底部收起：内容长时无需回顶 */}
+                <button
+                  onClick={() => setOpen(false)}
+                  className="flex items-center gap-1 text-[0.55rem] text-muted-foreground/40 hover:text-primary/60 mt-1"
+                >
+                  <ChevronRight size={10} className="-rotate-90" />
+                  收起详情
+                </button>
+              </>
             )}
           </>
         )}

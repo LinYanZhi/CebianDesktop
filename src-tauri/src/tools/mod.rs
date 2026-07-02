@@ -83,8 +83,9 @@ pub(crate) fn check_path_hard_barrier(path: &str, is_read: bool) -> Result<(), S
         return Ok(()); // 读取不限制
     }
     let p = Path::new(path);
-    // 检查当前路径或父目录是否在黑名单中
     let path_lower = p.to_string_lossy().to_lowercase();
+
+    // 检查当前路径或父目录是否在黑名单中
     for &blacklisted in PATH_BLACKLIST {
         if path_lower.starts_with(&blacklisted.to_lowercase()) {
             return Err(format!(
@@ -93,6 +94,22 @@ pub(crate) fn check_path_hard_barrier(path: &str, is_read: bool) -> Result<(), S
             ));
         }
     }
+
+    // 检查用户目录下的敏感子路径（启动项、脚本宿主等）
+    // 这些路径在用户目录内，validate_path 会放行，但写入它们同样危险
+    let sensitive_patterns = &[
+        r"appdata\roaming\microsoft\windows\start menu",
+        r"appdata\local\microsoft\windows\start menu",
+        r"appdata\locallow\microsoft\windows\start menu",
+    ];
+    for pattern in sensitive_patterns {
+        if path_lower.contains(pattern) {
+            return Err(format!(
+                "安全拦截：不允许写入系统启动/配置目录。这是硬性限制，无法绕过。"
+            ));
+        }
+    }
+
     Ok(())
 }
 

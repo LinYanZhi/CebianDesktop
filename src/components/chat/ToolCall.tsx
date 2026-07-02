@@ -23,6 +23,90 @@ interface DownloadProgress {
   percent: number | null;
 }
 
+/** ask_user 工具结果：解析为可读表单 */
+function AskUserToolResult({ args, result }: { args: string; result: string }) {
+  // 解析参数
+  const parsedArgs = (() => {
+    try { return JSON.parse(args) as Record<string, any>; } catch { return null; }
+  })();
+  // 解析结果
+  const parsedResult = (() => {
+    try { return JSON.parse(result) as Record<string, any>; } catch { return null; }
+  })();
+  const question = parsedArgs?.question || "";
+  const qType = parsedArgs?.type || "text";
+  const optionsRaw = parsedArgs?.options;
+  const options = (() => {
+    if (!optionsRaw) return [];
+    if (typeof optionsRaw === "string") {
+      try { return JSON.parse(optionsRaw) as { label: string; value: string }[]; } catch { return []; }
+    }
+    if (Array.isArray(optionsRaw)) return optionsRaw;
+    return [];
+  })();
+
+  // 提取用户回答
+  const response = parsedResult?.response;
+
+  // 渲染答案显示
+  const renderAnswer = () => {
+    if (!response && response !== "") return <span className="text-muted-foreground">（未填写）</span>;
+    if (qType === "multi_select") {
+      // response 可能是一个 JSON.stringify 的数组，也可能是逗号分隔
+      let selected: string[] = [];
+      if (typeof response === "string") {
+        try { selected = JSON.parse(response); } catch {
+          selected = response.split(",").map((s: string) => s.trim()).filter(Boolean);
+        }
+      } else if (Array.isArray(response)) {
+        selected = response;
+      }
+      if (selected.length === 0) return <span className="text-muted-foreground">（未选择）</span>;
+      return (
+        <div className="flex flex-wrap gap-1.5">
+          {selected.map((v, i) => {
+            const opt = options.find(o => o.value === v);
+            return (
+              <span key={i} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-primary/10 text-primary text-xs">
+                {opt?.label || v}
+              </span>
+            );
+          })}
+        </div>
+      );
+    }
+    if (qType === "single_select" || qType === "dropdown") {
+      const opt = options.find(o => o.value === response);
+      return <span className="font-medium text-foreground">{opt?.label || response}</span>;
+    }
+    if (qType === "confirm") {
+      return (
+        <span className={`inline-flex items-center gap-1 text-xs font-medium ${response === "yes" ? "text-green-500" : "text-red-400"}`}>
+          {response === "yes" ? "✓ 确认" : "✗ 取消"}
+        </span>
+      );
+    }
+    return <span className="font-medium text-foreground">{response}</span>;
+  };
+
+  return (
+    <div className="space-y-2">
+      {question && (
+        <div>
+          <div className="text-[0.6rem] text-muted-foreground/60 mb-0.5">提问</div>
+          <div className="text-xs text-foreground">{question}</div>
+        </div>
+      )}
+      <div>
+        <div className="text-[0.6rem] text-muted-foreground/60 mb-0.5">回答</div>
+        <div className="bg-muted/30 rounded-md px-3 py-2 border border-border/50 min-h-[1.5rem]">
+          {renderAnswer()}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** 工具调用卡片：仿 Cebian ToolCard，每个工具独立可折叠，显示参数+结果 */
 export function ToolCallCards({ tool_calls, results, cancelled }: {
   tool_calls: ToolCall[];
@@ -332,6 +416,8 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
               <div className="text-[0.65rem] text-muted-foreground/60 mb-1.5 font-medium">结果</div>
               {toolName === "ask_browser_ai" ? (
                 <AskBrowserAiResult result={result} />
+              ) : toolName === "ask_user" ? (
+                <AskUserToolResult args={args} result={result} />
               ) : (
                 <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-all font-mono">
                   <code>{result}</code>
@@ -339,6 +425,15 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
               )}
             </div>
           )}
+          {/* 底部收起按钮：内容太长时无需回顶 */}
+          <button
+            type="button"
+            onClick={() => setOpen(false)}
+            className="w-full flex items-center justify-center gap-1 px-3.5 py-2 text-[0.6rem] text-muted-foreground/40 hover:text-muted-foreground/70 hover:bg-accent/30 transition-colors border-t border-border/30"
+          >
+            <ChevronRight size={10} className="-rotate-90" />
+            收起
+          </button>
         </div>
       )}
     </div>

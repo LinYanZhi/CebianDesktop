@@ -356,57 +356,26 @@ pub fn get_tool_permission_list(mcp: State<'_, McpClientManager>, app_handle: ta
 /// 工具执行结果（JSON 格式）
 #[tauri::command]
 pub async fn execute_tool(name: String, args: Value, permission_mode: Option<String>, mcp: State<'_, McpClientManager>, bridge_state: State<'_, Arc<BridgeState>>, app_handle: tauri::AppHandle) -> Result<Value, String> {
-    let mode = permission_mode.as_deref().unwrap_or("conservative");
+    let mode = permission_mode.as_deref().unwrap_or("safe");
 
-    // ═══ 自定义模式：查询工具权限表 ═══
-    if mode == "custom" {
-        let config = crate::config_storage::load_config(&app_handle)?;
-        match config.tool_permissions.get(&name).map(|s| s.as_str()) {
-            Some("deny") => {
-                return Ok(json!({
-                    "error": format!("工具「{}」已被你设置为「拒绝」。如需使用，请在设置 → AI 权限中修改。", name),
-                    "permission_denied": true,
-                }));
-            }
-            Some("confirm") => {
-                // 需要二次确认
-                let token = generate_token();
-                let details = get_tool_confirmation_details(&name, &args);
-                let pending = PendingExecution {
-                    tool_name: name.clone(),
-                    args: args.clone(),
-                };
-                pending_store()
-                    .lock()
-                    .map_err(|e| format!("内部错误: {}", e))?
-                    .insert(token.clone(), pending);
-                return Ok(json!({
-                    "needs_confirmation": true,
-                    "token": token,
-                    "details": details,
-                }));
-            }
-            _ => {} // "allow" 或未设置 → 直接放行
-        }
-    } else {
-        // ═══ 非自定义模式：按风险等级判断 ═══
-        if tool_needs_confirmation(&name, mode) {
-            let token = generate_token();
-            let details = get_tool_confirmation_details(&name, &args);
-            let pending = PendingExecution {
-                tool_name: name.clone(),
-                args: args.clone(),
-            };
-            pending_store()
-                .lock()
-                .map_err(|e| format!("内部错误: {}", e))?
-                .insert(token.clone(), pending);
-            return Ok(json!({
-                "needs_confirmation": true,
-                "token": token,
-                "details": details,
-            }));
-        }
+    // ═══ 按安全模式判断是否需要确认 ═══
+    // safe → 写/删/执行操作需确认；trusted → 自动放行
+    if tool_needs_confirmation(&name, mode) {
+        let token = generate_token();
+        let details = get_tool_confirmation_details(&name, &args);
+        let pending = PendingExecution {
+            tool_name: name.clone(),
+            args: args.clone(),
+        };
+        pending_store()
+            .lock()
+            .map_err(|e| format!("内部错误: {}", e))?
+            .insert(token.clone(), pending);
+        return Ok(json!({
+            "needs_confirmation": true,
+            "token": token,
+            "details": details,
+        }));
     }
 
     // ═══ 浏览器工具（通过桥接发送到 CeBian 扩展执行）═══

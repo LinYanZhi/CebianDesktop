@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { useStickToBottom } from "./useStickToBottom";
 import { UserMessageBlock, AgentMessageBlock } from "./MessageBlock";
 import { AskUserBlock } from "./AskUser";
+import { ConfirmationBlock } from "./ConfirmationBlock";
 import { ChatInput } from "./ChatInput";
 
 // ── 独立回底按钮组件（absolute 定位，放在父 relative 容器内） ──
@@ -274,6 +275,17 @@ export default function ChatView({
                 />
               );
             }
+            // 当前会话有待确认的危险操作时，内联渲染确认表单（替代弹窗）
+            if (pendingConfirmation && pendingConfirmation.sessionId === currentSessionId) {
+              items.push(
+                <ConfirmationBlock key="confirmation-pending"
+                  details={pendingConfirmation.details}
+                  aiExplanation={pendingConfirmation.aiExplanation}
+                  onConfirm={() => onConfirmResolve?.(true)}
+                  onCancel={() => onConfirmResolve?.(false)}
+                />
+              );
+            }
             return items;
           })()}
           {loading && messages[messages.length - 1]?.role !== "assistant" && !pendingInteractive && (
@@ -287,80 +299,6 @@ export default function ChatView({
           )}
         </div>
         </div>
-        {/*
-          ═══ 危险操作二次确认对话框 ── absolute 定位于对话区域内 ═══
-          作用域限定在 ChatView 的 relative 容器内，不会溢出到设置视图。
-        */}
-        {pendingConfirmation && pendingConfirmation.sessionId === currentSessionId && (
-          <div className="absolute inset-0 z-10 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-            <div className="w-full max-w-md mx-4 bg-background border border-border rounded-xl shadow-2xl overflow-hidden">
-              {/* 头部 */}
-              <div className="flex items-center gap-3 px-5 py-4 border-b border-border">
-                <div className={`size-10 rounded-full flex items-center justify-center text-lg font-bold ${
-                  pendingConfirmation.details.risk === "high"
-                    ? "bg-red-500/10 text-red-500"
-                    : "bg-amber-500/10 text-amber-500"
-                }`}>
-                  {pendingConfirmation.details.risk === "high" ? "⚠" : "!"}
-                </div>
-                <div>
-                  <h3 className="text-sm font-semibold">确认{pendingConfirmation.details.action}</h3>
-                  <p className="text-xs text-muted-foreground">
-                    风险等级：{pendingConfirmation.details.risk === "high" ? "高" : "中"}
-                  </p>
-                </div>
-              </div>
-              {/* 内容 */}
-              <div className="px-5 py-4 space-y-3">
-                {pendingConfirmation.aiExplanation && (
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">AI 说明</p>
-                    <div className="text-sm bg-primary/5 border border-primary/10 rounded-md px-3 py-2 whitespace-pre-wrap leading-relaxed">
-                      {pendingConfirmation.aiExplanation}
-                    </div>
-                  </div>
-                )}
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">操作描述</p>
-                  <p className="text-sm">{pendingConfirmation.details.description}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground mb-1">目标对象</p>
-                  <pre className="text-sm font-mono bg-muted rounded-md px-3 py-2 break-all whitespace-pre-wrap">
-                    {pendingConfirmation.details.target}
-                  </pre>
-                </div>
-                {pendingConfirmation.details.args_detail && (
-                  <div>
-                    <p className="text-xs text-muted-foreground mb-1">详细参数</p>
-                    <pre className="text-[0.75rem] font-mono bg-muted rounded-md px-3 py-2 whitespace-pre-wrap" style={{ scrollbarWidth: 'thin', overflowX: 'auto' }}>
-                      {pendingConfirmation.details.args_detail}
-                    </pre>
-                  </div>
-                )}
-              </div>
-              {/* 操作按钮 */}
-              <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-border bg-muted/30">
-                <button
-                  onClick={() => onConfirmResolve?.(false)}
-                  className="px-4 py-1.5 text-sm rounded-lg border border-border bg-background hover:bg-accent transition-colors text-muted-foreground"
-                >
-                  取消
-                </button>
-                <button
-                  onClick={() => onConfirmResolve?.(true)}
-                  className={`px-4 py-1.5 text-sm rounded-lg text-white transition-colors ${
-                    pendingConfirmation.details.risk === "high"
-                      ? "bg-red-500 hover:bg-red-600"
-                      : "bg-amber-500 hover:bg-amber-600"
-                  }`}
-                >
-                  运行
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
         {/*
           ═══ 置底按钮 ── ⚠ 绝对不要移出 `min-h-0 relative` 容器 ═══
           父容器 class="flex-1 min-h-0 relative" 在第 152 行。
