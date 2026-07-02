@@ -81,6 +81,7 @@ interface ChatViewProps {
     };
     token: string;
     sessionId: string;
+    aiExplanation?: string;
   } | null;
   /** 用户对二次确认的响应 */
   onConfirmResolve?: (confirmed: boolean) => void;
@@ -129,11 +130,21 @@ export default function ChatView({
     try { localStorage.removeItem(INPUT_DRAFT_KEY); } catch {}
   };
 
-  // 本地回滚处理：通知父组件截断消息，同时本地设置输入内容
-  const handleRollback = useCallback((index: number, content: string) => {
+  // 本地回滚处理：通知父组件截断消息，同时本地设置输入内容和附件
+  const handleRollback = useCallback((index: number, msg: ChatMessage) => {
+    const content = typeof msg.content === 'string' ? msg.content : '';
     onRollback?.(index, content);
     setInputValue(content);
+    // 恢复附件 chip（如果有）
+    if (msg.attachments && msg.attachments.length > 0) {
+      setRollbackAttachments(msg.attachments);
+    } else {
+      setRollbackAttachments([]);
+    }
   }, [onRollback]);
+
+  // 回滚恢复的附件，用于 ChatInput 恢复 chip
+  const [rollbackAttachments, setRollbackAttachments] = useState<SendAttachment[] | null>(null);
 
   // ── 欢迎页 ──
   if (messages.length === 0 && !loading) {
@@ -168,6 +179,7 @@ export default function ChatView({
           onSend={(atts) => send(atts)}
           onStop={onStop}
           loading={loading} aiConfig={aiConfig}
+          incomingAttachments={rollbackAttachments}
           onConfigChange={onConfigChange} onNavigateSettings={onNavigateSettings} />
       </div>
     );
@@ -243,24 +255,24 @@ export default function ChatView({
                     toolResults={toolResults.length > 0 ? toolResults : undefined}
                   />
                 );
-                // 如果这条消息的 tool_calls 中有正在等待用户填写的 ask_user 表单，
-                // 内联渲染在消息块后面（"哪里调用就放哪里"），仅限当前会话
-                if (pendingInteractive?.toolCallId && pendingInteractive.sessionId === currentSessionId && msg.tool_calls?.some(tc => tc.id === pendingInteractive.toolCallId)) {
-                  items.push(
-                    <AskUserBlock key={`ask-${i}`}
-                      title={pendingInteractive.title}
-                      description={pendingInteractive.description}
-                      submit_label={pendingInteractive.submit_label}
-                      pagination={pendingInteractive.pagination}
-                      questions={pendingInteractive.questions}
-                      onResolve={onInteractiveResolve!}
-                      resolved={pendingInteractive._resolved}
-                      submittedValue={pendingInteractive._submittedValue}
-                    />
-                  );
-                }
               }
               // tool 消息跳过（已在 Assistant 的 toolResults 中展示）
+            }
+            // 当前会话有待处理的 ask_user 表单且未解决时，在消息列表末尾渲染
+            // 不依赖 tool_call 匹配（修复切出切入后表单丢失的问题）
+            if (pendingInteractive && pendingInteractive.sessionId === currentSessionId && !pendingInteractive._resolved) {
+              items.push(
+                <AskUserBlock key="ask-user-pending"
+                  title={pendingInteractive.title}
+                  description={pendingInteractive.description}
+                  submit_label={pendingInteractive.submit_label}
+                  pagination={pendingInteractive.pagination}
+                  questions={pendingInteractive.questions}
+                  onResolve={onInteractiveResolve!}
+                  resolved={pendingInteractive._resolved}
+                  submittedValue={pendingInteractive._submittedValue}
+                />
+              );
             }
             return items;
           })()}
@@ -300,6 +312,14 @@ export default function ChatView({
               </div>
               {/* 内容 */}
               <div className="px-5 py-4 space-y-3">
+                {pendingConfirmation.aiExplanation && (
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">AI 说明</p>
+                    <div className="text-sm bg-primary/5 border border-primary/10 rounded-md px-3 py-2 whitespace-pre-wrap leading-relaxed">
+                      {pendingConfirmation.aiExplanation}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <p className="text-xs text-muted-foreground mb-1">操作描述</p>
                   <p className="text-sm">{pendingConfirmation.details.description}</p>
@@ -353,6 +373,7 @@ export default function ChatView({
         onSend={(atts) => send(atts)}
         onStop={onStop}
         loading={loading} aiConfig={aiConfig}
+        incomingAttachments={rollbackAttachments}
         onConfigChange={onConfigChange} onNavigateSettings={onNavigateSettings} />
     </div>
   );

@@ -6,7 +6,7 @@
 
 // ─── 类型定义 ───
 export type {
-  ThinkingLevel, PermissionMode, ToolPermission,
+  ThinkingLevel, PermissionMode,
   SendAttachment,
   TextContent, ThinkingContent, ImageContent, ToolCallContent, ContentBlock,
   CompactionSummaryMessage,

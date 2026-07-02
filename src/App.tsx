@@ -61,14 +61,18 @@ async function askConfirmation(
   sessionId: string,
   setPending: (p: any) => void,
   resolveRef: { current: ((value: boolean) => void) | null },
+  aiExplanation?: string,
 ): Promise<boolean> {
-  setPending({ details, token, sessionId });
+  setPending({ details, token, sessionId, aiExplanation });
   await yieldToUI();
   await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
   return new Promise<boolean>((resolve) => {
     resolveRef.current = resolve;
   });
 }
+
+/** localStorage key 用于持久化 ask_user 待处理表单（重启恢复） */
+const PENDING_INTERACTIVE_KEY = "cebiandesktop_pending_interactive";
 
 export default function App() {
   const [currentView, setCurrentView] = useState<"chat" | "settings">("chat");
@@ -183,6 +187,23 @@ export default function App() {
           setConversations([fresh]);
           setCurrentSessionId(fresh.id);
         }
+
+        // 恢复持久化的 pendingInteractive（重启后恢复提问状态）
+        try {
+          const saved = localStorage.getItem(PENDING_INTERACTIVE_KEY);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            // 检查关联的会话是否还存在
+            const convs = loaded && loaded.length > 0 ? loaded : [];
+            if (convs.find((c: Conversation) => c.id === parsed.sessionId)) {
+              setPendingInteractive(parsed);
+            } else {
+              localStorage.removeItem(PENDING_INTERACTIVE_KEY);
+            }
+          }
+        } catch {
+          localStorage.removeItem(PENDING_INTERACTIVE_KEY);
+        }
       } catch (e) {
         console.error("初始化加载数据失败:", e);
         const fresh = createNewConversation();
@@ -206,6 +227,17 @@ export default function App() {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  // pendingInteractive 自动持久化到 localStorage（重启后恢复）
+  // 仅持久化未解决的表单（过滤 _resolved 状态），且不保存运行时动态字段
+  useEffect(() => {
+    if (pendingInteractive && !(pendingInteractive as any)._resolved) {
+      const toStore = (({ _resolved, _submittedValue, ...rest }) => rest)(pendingInteractive as any);
+      localStorage.setItem(PENDING_INTERACTIVE_KEY, JSON.stringify(toStore));
+    } else {
+      localStorage.removeItem(PENDING_INTERACTIVE_KEY);
+    }
+  }, [pendingInteractive]);
 
   // 浏览位置变化时自动保存到配置
   useEffect(() => {
@@ -382,12 +414,14 @@ export default function App() {
       return;
     }
 
-    // 找到最后一条 assistant 消息中的 tool_calls
+    // 找到最后一条 assistant 消息中的 tool_calls 和 AI 解释
     let lastToolCalls: ToolCall[] = [];
+    let aiExplanation = ""; // AI 执行工具前的思考/解释
     for (let i = currentMsgs.length - 1; i >= 0; i--) {
       const msg = currentMsgs[i];
       if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
         lastToolCalls = msg.tool_calls;
+        aiExplanation = getMessageText(msg);
         break;
       }
     }
@@ -439,7 +473,7 @@ export default function App() {
           } else {
             const confirmed = await askConfirmation(
               result.details, result.token, sessionId,
-              setPendingConfirmation, confirmResolveRef,
+              setPendingConfirmation, confirmResolveRef, aiExplanation,
             );
             if (isCancelled()) {
               await cancelExecution(result.token).catch(() => {});
@@ -526,7 +560,11 @@ export default function App() {
         setPendingInteractive(null);
       }
 
-      const userMsg: ChatMessage = { role: "user", content };
+      const userMsg: ChatMessage = {
+        role: "user",
+        content,
+        attachments: _attachments?.filter(a => a.type === 'file' && a.path),
+      };
       const updated = [...messages, userMsg];
       updateCurrentConversation(updated);
 
@@ -552,9 +590,7 @@ export default function App() {
       activeStreamsRef.current.set(streamSessionId, streamState);
 
       let fullContent = "";
-      let fullThinking = "";
       let currentMessages = [...updated];
-      let accumulatedUsage: { input: number; output: number } | undefined;
 
       // ─── 消息校验：确保 tool 消息之前有对应的 assistant(tool_calls) ───
       for (let i = 0; i < currentMessages.length; i++) {
@@ -604,12 +640,10 @@ export default function App() {
 
         // 构建 system prompt
         let systemPrompt = aiConfig.system_prompt || getDefaultSystemPrompt();
-        const permissionMode = aiConfig.aiPermissionMode || "conservative";
+        const permissionMode = aiConfig.aiPermissionMode || "safe";
         const permissionDesc = permissionMode === "trusted"
-          ? "\n\n[安全设置] 当前模式：信任模式 — 所有工具调用自动执行，无需用户确认。请谨慎操作。"
-          : permissionMode === "balanced"
-          ? "\n\n[安全设置] 当前模式：平衡模式 — 仅高风险操作（删除文件/目录、执行命令）需要用户确认。\n\n[批量操作指引] 如果需要批量操作多个文件，请使用 tools/files 或 tools/operations 数组参数一次完成，避免多次确认弹窗。例如：delete_path({paths:[...]})、write_new_file({files:[...]})、download_file({files:[...]})、batch_rename({operations:[...]})。"
-          : "\n\n[安全设置] 当前模式：保守模式 — 写入/编辑/删除文件、执行命令等操作均需用户确认。\n\n[批量操作指引] 如果需要批量操作多个文件，请使用 tools/files 或 tools/operations 数组参数一次完成，避免多次确认弹窗。例如：delete_path({paths:[...]})、write_new_file({files:[...]})、download_file({files:[...]})、batch_rename({operations:[...]})。";
+          ? "\n\n[安全设置] 当前模式：信任模式 — 所有工具调用自动执行，无需用户确认。请谨慎操作。\n[路径权限] 允许在工作区目录、用户目录（桌面/下载/文档）、临时目录和网络共享路径（UNC/映射驱动器）内读写。系统关键目录（C:\\Windows、Program Files 等）和破坏性命令被硬性拦截。"
+          : "\n\n[安全设置] 当前模式：安全模式 — 写入/编辑/删除文件、执行命令等操作均需用户确认。\n[路径权限] 允许在工作区目录、用户目录（桌面/下载/文档）、临时目录和网络共享路径（UNC/映射驱动器）内读写。系统关键目录（C:\\Windows、Program Files 等）和破坏性命令被硬性拦截。\n\n[批量操作指引] 如果需要批量操作多个文件，请使用 tools/files 或 tools/operations 数组参数一次完成，避免多次确认弹窗。例如：delete_path({paths:[...]})、write_new_file({files:[...]})、download_file({files:[...]})、batch_rename({operations:[...]})。";
         systemPrompt += permissionDesc;
 
         // 启动定期持久化
@@ -628,7 +662,6 @@ export default function App() {
           events: {
             onToken: ({ content, thinking }) => {
               fullContent = content;
-              fullThinking = thinking || "";
               streamState.fullContent = content;
               streamState.fullThinking = thinking || "";
               if (sessionIdRef.current === streamSessionId) {
@@ -697,8 +730,7 @@ export default function App() {
               }
             },
 
-            onDone: (finalMessages, usage) => {
-              accumulatedUsage = usage;
+            onDone: (finalMessages, _usage) => {
               currentMessages = finalMessages;
               stopStreamPersist(streamState);
               persistSessionMessages(streamSessionId, finalMessages);
@@ -799,11 +831,31 @@ export default function App() {
 
   /** 用户对交互式工具的响应 */
   const handleInteractiveResolve = useCallback((value: string | null) => {
-    interactiveResolveRef.current?.(value);
-    interactiveResolveRef.current = null;
-    // 保留表单为已提交只读状态，直到用户发送新消息
-    setPendingInteractive(prev => (prev ? { ...prev, _resolved: true, _submittedValue: value } : null));
-  }, []);
+    // 持久化表单已清除
+    localStorage.removeItem(PENDING_INTERACTIVE_KEY);
+
+    if (interactiveResolveRef.current) {
+      // 正常在线场景：resolve Promise 让 Agent 继续
+      interactiveResolveRef.current(value);
+      interactiveResolveRef.current = null;
+      setPendingInteractive(prev => (prev ? { ...prev, _resolved: true, _submittedValue: value } : null));
+    } else {
+      // 重启恢复场景：resolveRef 已不存在（Agent 已销毁）
+      // 清除表单，如果用户提交了内容，作为新消息发送让 AI 继续
+      setPendingInteractive(null);
+      if (value !== null && currentSessionId) {
+        let answerText = value;
+        try {
+          const parsed = JSON.parse(value);
+          answerText = parsed.response || value;
+        } catch { /* 保持原始值 */ }
+        // 在下一帧触发发送，确保状态已更新
+        setTimeout(() => {
+          handleSend(`[继续] ${answerText}`);
+        }, 0);
+      }
+    }
+  }, [currentSessionId, handleSend]);
 
   /** 用户对二次确认对话框的响应 */
   const handleConfirmResolve = useCallback((confirmed: boolean) => {
@@ -877,14 +929,21 @@ export default function App() {
       if (conv) {
         setCurrentSessionId(id);
         // 如果此会话有进行中的流，从流状态重建消息（比持久化状态更新）
+        // 优先使用 currentMessages（包含 tool_calls，由 onRoundComplete 更新），
+        // 回退到 prevMessages + partial（流刚开始时）
         const streamState = activeStreamsRef.current.get(id);
         if (streamState) {
-          const partial: ChatMessage = {
-            role: "assistant",
-            content: streamState.fullContent,
-            reasoning_content: streamState.fullThinking || undefined,
-          };
-          const liveMsgs = [...streamState.prevMessages, partial];
+          let liveMsgs: ChatMessage[];
+          if (streamState.currentMessages && streamState.currentMessages.length > streamState.prevMessages.length) {
+            liveMsgs = streamState.currentMessages;
+          } else {
+            const partial: ChatMessage = {
+              role: "assistant",
+              content: streamState.fullContent,
+              reasoning_content: streamState.fullThinking || undefined,
+            };
+            liveMsgs = [...streamState.prevMessages, partial];
+          }
           setMessages(liveMsgs);
         } else {
           setMessages(conv.messages);
@@ -1220,7 +1279,7 @@ export default function App() {
             onConfigChange={setAiConfig}
             onNavigateSettings={() => setCurrentView("settings")}
             onRollback={handleRollback}
-            currentSessionId={currentSessionId}
+            currentSessionId={currentSessionId ?? undefined}
             pendingInteractive={pendingInteractive}
             onInteractiveResolve={handleInteractiveResolve}
             pendingConfirmation={pendingConfirmation}

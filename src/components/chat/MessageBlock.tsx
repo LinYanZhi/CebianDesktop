@@ -1,12 +1,51 @@
 import { useState, useEffect, memo, useMemo } from "react";
-import { Bot, ChevronRight, Lightbulb, RefreshCw, Undo2 } from "lucide-react";
+import { Bot, ChevronRight, Lightbulb, RefreshCw, Undo2, FileText, FileSpreadsheet } from "lucide-react";
+import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
-import type { ChatMessage } from "../../lib/types";
+import type { ChatMessage, SendAttachment } from "../../lib/types";
 import { getMessageText, getMessageThinking } from "../../lib/types";
 import { CopyButton } from "./chat-types";
 import { ToolCallCards } from "./ToolCall";
+
+// ─── 工具函数：从消息文本中剥离附件路径段落 ───
+// 路径段落格式由 ChatView.send() 拼接：
+//   "\n\n---\n以下文件由用户选择：\n- `path`..."
+function stripAttachmentPaths(text: string): string {
+  const marker = '\n---\n以下文件由用户选择：';
+  const idx = text.indexOf(marker);
+  if (idx >= 0) {
+    return text.substring(0, idx).trim();
+  }
+  return text.trim();
+}
+
+// ─── 文件 chip 展示 ───
+function FileChip({ attachment }: { attachment: SendAttachment }) {
+  const ext = attachment.name.split('.').pop()?.toLowerCase();
+  const isExcel = ext === 'xlsx' || ext === 'xls';
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (attachment.path) {
+      navigator.clipboard.writeText(attachment.path).then(() => {
+        toast.success(`已复制路径: ${attachment.path}`);
+      }).catch(() => {
+        toast.error('复制路径失败');
+      });
+    }
+  };
+  return (
+    <div
+      onContextMenu={handleContextMenu}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-primary/5 border border-primary/15 text-xs text-muted-foreground max-w-56 group cursor-context-menu"
+      title={attachment.path}
+    >
+      {isExcel ? <FileSpreadsheet size={14} className="shrink-0 text-primary/60" /> : <FileText size={14} className="shrink-0 text-primary/60" />}
+      <span className="truncate">{attachment.name}</span>
+    </div>
+  );
+}
 
 // ═══════════════════════════════════════════════════════════
 //  思考过程块
@@ -206,22 +245,31 @@ export function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResul
 // ═══════════════════════════════════════════════════════════
 
 export function UserMessageBlock({ msg, index, onRollback }: {
-  msg: ChatMessage; index: number; onRollback?: (index: number, content: string) => void;
+  msg: ChatMessage; index: number; onRollback?: (index: number, msg: ChatMessage) => void;
 }) {
+  const hasAttachments = msg.attachments && msg.attachments.length > 0;
+  const displayText = hasAttachments ? stripAttachmentPaths(getMessageText(msg)) : getMessageText(msg).trim();
   return (
     <div className="flex justify-end group">
       <div className="flex items-start gap-1.5 max-w-[85%]">
         {onRollback && (
           <button
-            onClick={() => onRollback(index, getMessageText(msg))}
+            onClick={() => onRollback(index, msg)}
             className="mt-3 p-1 rounded-md text-muted-foreground/30 hover:text-foreground hover:bg-accent transition-all opacity-0 group-hover:opacity-100 shrink-0"
             title="回滚到此处：删除本条及之后消息，内容保留到输入框"
           >
             <Undo2 size={14} />
           </button>
         )}
-        <div className="bg-card border border-border px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap break-words">
-          {getMessageText(msg).trim()}
+        <div className="bg-card border border-border px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap break-words space-y-2">
+          {hasAttachments && (
+            <div className="flex flex-wrap gap-1.5">
+              {msg.attachments!.map(att => (
+                <FileChip key={att.id} attachment={att} />
+              ))}
+            </div>
+          )}
+          {displayText && <div>{displayText}</div>}
         </div>
       </div>
     </div>

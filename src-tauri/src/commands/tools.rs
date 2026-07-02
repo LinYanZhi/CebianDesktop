@@ -47,12 +47,15 @@ fn generate_token() -> String {
 }
 
 /// 判断工具是否需要用户二次确认（根据安全模式）
+/// safe → 写/删/执行操作需要确认；trusted → 全部自动放行
 fn tool_needs_confirmation(name: &str, mode: &str) -> bool {
-    let risk = crate::tools::get_tool_risk_level(name);
     match mode {
-        "trusted" => false,               // 信任模式：全部自动放行
-        "balanced" => risk == "high",      // 平衡模式：仅高风险需确认
-        _ => risk == "high" || risk == "medium", // 保守模式：中高风险都需确认
+        "trusted" => false,  // 信任模式：全部自动放行
+        _ => {
+            // 安全模式：写/删/执行操作需要确认
+            let risk = crate::tools::get_tool_risk_level(name);
+            risk == "high" || risk == "medium"
+        }
     }
 }
 

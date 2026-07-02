@@ -62,8 +62,7 @@ export async function loadAIConfig(): Promise<AIConfig | null> {
       thinking_level: (raw.thinking_level as ThinkingLevel) || "medium",
       system_prompt: raw.system_prompt || "",
       primary_hue: raw.primary_hue ?? 200,
-      aiPermissionMode: (raw.ai_permission_mode as any) || "conservative",
-      toolPermissions: (raw.tool_permissions as Record<string, "allow" | "confirm" | "deny">) || {},
+      aiPermissionMode: (raw.ai_permission_mode as any) || "safe",
       bridgePorts: raw.bridge_ports?.length ? raw.bridge_ports : [{ name: "默认浏览器", port: 37421 }],
       viewState: raw.view_state || {},
     };
@@ -95,8 +94,7 @@ export async function saveAIConfig(config: AIConfig): Promise<void> {
       system_prompt: config.system_prompt || "",
       theme: document.documentElement.classList.contains("light") ? "light" : "dark",
       primary_hue: config.primary_hue ?? 200,
-      ai_permission_mode: config.aiPermissionMode || "conservative",
-      tool_permissions: config.toolPermissions || {},
+      ai_permission_mode: config.aiPermissionMode || "safe",
       bridge_ports: config.bridgePorts?.length ? config.bridgePorts : [{ name: "默认浏览器", port: 37421 }],
       view_state: config.viewState || {},
     };

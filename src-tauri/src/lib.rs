@@ -160,7 +160,6 @@ pub fn run() {
             commands::get_workspace_file_path,
             commands::export_providers_config,
             commands::import_providers_config,
-            commands::save_temp_file,
         ])
         .run(tauri::generate_context!())
         .expect("启动应用时出错");

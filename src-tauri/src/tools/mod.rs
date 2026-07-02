@@ -178,15 +178,13 @@ pub(crate) fn validate_path(path: &str, allow_read: bool) -> Result<(), String> 
 
     let allowed = ALLOWED_DIRS.get().ok_or("安全目录未初始化")?;
 
-    // 只读操作允许更宽松的路径（用户目录下的文件）
-    if allow_read {
-        if let Some(home) = std::env::var("USERPROFILE").ok().or_else(|| std::env::var("HOME").ok()) {
-            let home_path = Path::new(&home);
-            if home_path.exists() {
-                if let Ok(home_canonical) = home_path.canonicalize() {
-                    if check_path.starts_with(&home_canonical) {
-                        return Ok(());
-                    }
+    // 允许用户目录（桌面/下载/文档）下的读写操作
+    if let Some(home) = std::env::var("USERPROFILE").ok().or_else(|| std::env::var("HOME").ok()) {
+        let home_path = Path::new(&home);
+        if home_path.exists() {
+            if let Ok(home_canonical) = home_path.canonicalize() {
+                if check_path.starts_with(&home_canonical) {
+                    return Ok(());
                 }
             }
         }
@@ -201,8 +199,15 @@ pub(crate) fn validate_path(path: &str, allow_read: bool) -> Result<(), String> 
         }
     }
 
+    // 允许网络路径（UNC 路径和映射网络驱动器）的读写操作
+    // canonicalize 会将映射驱动器（如 Z:\）解析为真实 UNC 路径（\\server\share\...）
+    let check_str = check_path.to_string_lossy();
+    if check_str.starts_with("\\\\") {
+        return Ok(());
+    }
+
     Err(format!(
-        "路径不在允许范围内（仅允许工作区目录和临时目录）: {}",
+        "路径不在允许范围内。允许在工作区目录、用户目录（桌面/下载/文档）、临时目录和网络共享路径（UNC/映射驱动器）内读写文件。当前路径: {}。\n【安全建议】请向用户说明该路径受限的原因，询问用户是否要：1) 将文件移动到工作区目录后重试；2) 联系开发者调整安全配置。不要尝试自行绕过此限制。",
         path
     ))
 }

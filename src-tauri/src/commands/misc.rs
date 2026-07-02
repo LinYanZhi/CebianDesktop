@@ -4,19 +4,6 @@ use crate::config_storage::{AppConfig, ProviderConfig};
 
 // ─── 备份与恢复 ─────────────────────────────────────────────
 
-/// 将 base64 编码的数据保存到临时目录并返回路径（用于粘贴/拖拽文件的临时存储）
-#[tauri::command]
-pub fn save_temp_file(filename: String, data_base64: String) -> Result<String, String> {
-    let data = base64_decode(&data_base64)?;
-    let temp_dir = std::env::temp_dir().join("cebiandesktop-clipboard");
-    std::fs::create_dir_all(&temp_dir)
-        .map_err(|e| format!("创建临时目录失败: {}", e))?;
-    let path = temp_dir.join(&filename);
-    std::fs::write(&path, &data)
-        .map_err(|e| format!("写入临时文件失败: {}", e))?;
-    Ok(path.to_string_lossy().to_string())
-}
-
 /// 导出备份为 base64 字符串（供前端下载）
 #[tauri::command]
 pub fn export_backup(
@@ -110,7 +97,7 @@ pub(crate) fn base64_decode(input: &str) -> Result<Vec<u8>, String> {
             } else {
                 let b = bytes[i + j] as usize;
                 if b >= 256 { return Err("无效 base64 字符".into()); }
-                sextets[b] = DECODE[b];
+                sextets[j] = DECODE[b];
                 if sextets[j] == -1 { return Err(format!("无效 base64 字符: {}", bytes[i + j] as char)); }
             }
         }

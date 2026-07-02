@@ -62,7 +62,6 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
   const isBrowserAi = toolName === "ask_browser_ai";
   const [browserAiSteps, setBrowserAiSteps] = useState<any[]>([]);
   const [elapsed, setElapsed] = useState(0);
-  const finalElapsedRef = useRef(0);
 
   // 计时器：running 时每秒递增
   useEffect(() => {

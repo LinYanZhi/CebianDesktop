@@ -1,9 +1,7 @@
 export type ThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high';
 
 /** AI 权限模式 */
-export type PermissionMode = 'conservative' | 'balanced' | 'trusted' | 'custom';
-/** 工具权限值 */
-export type ToolPermission = 'allow' | 'confirm' | 'deny';
+export type PermissionMode = 'safe' | 'trusted';
 
 export interface SendAttachment {
   id: string;
@@ -87,6 +85,8 @@ export interface ChatMessage {
   };
   /** 消息时间戳 */
   timestamp?: number;
+  /** 用户消息携带的附件（文件路径等），用于回滚恢复附件 chip */
+  attachments?: SendAttachment[];
 }
 
 // ─── 兼容层：CompactionSummaryMessage ↔ ChatMessage 互转 ───
@@ -171,10 +171,8 @@ export interface AIConfig {
   system_prompt?: string;
   /** 主色调色相 (0-360) */
   primary_hue?: number;
-  /** AI 权限模式 */
+  /** AI 权限模式：safe（写操作需确认）| trusted（自动放行） */
   aiPermissionMode?: PermissionMode;
-  /** 自定义模式下各工具的独立权限配置 */
-  toolPermissions?: Record<string, ToolPermission>;
   /** 双 AI 桥接端口配置列表 */
   bridgePorts?: { name: string; port: number }[];
   /** 界面浏览状态（当前视图、设置栏目等） */

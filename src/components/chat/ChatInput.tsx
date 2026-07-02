@@ -10,7 +10,6 @@ import { generateId } from "./chat-types";
 import { ModelSelector, ThinkingLevelSelector } from "./ModelSelector";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { invoke } from "@tauri-apps/api/core";
 
 // ═══════════════════════════════════════════════════════════
 //  附件 Chips
@@ -46,16 +45,25 @@ function AttachmentChips({
 // ═══════════════════════════════════════════════════════════
 
 export function ChatInput({
-  inputValue, setInputValue, onSend, onStop, loading, aiConfig, onConfigChange, onNavigateSettings,
+  inputValue, setInputValue, onSend, onStop, loading, aiConfig, incomingAttachments, onConfigChange, onNavigateSettings,
 }: {
   inputValue: string; setInputValue: (v: string) => void;
   onSend: (attachments: SendAttachment[]) => void; onStop: () => void; loading: boolean;
-  aiConfig: AIConfig; onConfigChange: (c: AIConfig) => void; onNavigateSettings: () => void;
+  aiConfig: AIConfig; incomingAttachments?: SendAttachment[] | null; onConfigChange: (c: AIConfig) => void; onNavigateSettings: () => void;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const [attachments, setAttachments] = useState<SendAttachment[]>([]);
+
+  // 接收来自外部的附件（回滚恢复 chip），合并到内部状态
+  const incomingKeyRef = useRef(0);
+  useEffect(() => {
+    if (incomingAttachments) {
+      setAttachments(incomingAttachments);
+      incomingKeyRef.current += 1;
+    }
+  }, [incomingAttachments]);
 
   // ── Slash Prompts ──
   const [showSlash, setShowSlash] = useState(false);
@@ -256,7 +264,7 @@ export function ChatInput({
           reader.readAsDataURL(file);
         }
       }
-      // 处理粘贴的本地文件（非图片）
+      // 处理粘贴的文本文件（仅 .txt，读取文本内容插入输入框）
       const files = e.clipboardData?.files;
       if (files && files.length > 0) {
         for (const file of Array.from(files)) {
@@ -276,29 +284,9 @@ export function ChatInput({
                 el.selectionStart = el.selectionEnd = start + text.length;
               });
             });
-          } else if (ext === 'xlsx' || ext === 'xls') {
-            e.preventDefault();
-            file.arrayBuffer().then(buf => {
-              const bytes = new Uint8Array(buf);
-              let binary = '';
-              for (let i = 0; i < bytes.length; i++) {
-                binary += String.fromCharCode(bytes[i]);
-              }
-              const base64 = btoa(binary);
-              return invoke<string>('save_temp_file', { filename: file.name, dataBase64: base64 });
-            }).then(path => {
-              setAttachments(prev => [...prev, {
-                id: generateId(),
-                type: 'file',
-                name: file.name,
-                mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                path,
-              }]);
-              toast.success(`已粘贴: ${file.name}`);
-            }).catch(err => {
-              toast.error(`粘贴文件失败: ${err}`);
-            });
           }
+          // .xlsx/.xls 不支持粘贴（浏览器剪贴板 API 不暴露文件路径），
+          // 请使用拖拽文件到输入框或点击附件按钮选择
         }
       }
     };
