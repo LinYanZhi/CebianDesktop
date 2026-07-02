@@ -117,7 +117,14 @@ export default function ChatView({
       });
       return;
     }
-    onSend(inputValue, attachments);
+    // 处理本地文件路径：拼入消息文本，让 AI 调用工具读取
+    let content = inputValue;
+    const localPaths = attachments?.filter(a => a.path);
+    if (localPaths && localPaths.length > 0) {
+      const pathLines = localPaths.map(a => `- \`${a.path}\``).join('\n');
+      content = `${content}\n\n---\n以下文件由用户选择：\n${pathLines}`;
+    }
+    onSend(content, attachments);
     setInputValue("");
     try { localStorage.removeItem(INPUT_DRAFT_KEY); } catch {}
   };

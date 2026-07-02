@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Paperclip, Image, FileText, Mic, Square, ArrowUp, X } from "lucide-react";
+import { Paperclip, Image, FileText, FileSpreadsheet, Mic, Square, ArrowUp, X } from "lucide-react";
 import type { AIConfig, SendAttachment } from "../../lib/types";
 import { getActiveConfig } from "../../lib/types";
 import { listPrompts, replaceTemplateVars } from "../../lib/prompts";
@@ -8,6 +8,9 @@ import { useSpeechRecognition } from "../../lib/useSpeechRecognition";
 import { toast } from "sonner";
 import { generateId } from "./chat-types";
 import { ModelSelector, ThinkingLevelSelector } from "./ModelSelector";
+import { open } from "@tauri-apps/plugin-dialog";
+import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { invoke } from "@tauri-apps/api/core";
 
 // ═══════════════════════════════════════════════════════════
 //  附件 Chips
@@ -25,7 +28,7 @@ function AttachmentChips({
         <div key={att.id}
           className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-accent/50 border border-border text-xs text-muted-foreground max-w-48"
         >
-          {att.type === "image" ? <Image size={12} /> : <FileText size={12} />}
+          {att.type === "image" ? <Image size={12} /> : att.path ? <FileSpreadsheet size={12} /> : <FileText size={12} />}
           <span className="truncate flex-1">{att.name}</span>
           <button onClick={() => onRemove(att.id)}
             className="p-0.5 rounded hover:bg-accent hover:text-foreground transition-colors shrink-0"
@@ -176,10 +179,36 @@ export function ChatInput({
     textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 150) + "px";
   }, []);
 
-  // 文件上传
-  const handleFilePick = () => fileInputRef.current?.click();
+  // 文件上传 — 使用 Tauri 原生对话框选择本地文件
+  const handleFilePick = async () => {
+    try {
+      const selected = await open({
+        multiple: true,
+        title: "选择文件",
+        filters: [{
+          name: "文档",
+          extensions: ["txt", "xlsx", "xls"]
+        }],
+      });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      for (const filePath of paths) {
+        const name = filePath.replace(/^.*[\\/]/, '');
+        setAttachments(prev => [...prev, {
+          id: generateId(),
+          type: 'file',
+          name,
+          mimeType: name.endsWith('.txt') ? 'text/plain' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          path: filePath,
+        }]);
+      }
+    } catch (err) {
+      toast.error("选择文件失败: " + (err instanceof Error ? err.message : String(err)));
+    }
+  };
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    // keep for backward compatibility (images from clipboard may also land here)
     const files = e.target.files;
     if (!files) return;
     for (const file of Array.from(files)) {
@@ -227,9 +256,85 @@ export function ChatInput({
           reader.readAsDataURL(file);
         }
       }
+      // 处理粘贴的本地文件（非图片）
+      const files = e.clipboardData?.files;
+      if (files && files.length > 0) {
+        for (const file of Array.from(files)) {
+          if (file.type.startsWith("image/")) continue; // 已在上方处理
+          const ext = file.name.split('.').pop()?.toLowerCase();
+          if (ext === 'txt') {
+            e.preventDefault();
+            file.text().then(text => {
+              const el = textareaRef.current;
+              if (!el) return;
+              const start = el.selectionStart;
+              const end = el.selectionEnd;
+              const newVal = inputValue.slice(0, start) + text + inputValue.slice(end);
+              setInputValue(newVal);
+              requestAnimationFrame(() => {
+                el.focus();
+                el.selectionStart = el.selectionEnd = start + text.length;
+              });
+            });
+          } else if (ext === 'xlsx' || ext === 'xls') {
+            e.preventDefault();
+            file.arrayBuffer().then(buf => {
+              const bytes = new Uint8Array(buf);
+              let binary = '';
+              for (let i = 0; i < bytes.length; i++) {
+                binary += String.fromCharCode(bytes[i]);
+              }
+              const base64 = btoa(binary);
+              return invoke<string>('save_temp_file', { filename: file.name, dataBase64: base64 });
+            }).then(path => {
+              setAttachments(prev => [...prev, {
+                id: generateId(),
+                type: 'file',
+                name: file.name,
+                mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                path,
+              }]);
+              toast.success(`已粘贴: ${file.name}`);
+            }).catch(err => {
+              toast.error(`粘贴文件失败: ${err}`);
+            });
+          }
+        }
+      }
     };
     el.addEventListener("paste", handler);
     return () => el.removeEventListener("paste", handler);
+  }, [inputValue, setInputValue]);
+
+  // 拖拽文件 — Tauri 原生拖拽事件获取文件路径
+  const [isDragOver, setIsDragOver] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const win = getCurrentWebviewWindow();
+    const unlisten = win.onDragDropEvent((event) => {
+      if (cancelled) return;
+      if (event.payload.type === 'enter' || event.payload.type === 'over') {
+        setIsDragOver(true);
+      } else if (event.payload.type === 'leave') {
+        setIsDragOver(false);
+      } else if (event.payload.type === 'drop') {
+        setIsDragOver(false);
+        for (const path of event.payload.paths) {
+          const name = path.replace(/^.*[\\/]/, '');
+          const ext = name.split('.').pop()?.toLowerCase();
+          if (ext === 'txt' || ext === 'xlsx' || ext === 'xls') {
+            setAttachments(prev => [...prev, {
+              id: generateId(),
+              type: 'file',
+              name,
+              mimeType: ext === 'txt' ? 'text/plain' : 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              path,
+            }]);
+          }
+        }
+      }
+    });
+    return () => { cancelled = true; unlisten.then(fn => fn()); };
   }, []);
 
   // 清除附件
@@ -256,6 +361,12 @@ export function ChatInput({
 
   return (
     <footer className="border-t border-border bg-background shrink-0 relative">
+      {/* 拖拽高亮提示 */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-40 border-2 border-primary border-dashed rounded-lg pointer-events-none flex items-center justify-center bg-background/80">
+          <p className="text-sm text-primary font-medium">拖放文件到此区域</p>
+        </div>
+      )}
       {/* 附件 chips */}
       <AttachmentChips attachments={attachments} onRemove={removeAttachment} />
 
@@ -304,7 +415,7 @@ export function ChatInput({
             >
               <Paperclip size={14} />
             </button>
-            <input ref={fileInputRef} type="file" multiple accept="image/*,.txt,.md,.js,.ts,.py,.json,.csv,.xml,.yaml,.yml"
+            <input ref={fileInputRef} type="file" multiple accept="image/*"
               onChange={handleFileChange} className="hidden" />
           </div>
 

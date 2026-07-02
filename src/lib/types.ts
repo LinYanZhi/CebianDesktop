@@ -10,7 +10,10 @@ export interface SendAttachment {
   type: 'image' | 'file';
   name: string;
   mimeType: string;
-  data: string; // base64
+  /** 对于粘贴的图片等内联附件，存储 base64 数据 */
+  data?: string;
+  /** 对于选择的本地文件，直接存储文件路径（让 AI 调用工具读取） */
+  path?: string;
   size?: number;
 }
 
