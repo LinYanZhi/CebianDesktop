@@ -13,6 +13,29 @@ function parseSSELine(line: string): any | null {
   }
 }
 
+/** 将 HTTP 错误码转为人性化的中文提示 */
+function formatHttpError(status: number, body: string): string {
+  // 尝试从 JSON body 中提取 error.message
+  let detail = "";
+  try {
+    const parsed = JSON.parse(body);
+    detail = parsed.error?.message || parsed.error || "";
+  } catch {}
+  const msg = detail || body.slice(0, 200);
+
+  switch (status) {
+    case 401: return `API 认证失败（401），请检查 API Key 是否正确。${msg ? `详情: ${msg}` : ""}`;
+    case 403: return `API 无权限（403），当前 API Key 无权访问该模型。${msg ? `详情: ${msg}` : ""}`;
+    case 404: return `API 地址错误（404），请检查 Endpoint 配置。${msg ? `详情: ${msg}` : ""}`;
+    case 429: return `请求过于频繁（429），API 限流中，请稍后再试。${msg ? `详情: ${msg}` : ""}`;
+    case 500: return `AI 服务器内部错误（500），请稍后重试。${msg ? `详情: ${msg}` : ""}`;
+    case 502: return `AI 服务器网关错误（502），请稍后重试。${msg ? `详情: ${msg}` : ""}`;
+    case 503: return `AI 服务暂不可用（503），可能是负载过高，请稍后重试。${msg ? `详情: ${msg}` : ""}`;
+    case 504: return `AI 服务器超时（504），可能是负载过高，请稍后重试。${msg ? `详情: ${msg}` : ""}`;
+    default: return `请求失败（HTTP ${status}）${msg ? `: ${msg}` : ""}`;
+  }
+}
+
 /**
  * 将文本 + 思考 + 工具调用合并为 ContentBlock[]
  * 顺序：thinking → text → toolCalls（对齐 Cebian AssistantMessage 格式）
@@ -337,29 +360,61 @@ export class Agent {
     fullThinking: string;
     usage?: { input: number; output: number };
   }> {
-    const resp = await fetch(`${this.config.endpoint}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${this.config.apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: this.config.model,
-        messages: apiMessages,
-        max_tokens: this.config.maxTokens,
-        temperature: this.config.temperature,
-        stream: true,
-        stream_options: { include_usage: true },
-        ...(openaiTools && openaiTools.length > 0 && this.enableTools
-          ? { tools: openaiTools }
-          : {}),
-      }),
-      signal,
-    });
+    const CONNECT_TIMEOUT_MS = 30_000; // 30 秒连接超时
+    const STREAM_IDLE_TIMEOUT_MS = 60_000; // 60 秒流空闲超时
+
+    let timedOut = false;
+    let connectTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    // 使用一个独立的超时控制器，避免与外部 stop signal 冲突
+    const timeoutController = new AbortController();
+    connectTimeoutId = setTimeout(() => {
+      timedOut = true;
+      timeoutController.abort(new Error("连接超时：30秒内未收到响应"));
+    }, CONNECT_TIMEOUT_MS);
+
+    // 合并外部 signal（用户停止）和超时 signal
+    const combinedSignal = "any" in AbortSignal
+      ? AbortSignal.any([signal, timeoutController.signal])
+      : signal;
+
+    let resp: Response;
+    try {
+      resp = await fetch(`${this.config.endpoint}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${this.config.apiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: this.config.model,
+          messages: apiMessages,
+          max_tokens: this.config.maxTokens,
+          temperature: this.config.temperature,
+          stream: true,
+          stream_options: { include_usage: true },
+          ...(openaiTools && openaiTools.length > 0 && this.enableTools
+            ? { tools: openaiTools }
+            : {}),
+        }),
+        signal: combinedSignal,
+      });
+    } catch (err: any) {
+      clearTimeout(connectTimeoutId);
+      if (timedOut) {
+        throw new Error("连接超时：30秒内未收到响应，请检查网络或 API 地址");
+      }
+      if (err.name === "AbortError") {
+        throw err; // 用户主动停止
+      }
+      throw new Error(`网络请求失败: ${err.message}`);
+    } finally {
+      clearTimeout(connectTimeoutId);
+    }
 
     if (!resp.ok) {
       const body = await resp.text().catch(() => "");
-      throw new Error(`HTTP ${resp.status} - ${body}`);
+      throw new Error(formatHttpError(resp.status, body));
     }
 
     const reader = resp.body!.getReader();
@@ -370,9 +425,39 @@ export class Agent {
     const toolCallMap = new Map<number, { id: string; name: string; arguments: string }>();
     let usage: { input: number; output: number } | undefined;
 
+    // 流式空闲超时检测
+    let lastChunkTime = Date.now();
+    let idleTimeoutId: ReturnType<typeof setTimeout> | undefined;
+    const startIdleChecker = () => {
+      idleTimeoutId = setTimeout(() => {
+        if (Date.now() - lastChunkTime >= STREAM_IDLE_TIMEOUT_MS) {
+          timedOut = true;
+          timeoutController.abort(new Error(`响应中断：${STREAM_IDLE_TIMEOUT_MS / 1000}秒内未收到新数据`));
+        } else {
+          startIdleChecker();
+        }
+      }, 10_000); // 每 10s 检查一次
+    };
+    startIdleChecker();
+
     while (true) {
-      const { done, value } = await reader.read();
+      let chunkResult: ReadableStreamReadResult<Uint8Array>;
+      try {
+        chunkResult = await reader.read();
+      } catch (err: any) {
+        clearTimeout(idleTimeoutId);
+        if (timedOut) {
+          throw new Error("响应中断：60秒内未收到新数据，可能是网络不稳定或服务器超时");
+        }
+        if (err.name === "AbortError") {
+          throw err; // 用户主动停止
+        }
+        throw new Error(`流式读取失败: ${err.message}`);
+      }
+
+      const { done, value } = chunkResult;
       if (done) break;
+      lastChunkTime = Date.now();
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
@@ -436,6 +521,8 @@ export class Agent {
       }
     }
 
+    clearTimeout(idleTimeoutId);
+
     const indices = Array.from(toolCallMap.keys()).sort((a, b) => a - b);
     const roundToolCalls: ToolCall[] = indices.map((idx) => {
       const entry = toolCallMap.get(idx)!;
@@ -469,7 +556,9 @@ export class Agent {
       } catch (err: any) {
         if (err.name === "AbortError") throw err;
 
-        const isRetryable = err.message.includes("HTTP 503") || err.message.includes("HTTP 429");
+        const isRetryable = err.message.includes("HTTP 503") || err.message.includes("HTTP 429")
+          || err.message.includes("HTTP 502") || err.message.includes("HTTP 504")
+          || err.message.includes("连接超时");
         if (!isRetryable || attempt >= maxRetries - 1) {
           throw err;
         }
