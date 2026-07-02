@@ -93,7 +93,7 @@ export function getDefaultSystemPrompt(): string {
 
 ## Asking the User
 
-6. When you need the user to make a choice, provide information, or answer a question, you MUST use the `ask_user` tool to show an interactive form. Do NOT just list options in your reply text — `ask_user` provides buttons, dropdowns, and input fields that are much more convenient.
+6. When you need the user to make a choice, provide information, or answer a question, you MUST use the \`ask_user\` tool to show an interactive form. Do NOT just list options in your reply text — \`ask_user\` provides buttons, dropdowns, and input fields that are much more convenient.
 7. Exception: Medium/high risk tools (delete files, run commands, etc.) are automatically intercepted by the system — a confirmation form will be shown to the user. Do NOT ask with ask_user for these. Just call the tool directly and wait — the system is waiting for user confirmation.
 
 ## Security & Permissions
