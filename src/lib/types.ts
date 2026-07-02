@@ -85,6 +85,13 @@ export interface ChatMessage {
   };
   /** 消息时间戳 */
   timestamp?: number;
+  /** AI 响应耗时（从用户发出到首次 token / 到完成），单位 ms */
+  responseTime?: {
+    /** 首 token 延迟（Time to First Token）：用户发送 → AI 开始回复 */
+    ttft: number;
+    /** 总耗时：用户发送 → AI 回复完成 */
+    total: number;
+  };
   /** 用户消息携带的附件（文件路径等），用于回滚恢复附件 chip */
   attachments?: SendAttachment[];
 }

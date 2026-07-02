@@ -564,6 +564,7 @@ export default function App() {
         role: "user",
         content,
         attachments: _attachments?.filter(a => a.type === 'file' && a.path),
+        timestamp: Date.now(),
       };
       const updated = [...messages, userMsg];
       updateCurrentConversation(updated);
@@ -746,7 +747,7 @@ export default function App() {
               console.error("[handleSend] Agent 错误:", err);
               stopStreamPersist(streamState);
               const errMsg = `**错误**: ${err.message || "请求失败，请检查配置"}`;
-              const errMsgs = [...currentMessages, { role: "assistant", content: errMsg } as ChatMessage];
+              const errMsgs = [...currentMessages, { role: "assistant", content: errMsg, timestamp: Date.now() } as ChatMessage];
               persistSessionMessages(streamSessionId, errMsgs);
               if (sessionIdRef.current === streamSessionId) {
                 setMessages(errMsgs);
@@ -798,7 +799,7 @@ export default function App() {
         } else {
           console.error("[handleSend] 流式请求错误:", err);
           const errMsg = `**错误**: ${err.message || "请求失败，请检查配置"}`;
-          const errMsgs = [...currentMessages, { role: "assistant", content: errMsg } as ChatMessage];
+          const errMsgs = [...currentMessages, { role: "assistant", content: errMsg, timestamp: Date.now() } as ChatMessage];
           persistSessionMessages(streamSessionId, errMsgs);
           if (sessionIdRef.current === streamSessionId) {
             setMessages(errMsgs);

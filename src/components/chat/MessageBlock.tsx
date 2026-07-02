@@ -1,5 +1,5 @@
 import { useState, useEffect, memo, useMemo } from "react";
-import { Bot, ChevronRight, Lightbulb, RefreshCw, Undo2, FileText, FileSpreadsheet } from "lucide-react";
+import { Bot, ChevronRight, Lightbulb, RefreshCw, Undo2, FileText, FileSpreadsheet, Clock } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -8,6 +8,27 @@ import type { ChatMessage, SendAttachment } from "../../lib/types";
 import { getMessageText, getMessageThinking } from "../../lib/types";
 import { CopyButton } from "./chat-types";
 import { ToolCallCards } from "./ToolCall";
+
+// ─── 工具函数：格式化时间戳 ───
+function formatTimestamp(ts: number): string {
+  const d = new Date(ts);
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const hours = String(d.getHours()).padStart(2, '0');
+  const minutes = String(d.getMinutes()).padStart(2, '0');
+  const seconds = String(d.getSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+/** 格式化耗时（ms → 可读字符串） */
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  const m = Math.floor(ms / 60000);
+  const s = Math.round((ms % 60000) / 1000);
+  return `${m}m ${s}s`;
+}
 
 // ─── 工具函数：从消息文本中剥离附件路径段落 ───
 // 路径段落格式由 ChatView.send() 拼接：
@@ -198,6 +219,11 @@ export function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResul
       <div className="flex items-center gap-2 mb-1.5">
         <Bot size={14} className="text-primary shrink-0" />
         <span className="font-medium text-xs text-muted-foreground">Cebian Agent</span>
+        {msg.timestamp && !isStreaming && (
+          <span className="text-[0.55rem] text-muted-foreground/50 ml-auto tabular-nums">
+            {formatTimestamp(msg.timestamp)}
+          </span>
+        )}
       </div>
       {(msg.reasoning_content || getMessageThinking(msg)) && (
         <ThinkingBlock content={msg.reasoning_content || getMessageThinking(msg) || ""} isLive={isStreaming} />
@@ -218,6 +244,14 @@ export function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResul
       {!isStreaming && getMessageText(msg) && (
         <div className="flex items-center gap-2 mt-1">
           <CopyButton text={getMessageText(msg)} />
+          {msg.responseTime && (
+            <span className="inline-flex items-center gap-1 text-[0.6rem] text-muted-foreground/70 tabular-nums bg-muted/50 px-1.5 py-0.5 rounded-md" title={`等待响应 ${formatDuration(msg.responseTime.ttft)}，总耗时 ${formatDuration(msg.responseTime.total)}`}>
+              <Clock size={10} className="shrink-0" />
+              <span title="首 token 延迟（网络 + 供应商处理）">⏱ {formatDuration(msg.responseTime.ttft)}</span>
+              <span className="text-muted-foreground/30">·</span>
+              <span title="总耗时">总计 {formatDuration(msg.responseTime.total)}</span>
+            </span>
+          )}
           {msg.usage && (
             <span className="inline-flex items-center gap-1 text-[0.6rem] text-muted-foreground/70 tabular-nums bg-muted/50 px-1.5 py-0.5 rounded-md">
               <span title="输入 token">↑{msg.usage.input}</span>
@@ -250,26 +284,35 @@ export function UserMessageBlock({ msg, index, onRollback }: {
   const hasAttachments = msg.attachments && msg.attachments.length > 0;
   const displayText = hasAttachments ? stripAttachmentPaths(getMessageText(msg)) : getMessageText(msg).trim();
   return (
-    <div className="flex justify-end group">
-      <div className="flex items-start gap-1.5 max-w-[85%]">
-        {onRollback && (
-          <button
-            onClick={() => onRollback(index, msg)}
-            className="mt-3 p-1 rounded-md text-muted-foreground/30 hover:text-foreground hover:bg-accent transition-all opacity-0 group-hover:opacity-100 shrink-0"
-            title="回滚到此处：删除本条及之后消息，内容保留到输入框"
-          >
-            <Undo2 size={14} />
-          </button>
+    <div className="flex flex-col items-end w-full">
+      <div className="flex items-center gap-1.5 mb-0.5">
+        {msg.timestamp && (
+          <span className="text-[0.55rem] text-muted-foreground/50 tabular-nums">
+            {formatTimestamp(msg.timestamp)}
+          </span>
         )}
-        <div className="bg-card border border-border px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap break-words space-y-2">
-          {hasAttachments && (
-            <div className="flex flex-wrap gap-1.5">
-              {msg.attachments!.map(att => (
-                <FileChip key={att.id} attachment={att} />
-              ))}
-            </div>
+      </div>
+      <div className="flex justify-end group w-full">
+        <div className="flex items-start gap-1.5 max-w-[85%]">
+          {onRollback && (
+            <button
+              onClick={() => onRollback(index, msg)}
+              className="mt-3 p-1 rounded-md text-muted-foreground/30 hover:text-foreground hover:bg-accent transition-all opacity-0 group-hover:opacity-100 shrink-0"
+              title="回滚到此处：删除本条及之后消息，内容保留到输入框"
+            >
+              <Undo2 size={14} />
+            </button>
           )}
-          {displayText && <div>{displayText}</div>}
+          <div className="bg-card border border-border px-4 py-3 rounded-2xl text-sm whitespace-pre-wrap break-words space-y-2">
+            {hasAttachments && (
+              <div className="flex flex-wrap gap-1.5">
+                {msg.attachments!.map(att => (
+                  <FileChip key={att.id} attachment={att} />
+                ))}
+              </div>
+            )}
+            {displayText && <div>{displayText}</div>}
+          </div>
         </div>
       </div>
     </div>

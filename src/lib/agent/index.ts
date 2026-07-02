@@ -65,6 +65,10 @@ export class Agent {
   private enableTools: boolean;
   /** handleStop 时设置，表示本轮工具结果处理完后 stop，不再发起新一轮 API 请求 */
   private _gracefulStop = false;
+  /** send() 调用的时间戳，用于计算响应耗时 */
+  private _startTime = 0;
+  /** 首次收到 token 的时间戳，用于计算 TTFT */
+  private _firstTokenTime = 0;
 
   /** 等待工具结果时挂起的 resolve */
   private toolResolve: ((msgs: ChatMessage[]) => void) | null = null;
@@ -97,6 +101,8 @@ export class Agent {
 
     this.controller = new AbortController();
     this.setState(AgentState.running);
+    this._startTime = performance.now();
+    this._firstTokenTime = 0;
     const signal = this.controller.signal;
 
     try {
@@ -205,11 +211,18 @@ export class Agent {
       if (roundToolCalls.length === 0) {
         // ─── 没有工具调用 → 最终结果 ───
         this.setState(AgentState.stopped);
+        const now = Date.now();
+        const responseTime = this._firstTokenTime > 0 ? {
+          ttft: Math.round(this._firstTokenTime - this._startTime),
+          total: Math.round(performance.now() - this._startTime),
+        } : undefined;
         const finalMsg: ChatMessage = {
           role: "assistant",
           content: buildContentBlocks(roundContent, fullThinking, []),
           reasoning_content: fullThinking || undefined,
           usage: accumulatedUsage,
+          timestamp: now,
+          responseTime,
         };
         const finalMessages = [...currentMessages, finalMsg];
         this.events.onDone?.(finalMessages, accumulatedUsage);
@@ -379,6 +392,11 @@ export class Agent {
         const choices = chunk.choices;
         if (!choices || choices.length === 0) continue;
         const delta = choices[0].delta || {};
+
+        // 记录首次收到 token 的时间（TTFT 起点）
+        if ((delta.content || delta.reasoning_content) && this._firstTokenTime === 0) {
+          this._firstTokenTime = performance.now();
+        }
 
         if (delta.content) {
           roundContent += delta.content;
