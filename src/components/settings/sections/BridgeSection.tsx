@@ -5,6 +5,7 @@ import {
   GripVertical, Wifi,
 } from "lucide-react";
 import { toast } from "sonner";
+import { CHROME_ICO, EDGE_ICO } from "../../../lib/browser-icons";
 import type { AIConfig } from "../../../lib/types";
 import {
   getBridgeStatus, startBridgeServer, stopBridgeServer,
@@ -59,10 +60,10 @@ function getBrowserMeta(b: string) {
 /* ─── 浏览器 SVG 图标 ─── */
 
 function ChromeIcon({ size = 14 }: { size?: number }) {
-  return <img src="/google2.ico" alt="Chrome" width={size} height={size} className="rounded-[2px]" />;
+  return <img src={CHROME_ICO} width={size} height={size} alt="Chrome" style={{ borderRadius: 2 }} />;
 }
 function EdgeIcon({ size = 14 }: { size?: number }) {
-  return <img src="/edge.ico" alt="Edge" width={size} height={size} className="rounded-[2px]" />;
+  return <img src={EDGE_ICO} width={size} height={size} alt="Edge" style={{ borderRadius: 2 }} />;
 }
 function FirefoxIcon({ size = 14 }: { size?: number }) {
   return (
