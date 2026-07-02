@@ -185,7 +185,7 @@ export class Agent {
       // fetch + SSE 解析
       let roundContent = "", roundToolCalls: ToolCall[] = [], fullThinking = "", usage: { input: number; output: number } | undefined;
       try {
-        const result = await this.fetchStream(apiMessages, openaiTools, signal);
+        const result = await this.fetchStreamWithRetry(apiMessages, openaiTools, signal);
         roundContent = result.roundContent;
         roundToolCalls = result.roundToolCalls;
         fullThinking = result.fullThinking;
@@ -288,13 +288,17 @@ export class Agent {
       if (msg.role === "user") {
         apiMessages.push({ role: "user", content: text });
       } else if (msg.role === "assistant") {
-        const m: any = { role: "assistant", content: text };
+        const m: any = { role: "assistant" };
         if (msg.tool_calls && msg.tool_calls.length > 0) {
+          // 有 tool_calls 时 content 必须为 null（OpenAI/DeepSeek 拒绝空字符串）
+          m.content = text || null;
           m.tool_calls = msg.tool_calls.map((tc: ToolCall) => ({
             id: tc.id,
             type: "function",
             function: { name: tc.function.name, arguments: tc.function.arguments },
           }));
+        } else {
+          m.content = text;
         }
         apiMessages.push(m);
       } else if (msg.role === "tool") {
@@ -425,5 +429,39 @@ export class Agent {
     });
 
     return { roundContent, roundToolCalls, fullThinking, usage };
+  }
+
+  private async fetchStreamWithRetry(
+    apiMessages: any[],
+    openaiTools: any[] | undefined,
+    signal: AbortSignal,
+  ): Promise<{
+    roundContent: string;
+    roundToolCalls: ToolCall[];
+    fullThinking: string;
+    usage?: { input: number; output: number };
+  }> {
+    const maxRetries = 3;
+    const retryDelays = [1000, 2000, 4000];
+    let lastError: Error | undefined;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        return await this.fetchStream(apiMessages, openaiTools, signal);
+      } catch (err: any) {
+        if (err.name === "AbortError") throw err;
+
+        const isRetryable = err.message.includes("HTTP 503") || err.message.includes("HTTP 429");
+        if (!isRetryable || attempt >= maxRetries - 1) {
+          throw err;
+        }
+
+        lastError = err;
+        const delay = retryDelays[attempt];
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+
+    throw lastError || new Error("Unknown error");
   }
 }
