@@ -80,9 +80,14 @@ export function useStickToBottom() {
   // ═══════════════════════════════════════════════════════════
   useEffect(() => {
     if (!containerEl) return;
+    let rafId: number | null = null;
     const mo = new MutationObserver(() => {
       if (stickRef.current) {
-        scrollToBottom();
+        if (rafId !== null) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          scrollToBottom();
+        });
       }
     });
     mo.observe(containerEl, {
@@ -90,7 +95,10 @@ export function useStickToBottom() {
       subtree: true,
       characterData: true,
     });
-    return () => mo.disconnect();
+    return () => {
+      mo.disconnect();
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
   }, [containerEl, scrollToBottom]);
 
   // ═══════════════════════════════════════════════════════════
@@ -99,13 +107,21 @@ export function useStickToBottom() {
   // ═══════════════════════════════════════════════════════════
   useEffect(() => {
     if (!containerEl) return;
+    let rafId: number | null = null;
     const ro = new ResizeObserver(() => {
       if (stickRef.current) {
-        scrollToBottom();
+        if (rafId !== null) cancelAnimationFrame(rafId);
+        rafId = requestAnimationFrame(() => {
+          rafId = null;
+          scrollToBottom();
+        });
       }
     });
     ro.observe(containerEl);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
   }, [containerEl, scrollToBottom]);
 
   // ═══════════════════════════════════════════════════════════
