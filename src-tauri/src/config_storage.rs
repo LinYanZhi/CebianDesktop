@@ -4,43 +4,6 @@ use std::fs;
 use std::path::PathBuf;
 use tauri::Manager;
 
-/// AI 权限模式
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-pub enum PermissionMode {
-    /// 保守模式（默认）：中风险及以上操作需要用户二次确认
-    Conservative,
-    /// 平衡模式：仅高风险操作需要二次确认（删除、执行命令）
-    Balanced,
-    /// 信任模式：所有操作自动放行，不弹二次确认
-    Trusted,
-}
-
-impl Default for PermissionMode {
-    fn default() -> Self {
-        Self::Conservative
-    }
-}
-
-impl std::fmt::Display for PermissionMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Conservative => write!(f, "conservative"),
-            Self::Balanced => write!(f, "balanced"),
-            Self::Trusted => write!(f, "trusted"),
-        }
-    }
-}
-
-impl From<&str> for PermissionMode {
-    fn from(s: &str) -> Self {
-        match s.to_lowercase().as_str() {
-            "balanced" => Self::Balanced,
-            "trusted" => Self::Trusted,
-            _ => Self::Conservative,
-        }
-    }
-}
-
 /// 双 AI 桥接端口配置
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BridgePortConfig {

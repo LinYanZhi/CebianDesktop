@@ -191,6 +191,9 @@ export function BridgeSection({ config, onChange }: BridgeSectionProps) {
   const localAddrs = status?.local_addresses ?? [];
   const browserList = status?.browsers ?? [];
 
+  const activeCount = browserList.filter(b => !b.disabled).length;
+  const disabledCount = browserList.filter(b => b.disabled).length;
+
   const browserByPort: Record<number, BrowserInfo[]> = {};
   for (const b of browserList) {
     if (!browserByPort[b.port]) browserByPort[b.port] = [];
@@ -210,16 +213,55 @@ export function BridgeSection({ config, onChange }: BridgeSectionProps) {
           <div>
             <h2 className="text-sm font-semibold">AI 桥接</h2>
             <p className="text-[11px] text-muted-foreground/70 mt-0.5">
-              {isRunning ? '桥接服务运行中，已连接 ' + (status?.browser_count ?? 0) + ' 个浏览器' : '连接本地 AI 与浏览器 AI 的桥梁'}
+              {isRunning
+                ? activeCount > 0
+                  ? `桥接服务运行中 · ${activeCount} 活跃${disabledCount > 0 ? ` · ${disabledCount} 已禁用` : ''}`
+                  : browserList.length > 0
+                    ? '全部浏览器已禁用'
+                    : '等待浏览器连接...'
+                : '连接本地 AI 与浏览器 AI 的桥梁'}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-2">
           {isRunning ? (
             <>
-              <div className="flex items-center gap-1.5 text-[11px] text-green-600 bg-green-500/10 px-2.5 py-1 rounded-full whitespace-nowrap">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                <span className="font-medium tabular-nums">{status?.browser_count ?? 0}</span> 连接
+              {/* 综合状态指示器 */}
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/30 border border-border/50">
+                <div className="flex items-center gap-1.5">
+                  {activeCount > 0 ? (
+                    <span className="relative flex size-2">
+                      <span className="absolute inline-flex size-full rounded-full bg-green-400 opacity-75 animate-ping" />
+                      <span className="relative inline-flex size-2 rounded-full bg-green-500" />
+                    </span>
+                  ) : browserList.length > 0 ? (
+                    <span className="size-2 rounded-full bg-muted-foreground/40" />
+                  ) : (
+                    <span className="relative flex size-2">
+                      <span className="absolute inline-flex size-full rounded-full bg-red-400 opacity-75 animate-ping" />
+                      <span className="relative inline-flex size-2 rounded-full bg-red-500" />
+                    </span>
+                  )}
+                  <span className={`text-[11px] font-medium ${
+                    activeCount > 0 ? 'text-green-600' : browserList.length > 0 ? 'text-muted-foreground/60' : 'text-red-600'
+                  }`}>
+                    {activeCount > 0 ? '运行中' : browserList.length > 0 ? '全部禁用' : '等待连接'}
+                  </span>
+                </div>
+                <span className="w-px h-3 bg-border/60" />
+                <div className="flex items-center gap-2 text-[11px]">
+                  <span className="text-muted-foreground">
+                    <span className="font-semibold text-foreground/80">{activeCount}</span> 活跃
+                  </span>
+                  {disabledCount > 0 && (
+                    <>
+                      <span className="text-muted-foreground/30">|</span>
+                      <span className="text-muted-foreground">
+                        <span className="font-semibold text-muted-foreground/60">{disabledCount}</span> 已禁用
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
               <button onClick={handleStop} disabled={loading}
                 className="flex items-center gap-1 px-2.5 py-1.5 text-[11px] font-medium bg-destructive/10 text-destructive border border-destructive/20 rounded-lg hover:bg-destructive/20 disabled:opacity-50 transition-colors"
@@ -230,7 +272,10 @@ export function BridgeSection({ config, onChange }: BridgeSectionProps) {
             </>
           ) : (
             <>
-              <span className="text-[11px] text-muted-foreground bg-muted px-2.5 py-1 rounded-full">未启动</span>
+              <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground bg-muted px-3 py-1.5 rounded-full border border-border/50">
+                <span className="size-2 rounded-full bg-muted-foreground/30" />
+                未启动
+              </span>
               <button onClick={handleStart} disabled={loading}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 transition-colors"
               ><Play size={11} />启动</button>
@@ -620,7 +665,7 @@ function SvgTopology(props: {
           <button onClick={handleTestAll} disabled={testRunning}
             className="flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-medium bg-primary text-primary-foreground rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity"
           >
-            <Zap size={11} className={testRunning ? "animate-pulse" : ""} />{testRunning ? "测试中..." : "全部测试"}
+            <Zap size={11} className={testRunning ? "animate-pulse" : ""} />{testRunning ? "测速中..." : "测速"}
           </button>
         )}
       </div>
@@ -707,7 +752,7 @@ function BrowserNodeComp({
   return (
     <div className={`w-full h-full flex items-center gap-2.5 px-3 rounded-lg shadow-sm group transition-all ${
       isDisabled
-        ? "border border-muted/60 bg-muted/5 opacity-55"
+        ? "border border-dashed border-muted/40 bg-muted/5"
         : "border border-border bg-card hover:border-primary/25 hover:shadow-md"
     }`}>
       {/* 浏览器图标 */}
@@ -754,10 +799,10 @@ function BrowserNodeComp({
         <button onClick={() => handleToggleDisabled(b.session_id, !isDisabled)}
           className={`p-1.5 rounded-md transition-all ${
             isDisabled
-              ? "text-muted-foreground/40 hover:text-green-500 hover:bg-green-500/10"
-              : "text-green-500/70 hover:text-green-600 hover:bg-green-500/10"
+              ? "text-green-500/70 hover:text-green-600 hover:bg-green-500/10"
+              : "text-red-500/70 hover:text-red-600 hover:bg-red-500/10"
           }`}
-          title={isDisabled ? "启用此浏览器" : "禁用此浏览器"}
+          title={isDisabled ? "点击启用此浏览器" : "点击禁用此浏览器"}
         >
           <Power size={12} />
         </button>

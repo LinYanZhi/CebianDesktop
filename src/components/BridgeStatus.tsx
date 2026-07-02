@@ -34,7 +34,7 @@ export function BridgeStatus({ onNavigateToBridge }: BridgeStatusProps) {
       } catch { /* ignore */ }
     };
     poll();
-    const timer = setInterval(poll, 3000);
+    const timer = setInterval(poll, 1000);
     return () => { cancelled = true; clearInterval(timer); };
   }, []);
 
@@ -42,12 +42,17 @@ export function BridgeStatus({ onNavigateToBridge }: BridgeStatusProps) {
 
   const hasBrowsers = status.running && status.browser_count > 0;
   const noBrowsers = status.running && status.browser_count === 0;
+  const activeCount = status.browsers.filter(b => !b.disabled).length;
+  const disabledCount = status.browsers.filter(b => b.disabled).length;
+  const hasActive = activeCount > 0;
 
-  const label = hasBrowsers
-    ? `${status.browser_count} 个已连接`
-    : noBrowsers
-    ? "等待连接"
-    : "未启动";
+  const label = !status.running
+    ? "未启动"
+    : hasActive
+    ? `${activeCount} 活跃`
+    : hasBrowsers
+    ? "全部禁用"
+    : "等待连接";
 
   return (
     <div
@@ -62,9 +67,11 @@ export function BridgeStatus({ onNavigateToBridge }: BridgeStatusProps) {
         className={`w-2 h-2 rounded-full shrink-0 transition-colors ${
           !status.running
             ? "bg-gray-400"
-            : hasBrowsers
+            : hasActive
               ? "bg-green-500 shadow-[0_0_4px_rgba(34,197,94,0.6)]"
-              : "bg-amber-500 shadow-[0_0_4px_rgba(245,158,11,0.6)]"
+              : hasBrowsers
+                ? "bg-gray-400"
+                : "bg-red-500 shadow-[0_0_4px_rgba(239,68,68,0.6)]"
         }`}
       />
       <span className="hidden sm:inline">{label}</span>
@@ -76,14 +83,15 @@ export function BridgeStatus({ onNavigateToBridge }: BridgeStatusProps) {
         {hasBrowsers ? (
           <div className="text-[11px] space-y-1">
             {/* 表头 */}
-            <div className="grid grid-cols-[1fr_auto_1.2fr] gap-x-3 text-[10px] text-muted-foreground/50 font-medium mb-1.5 pb-1 border-b border-border/50">
+            <div className="grid grid-cols-[1fr_auto_1fr_auto] gap-x-2 text-[10px] text-muted-foreground/50 font-medium mb-1.5 pb-1 border-b border-border/50">
               <span>浏览器</span>
               <span>端口</span>
               <span className="text-right">IP 地址</span>
+              <span className="text-right">状态</span>
             </div>
             {/* 数据行 */}
             {status.browsers.map((b, i) => (
-              <div key={i} className="grid grid-cols-[1fr_auto_1.2fr] gap-x-3 items-center py-0.5">
+              <div key={i} className="grid grid-cols-[1fr_auto_1fr_auto] gap-x-2 items-center py-0.5">
                 <span className="truncate font-medium text-foreground/80">
                   {b.client_name || b.name}
                 </span>
@@ -91,8 +99,16 @@ export function BridgeStatus({ onNavigateToBridge }: BridgeStatusProps) {
                 <span className="text-right font-mono tabular-nums text-muted-foreground/60 break-all">
                   {b.remote_addr || status.local_addresses?.[0] || "-"}
                 </span>
+                <span className={`text-right text-[10px] ${b.disabled ? 'text-muted-foreground/50' : 'text-green-500'}`}>
+                  {b.disabled ? '禁用' : '活跃'}
+                </span>
               </div>
             ))}
+            {disabledCount > 0 && (
+              <div className="pt-1.5 mt-1.5 border-t border-border/50 text-[10px] text-muted-foreground/60">
+                {disabledCount} 个已禁用 · {activeCount} 个活跃
+              </div>
+            )}
           </div>
         ) : noBrowsers ? (
           <div className="text-[11px] text-muted-foreground">

@@ -50,10 +50,6 @@ use tauri::Emitter;
 use tokio::sync::{oneshot, Mutex};
 
 use crate::ai::{call_llm, AIConfig, ChatMessage, ThinkingLevel};
-use crate::config_storage::BridgePortConfig;
-
-/// 桥接服务器默认监听端口
-pub const DEFAULT_BRIDGE_PORT: u16 = 37421;
 
 /// 执行桌面任务（由浏览器 AI 通过 desktop/delegate_task 调用）
 ///
@@ -298,24 +294,6 @@ impl BridgeState {
 }
 
 // ─── Server ────────────────────────────────────────────────
-
-/// 启动指定端口列表的桥接服务器（每个端口一个 axum 实例）
-pub async fn start_bridge_servers(
-    state: Arc<BridgeState>,
-    configs: &[BridgePortConfig],
-) -> Vec<Result<(), String>> {
-    let mut results = Vec::new();
-    for cfg in configs {
-        // 注册端口配置到共享状态
-        {
-            let mut inner = state.inner.lock().await;
-            inner.port_configs.insert(cfg.port, cfg.name.clone());
-        }
-        let result = run_bridge_server(state.clone(), cfg.port).await;
-        results.push(result);
-    }
-    results
-}
 
 /// 启动单个端口的 WebSocket 桥接服务器（阻塞，通常在 tokio::spawn 中运行）
 pub async fn run_bridge_server(state: Arc<BridgeState>, port: u16) -> Result<(), String> {
@@ -1236,12 +1214,6 @@ pub fn get_desktop_browser_tool_names() -> Vec<&'static str> {
     ]
 }
 
-/// 获取最新的浏览器 AI 执行进度
-pub async fn get_agent_progress(state: &BridgeState, request_id: &str) -> Option<Value> {
-    let inner = state.inner.lock().await;
-    inner.pending_progress.get(request_id).cloned()
-}
-
 /// 获取所有正在进行的浏览器 AI 进度（用于前端轮询）
 pub async fn get_all_agent_progresses(state: &BridgeState) -> Value {
     let inner = state.inner.lock().await;
@@ -1253,15 +1225,6 @@ pub async fn get_all_agent_progresses(state: &BridgeState) -> Value {
 }
 
 // ─── 桌面 AI 进度广播 ─────────────────────────────────────
-
-/// 将消息广播到所有已连接的浏览器
-pub async fn broadcast_to_all_browsers(state: &BridgeState, message: &str) {
-    let inner = state.inner.lock().await;
-    let browsers: Vec<_> = inner.browsers.values().collect();
-    for browser in browsers {
-        let _ = browser.ws_sender.send(Message::Text(message.to_string().into()));
-    }
-}
 
 /// 更新桌面 AI 执行进度并广播到所有浏览器
 ///
@@ -1288,29 +1251,6 @@ pub async fn update_desktop_ai_progress(state: &BridgeState, step: Value) {
     for browser in inner.browsers.values() {
         let _ = browser.ws_sender.send(Message::Text(msg_str.clone().into()));
     }
-}
-
-/// 重置桌面 AI 进度（新对话开始时调用）
-pub async fn reset_desktop_ai_progress(state: &BridgeState) {
-    let mut inner = state.inner.lock().await;
-    inner.desktop_ai_progress = json!({"steps": [], "status": "idle", "task": ""});
-    // 通知浏览器重置
-    let msg = json!({
-        "jsonrpc": "2.0",
-        "method": "desktop/progress",
-        "params": {
-            "reset": true,
-        }
-    });
-    for browser in inner.browsers.values() {
-        let _ = browser.ws_sender.send(Message::Text(msg.to_string().into()));
-    }
-}
-
-/// 获取桌面 AI 当前进度（给前端 IPC 用）
-pub async fn get_desktop_ai_progress(state: &BridgeState) -> Value {
-    let inner = state.inner.lock().await;
-    inner.desktop_ai_progress.clone()
 }
 
 /// 取消所有浏览器 AI 任务（用户终止桌面 AI 时调用）
