@@ -452,6 +452,33 @@ pub(crate) fn download_file(
     ))
 }
 
+pub(crate) fn batch_download(files: Vec<(String, String)>, app: Option<&tauri::AppHandle>) -> Result<serde_json::Value, String> {
+    let total = files.len();
+    let mut results = Vec::new();
+    let mut success_count = 0usize;
+    let mut error_count = 0usize;
+
+    for (url, destination) in &files {
+        match download_file(url, destination, app) {
+            Ok(msg) => {
+                results.push(serde_json::json!({"url": url, "destination": destination, "status": "success", "message": msg}));
+                success_count += 1;
+            }
+            Err(e) => {
+                results.push(serde_json::json!({"url": url, "destination": destination, "status": "error", "error": e}));
+                error_count += 1;
+            }
+        }
+    }
+
+    Ok(serde_json::json!({
+        "total": total,
+        "success_count": success_count,
+        "error_count": error_count,
+        "results": results,
+    }))
+}
+
 // ─── 打开 ────────────────────────────────────────────────
 
 pub(crate) fn open_path(path: &str) -> Result<String, String> {

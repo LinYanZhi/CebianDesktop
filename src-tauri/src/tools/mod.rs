@@ -120,7 +120,7 @@ pub(crate) fn get_tool_risk_level(name: &str) -> &'static str {
         // 🔴 高风险
         "delete_path" | "run_command" | "skill_delete" => "high",
         // 🟠 中风险
-        "write_new_file" | "edit_file" | "rename_path" | "system_add_language" 
+        "write_new_file" | "edit_file" | "rename_path" | "batch_rename" | "system_add_language" 
         | "capture_screen" | "download_file" | "clipboard_write" => "medium",
         // 🟢 以下安全工具由 Rust 处理，不走 fallback
         "get_file_info" => "safe",
@@ -244,10 +244,14 @@ pub fn get_tool_definitions() -> Vec<Value> {
             &[("path", "string", "Excel 文件的绝对路径，例如 C:\\Users\\用户名\\Desktop\\报表.xlsx")], ["path"]),
 
         td!("write_new_file",
-            "写入内容到文件。如果文件已存在，会被覆盖；如果目录不存在，会自动创建。\
+            "写入内容到文件。支持单次写入和批量写入。\
+             \n\n两种用法：\
+             \n1. 单次写入：传 path + content 参数\
+             \n2. 批量写入：传 files 数组，每个元素含 path 和 content\
+             \n\n如果文件已存在，会被覆盖；如果目录不存在，会自动创建。\
              \n\n安全限制：仅允许在工作区目录和临时目录下写入文件。路径必须是绝对路径。\
-             \n\n适合场景：创建新文件、保存 AI 生成的内容、写入代码文件等。",
-            &[("path", "string", "文件绝对路径，例如 C:\\Users\\用户名\\Documents\\report.md"), ("content", "string", "要写入的文件内容")], ["path", "content"]),
+             \n\n适合场景：创建新文件、保存 AI 生成的内容、批量生成多份文件等。",
+            &[("path", "string", "单次写入的文件绝对路径（与 files 二选一）"), ("content", "string", "单次写入的文件内容（与 files 二选一）"), ("files", "array", "批量写入的文件列表，每个元素为 {\"path\": \"绝对路径\", \"content\": \"内容\"}（与 path+content 二选一）")], []),
 
         td!("edit_file",
             "精确查找并替换文件中的指定文本。这是部分修改文件内容的工具，不会影响文件的其他部分。\
@@ -277,16 +281,31 @@ pub fn get_tool_definitions() -> Vec<Value> {
             "重命名或移动文件/目录。可以用于重命名文件，或将文件/目录移动到新位置。\
              \n\n安全限制：仅允许在工作区目录和临时目录下操作。\
              \n注意：如果目标位置的父目录不存在，会自动创建。如果目标已存在，行为取决于操作系统（可能覆盖或报错）。\
-             \n\n适合场景：重命名文件、整理文件夹、移动项目文件到新位置。",
+             \n\n适合场景：重命名单个文件、移动单个项目文件到新位置。\
+             \n\n对于需要批量重命名多个文件的场景，请使用 batch_rename 工具，一次传入所有操作。",
             &[("old_path", "string", "原路径（文件或目录的当前绝对路径）"), ("new_path", "string", "新路径（目标绝对路径）")], ["old_path", "new_path"]),
 
+        td!("batch_rename",
+            "批量重命名或移动多个文件/目录。接受一组重命名操作，一次性全部执行。\
+             \n\n当你需要重命名多个文件时（例如为多个图片重命名、批量整理文件等），\
+             请使用此工具而非多次调用 rename_path。\
+             \n\noperations 参数是一个数组，每个元素包含 old_path 和 new_path。\
+             \n返回每个操作的成功/失败状态、成功数和失败数。\
+             \n\n安全限制：仅允许在工作区目录和临时目录下操作。\
+             \n\n适合场景：批量重命名图片、批量整理文件名、批量移动文件到新位置等。",
+            &[("operations", "array", "重命名操作列表，每个元素为 {\"old_path\": \"原路径\", \"new_path\": \"新路径\"}")], ["operations"]),
+
         td!("delete_path",
-            "删除文件或目录。如果是目录，会递归删除其所有内容。\
+            "删除文件或目录。支持单次删除和批量删除。\
+             \n\n两种用法：\
+             \n1. 单次删除：传 path 参数（单个文件/目录）\
+             \n2. 批量删除：传 paths 数组参数（多个文件/目录）\
+             \n\n如果是目录，会递归删除其所有内容。\
              \n\n安全限制：仅允许删除工作区目录和临时目录下的文件和目录。\
              \n无法删除系统关键路径或用户工作区之外的路径。\
              \n警告：此操作不可撤销！删除目录会一并删除其所有子文件和子目录。\
-             \n\n适合场景：清理不再需要的文件和目录、删除项目中的临时文件等。",
-            &[("path", "string", "要删除的文件或目录的绝对路径")], ["path"]),
+             \n\n适合场景：清理不再需要的文件和目录、批量清理临时文件等。",
+            &[("path", "string", "单个文件或目录的绝对路径（与 paths 二选一）"), ("paths", "array", "要删除的文件/目录路径列表（与 path 二选一），例如 [\"C:\\\\file1.txt\", \"C:\\\\file2.txt\"]")], []),
 
         td!("search_files",
             "按文件名或文件内容搜索文件。支持递归搜索子目录，最大深度 10 层，最多返回 50 条结果。\
@@ -301,9 +320,13 @@ pub fn get_tool_definitions() -> Vec<Value> {
         //  文件网络操作
         // ═══════════════════════════════════════════════════════════
         td!("download_file",
-            "从 URL 下载文件到本地磁盘。支持任何可通过 HTTP/HTTPS 访问的文件。\
-             \n\n适合场景：下载网络上的图片、安装包、文档等文件到本地保存。",
-            &[("url", "string", "文件下载 URL"), ("destination", "string", "保存的本地绝对路径，例如 C:\\Users\\用户名\\Downloads\\file.pdf")], ["url", "destination"]),
+            "从 URL 下载文件到本地磁盘。支持单次下载和批量下载。\
+             \n\n两种用法：\
+             \n1. 单次下载：传 url + destination 参数\
+             \n2. 批量下载：传 files 数组，每个元素含 url 和 destination\
+             \n\n支持任何可通过 HTTP/HTTPS 访问的文件。\
+             \n\n适合场景：下载单张图片/单个文件、从多个 URL 批量下载文件到本地。",
+            &[("url", "string", "单个文件的下载 URL（与 files 二选一）"), ("destination", "string", "单次下载的保存本地绝对路径（与 files 二选一）"), ("files", "array", "批量下载的文件列表，每个元素为 {\"url\": \"下载URL\", \"destination\": \"保存路径\"}（与 url+destination 二选一）")], []),
 
         td!("open_path",
             "使用系统默认程序打开文件或目录。相当于在文件资源管理器中双击文件或文件夹。\
@@ -716,11 +739,28 @@ pub fn execute_tool(name: &str, args: &Value, app: Option<&tauri::AppHandle>) ->
             read_excel(path)
         }
         "write_new_file" => {
-            let path = arg_str(args, "path")?;
-            validate_path(path, false)?;
-            let content = arg_str(args, "content")?;
-            write_new_file(path, content)?;
-            Ok(json!({"message": format!("文件已写入: {}", path)}))
+            // 检查是否批量写入
+            if let Some(files) = args.get("files").and_then(|v| v.as_array()) {
+                let mut file_pairs: Vec<(String, String)> = Vec::new();
+                for f in files {
+                    let path = f.get("path").and_then(|v| v.as_str())
+                        .ok_or_else(|| "files 中的条目缺少 path".to_string())?;
+                    let content = f.get("content").and_then(|v| v.as_str())
+                        .ok_or_else(|| "files 中的条目缺少 content".to_string())?;
+                    validate_path(path, false)?;
+                    file_pairs.push((path.to_string(), content.to_string()));
+                }
+                if file_pairs.is_empty() {
+                    return Err("files 数组为空".into());
+                }
+                write_new_file_batch(file_pairs)
+            } else {
+                let path = arg_str(args, "path")?;
+                validate_path(path, false)?;
+                let content = arg_str(args, "content")?;
+                write_new_file(path, content)?;
+                Ok(json!({"message": format!("文件已写入: {}", path)}))
+            }
         }
         "edit_file" => {
             let path = arg_str(args, "path")?;
@@ -749,11 +789,44 @@ pub fn execute_tool(name: &str, args: &Value, app: Option<&tauri::AppHandle>) ->
             rename_path(old_path, new_path)?;
             Ok(json!({"message": format!("已重命名: {} -> {}", old_path, new_path)}))
         }
+        "batch_rename" => {
+            let operations = args.get("operations")
+                .and_then(|v| v.as_array())
+                .ok_or_else(|| "缺少 operations 参数，需要数组".to_string())?;
+            let mut ops: Vec<(String, String)> = Vec::new();
+            for op in operations {
+                let old = op.get("old_path").and_then(|v| v.as_str())
+                    .ok_or_else(|| "operations 中的条目缺少 old_path".to_string())?;
+                let new = op.get("new_path").and_then(|v| v.as_str())
+                    .ok_or_else(|| "operations 中的条目缺少 new_path".to_string())?;
+                validate_path(old, false)?;
+                validate_path(new, false)?;
+                ops.push((old.to_string(), new.to_string()));
+            }
+            if ops.is_empty() {
+                return Err("operations 数组为空".into());
+            }
+            batch_rename(ops)
+        }
         "delete_path" => {
-            let path = arg_str(args, "path")?;
-            validate_path(path, false)?;
-            fs_delete(path)?;
-            Ok(json!({"message": format!("已删除: {}", path)}))
+            // 检查是否批量删除
+            if let Some(paths) = args.get("paths").and_then(|v| v.as_array()) {
+                let mut path_list: Vec<String> = Vec::new();
+                for p in paths {
+                    let p_str = p.as_str().ok_or_else(|| "paths 中包含非字符串元素".to_string())?;
+                    validate_path(p_str, false)?;
+                    path_list.push(p_str.to_string());
+                }
+                if path_list.is_empty() {
+                    return Err("paths 数组为空".into());
+                }
+                fs_delete_batch(path_list)
+            } else {
+                let path = arg_str(args, "path")?;
+                validate_path(path, false)?;
+                fs_delete(path)?;
+                Ok(json!({"message": format!("已删除: {}", path)}))
+            }
         }
         "search_files" => {
             let directory = arg_str(args, "directory")?;
@@ -764,11 +837,28 @@ pub fn execute_tool(name: &str, args: &Value, app: Option<&tauri::AppHandle>) ->
             Ok(json!({"results": results, "count": results.len()}))
         }
         "download_file" => {
-            let url = arg_str(args, "url")?;
-            let destination = arg_str(args, "destination")?;
-            validate_path(destination, false)?;
-            let result = download_file(url, destination, app)?;
-            Ok(json!({"message": result}))
+            // 检查是否批量下载
+            if let Some(files) = args.get("files").and_then(|v| v.as_array()) {
+                let mut file_pairs: Vec<(String, String)> = Vec::new();
+                for f in files {
+                    let url = f.get("url").and_then(|v| v.as_str())
+                        .ok_or_else(|| "files 中的条目缺少 url".to_string())?;
+                    let dest = f.get("destination").and_then(|v| v.as_str())
+                        .ok_or_else(|| "files 中的条目缺少 destination".to_string())?;
+                    validate_path(dest, false)?;
+                    file_pairs.push((url.to_string(), dest.to_string()));
+                }
+                if file_pairs.is_empty() {
+                    return Err("files 数组为空".into());
+                }
+                batch_download(file_pairs, app)
+            } else {
+                let url = arg_str(args, "url")?;
+                let destination = arg_str(args, "destination")?;
+                validate_path(destination, false)?;
+                let result = download_file(url, destination, app)?;
+                Ok(json!({"message": result}))
+            }
         }
         "open_path" => {
             let path = arg_str(args, "path")?;

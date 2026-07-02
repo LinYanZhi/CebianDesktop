@@ -60,26 +60,6 @@ fn tool_needs_confirmation(name: &str, mode: &str) -> bool {
 /// 返回 { type, target, risk, description, args_detail }
 fn get_tool_confirmation_details(name: &str, args: &Value) -> Value {
     match name {
-        "delete_path" => {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-            json!({
-                "action": "删除",
-                "target": path,
-                "risk": "high",
-                "description": "永久删除文件或目录，此操作不可撤销。被删除的文件不会进入回收站。",
-                "args_detail": serde_json::to_string_pretty(&json!({"path": path})).unwrap_or_default()
-            })
-        }
-        "write_new_file" => {
-            let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
-            json!({
-                "action": "写入文件",
-                "target": path,
-                "risk": "medium",
-                "description": "创建新文件或覆盖已有文件。如果文件已存在，原有内容将被完全替换。",
-                "args_detail": serde_json::to_string_pretty(&json!({"path": path})).unwrap_or_default()
-            })
-        }
         "edit_file" => {
             let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("?");
             json!({
@@ -100,6 +80,82 @@ fn get_tool_confirmation_details(name: &str, args: &Value) -> Value {
                 "description": "重命名或移动文件/目录。如果目标位置已存在文件，可能会被覆盖。",
                 "args_detail": serde_json::to_string_pretty(&json!({"from": old, "to": new})).unwrap_or_default()
             })
+        }
+        "batch_rename" => {
+            let ops = args.get("operations").and_then(|v| v.as_array()).map(|a| a.len()).unwrap_or(0);
+            json!({
+                "action": "批量重命名",
+                "target": format!("{} 个文件/目录", ops),
+                "risk": "medium",
+                "description": format!("批量重命名或移动 {} 个文件/目录。每个操作都会独立验证路径，部分失败不影响其他操作。", ops),
+                "args_detail": serde_json::to_string_pretty(args).unwrap_or_default()
+            })
+        }
+        "delete_path" => {
+            if let Some(paths) = args.get("paths").and_then(|v| v.as_array()) {
+                json!({
+                    "action": "批量删除",
+                    "target": format!("{} 个路径", paths.len()),
+                    "risk": "high",
+                    "description": format!("将删除 {} 个文件或目录。此操作不可撤销！", paths.len()),
+                    "args_detail": paths.iter().filter_map(|p| p.as_str()).collect::<Vec<_>>().join("\n")
+                })
+            } else {
+                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("未知");
+                json!({
+                    "action": "删除",
+                    "target": path,
+                    "risk": "high",
+                    "description": format!("将删除：{}。此操作不可撤销！", path),
+                    "args_detail": path.to_string()
+                })
+            }
+        }
+        "write_new_file" => {
+            if let Some(files) = args.get("files").and_then(|v| v.as_array()) {
+                let paths: Vec<&str> = files.iter().filter_map(|f| f.get("path").and_then(|v| v.as_str())).collect();
+                json!({
+                    "action": "批量写文件",
+                    "target": format!("{} 个文件", files.len()),
+                    "risk": "medium",
+                    "description": format!("将写入 {} 个文件。如果文件已存在会被覆盖。", files.len()),
+                    "args_detail": paths.join("\n")
+                })
+            } else {
+                let path = args.get("path").and_then(|v| v.as_str()).unwrap_or("未知");
+                json!({
+                    "action": "写文件",
+                    "target": path,
+                    "risk": "medium",
+                    "description": format!("将在以下路径写入新文件：{}。如果文件已存在会被覆盖。", path),
+                    "args_detail": path.to_string()
+                })
+            }
+        }
+        "download_file" => {
+            if let Some(files) = args.get("files").and_then(|v| v.as_array()) {
+                json!({
+                    "action": "批量下载",
+                    "target": format!("{} 个文件", files.len()),
+                    "risk": "medium",
+                    "description": format!("将从网络批量下载 {} 个文件到本地。", files.len()),
+                    "args_detail": files.iter().filter_map(|f| {
+                        let url = f.get("url").and_then(|v| v.as_str()).unwrap_or("?");
+                        let dest = f.get("destination").and_then(|v| v.as_str()).unwrap_or("?");
+                        Some(format!("{} → {}", url, dest))
+                    }).collect::<Vec<_>>().join("\n")
+                })
+            } else {
+                let url = args.get("url").and_then(|v| v.as_str()).unwrap_or("未知");
+                let dest = args.get("destination").and_then(|v| v.as_str()).unwrap_or("未知");
+                json!({
+                    "action": "下载",
+                    "target": format!("{} → {}", url, dest),
+                    "risk": "medium",
+                    "description": format!("将从以下 URL 下载文件到本地：{}", url),
+                    "args_detail": format!("URL: {}\n保存到: {}", url, dest)
+                })
+            }
         }
         "run_command" => {
             let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("?");

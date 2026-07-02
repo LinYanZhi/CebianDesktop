@@ -144,6 +144,67 @@ pub(crate) fn fs_delete(path: &str) -> Result<(), String> {
     }
 }
 
+pub(crate) fn fs_delete_batch(paths: Vec<String>) -> Result<Value, String> {
+    let total = paths.len();
+    let mut results = Vec::new();
+    let mut success_count = 0usize;
+    let mut error_count = 0usize;
+
+    for path_str in &paths {
+        let p = Path::new(path_str);
+        if !p.exists() {
+            results.push(json!({"path": path_str, "status": "error", "error": "路径不存在"}));
+            error_count += 1;
+            continue;
+        }
+        let result = if p.is_dir() {
+            fs::remove_dir_all(p).map_err(|e| format!("删除目录失败: {}", e))
+        } else {
+            fs::remove_file(p).map_err(|e| format!("删除文件失败: {}", e))
+        };
+        match result {
+            Ok(()) => { results.push(json!({"path": path_str, "status": "success"})); success_count += 1; }
+            Err(e) => { results.push(json!({"path": path_str, "status": "error", "error": e})); error_count += 1; }
+        }
+    }
+
+    Ok(json!({
+        "total": total,
+        "success_count": success_count,
+        "error_count": error_count,
+        "results": results,
+    }))
+}
+
+pub(crate) fn write_new_file_batch(files: Vec<(String, String)>) -> Result<Value, String> {
+    let total = files.len();
+    let mut results = Vec::new();
+    let mut success_count = 0usize;
+    let mut error_count = 0usize;
+
+    for (path_str, content) in &files {
+        let p = Path::new(path_str);
+        if let Some(parent) = p.parent() {
+            if let Err(e) = fs::create_dir_all(parent) {
+                results.push(json!({"path": path_str, "status": "error", "error": format!("创建目录失败: {}", e)}));
+                error_count += 1;
+                continue;
+            }
+        }
+        match fs::write(p, content) {
+            Ok(()) => { results.push(json!({"path": path_str, "status": "success"})); success_count += 1; }
+            Err(e) => { results.push(json!({"path": path_str, "status": "error", "error": format!("写入失败: {}", e)})); error_count += 1; }
+        }
+    }
+
+    Ok(json!({
+        "total": total,
+        "success_count": success_count,
+        "error_count": error_count,
+        "results": results,
+    }))
+}
+
 pub(crate) fn search_files(directory: &str, pattern: &str, mode: &str) -> Result<Vec<Value>, String> {
     let dir = Path::new(directory);
     if !dir.is_dir() { return Err(format!("不是目录: {}", directory)); }
@@ -493,6 +554,69 @@ pub(crate) fn extract_archive(path: &str, target_dir: Option<&str>) -> Result<Va
 }
 
 // ─── 压缩为 zip ──────────────────────────────────────────
+
+// ─── 批量重命名 ──────────────────────────────────────────
+
+pub(crate) fn batch_rename(operations: Vec<(String, String)>) -> Result<Value, String> {
+    let total = operations.len();
+    let mut results = Vec::new();
+    let mut success_count = 0usize;
+    let mut error_count = 0usize;
+
+    for (old_path, new_path) in &operations {
+        let p = Path::new(old_path);
+        if !p.exists() {
+            results.push(json!({
+                "old_path": old_path,
+                "new_path": new_path,
+                "status": "error",
+                "error": format!("路径不存在: {}", old_path),
+            }));
+            error_count += 1;
+            continue;
+        }
+        if let Some(parent) = Path::new(new_path).parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                if let Err(e) = fs::create_dir_all(parent) {
+                    results.push(json!({
+                        "old_path": old_path,
+                        "new_path": new_path,
+                        "status": "error",
+                        "error": format!("创建目标目录失败: {}", e),
+                    }));
+                    error_count += 1;
+                    continue;
+                }
+            }
+        }
+        match fs::rename(old_path, new_path) {
+            Ok(()) => {
+                results.push(json!({
+                    "old_path": old_path,
+                    "new_path": new_path,
+                    "status": "success",
+                }));
+                success_count += 1;
+            }
+            Err(e) => {
+                results.push(json!({
+                    "old_path": old_path,
+                    "new_path": new_path,
+                    "status": "error",
+                    "error": format!("重命名失败: {}", e),
+                }));
+                error_count += 1;
+            }
+        }
+    }
+
+    Ok(json!({
+        "total": total,
+        "success_count": success_count,
+        "error_count": error_count,
+        "results": results,
+    }))
+}
 
 pub(crate) fn compress_files(paths: Vec<String>, output: &str) -> Result<Value, String> {
     let output_path = Path::new(output);

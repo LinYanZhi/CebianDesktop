@@ -608,8 +608,8 @@ export default function App() {
         const permissionDesc = permissionMode === "trusted"
           ? "\n\n[安全设置] 当前模式：信任模式 — 所有工具调用自动执行，无需用户确认。请谨慎操作。"
           : permissionMode === "balanced"
-          ? "\n\n[安全设置] 当前模式：平衡模式 — 仅高风险操作（删除文件/目录、执行命令）需要用户确认。"
-          : "\n\n[安全设置] 当前模式：保守模式 — 写入/编辑/删除文件、执行命令等操作均需用户确认。";
+          ? "\n\n[安全设置] 当前模式：平衡模式 — 仅高风险操作（删除文件/目录、执行命令）需要用户确认。\n\n[批量操作指引] 如果需要批量操作多个文件，请使用 tools/files 或 tools/operations 数组参数一次完成，避免多次确认弹窗。例如：delete_path({paths:[...]})、write_new_file({files:[...]})、download_file({files:[...]})、batch_rename({operations:[...]})。"
+          : "\n\n[安全设置] 当前模式：保守模式 — 写入/编辑/删除文件、执行命令等操作均需用户确认。\n\n[批量操作指引] 如果需要批量操作多个文件，请使用 tools/files 或 tools/operations 数组参数一次完成，避免多次确认弹窗。例如：delete_path({paths:[...]})、write_new_file({files:[...]})、download_file({files:[...]})、batch_rename({operations:[...]})。";
         systemPrompt += permissionDesc;
 
         // 启动定期持久化
