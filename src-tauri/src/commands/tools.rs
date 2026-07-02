@@ -265,6 +265,7 @@ pub fn get_tool_permission_list(mcp: State<'_, McpClientManager>, app_handle: ta
         ("skill_list", "内置技能管理工具（列出技能）"),
         ("skill_create", "内置技能管理工具（创建技能）"),
         ("skill_read", "内置技能管理工具（读取技能）"),
+        ("skill_search", "内置技能管理工具（搜索技能）"),
         ("skill_delete", "内置技能管理工具（删除技能）"),
     ].iter().cloned().collect();
 
@@ -279,7 +280,7 @@ pub fn get_tool_permission_list(mcp: State<'_, McpClientManager>, app_handle: ta
         ("网络请求", &["fetch_url"]),
         ("剪贴板", &["clipboard_read", "clipboard_write"]),
         ("用户交互", &["ask_user"]),
-        ("技能管理", &["skill_list", "skill_create", "skill_read", "skill_delete"]),
+        ("技能管理", &["skill_list", "skill_create", "skill_read", "skill_search", "skill_delete"]),
     ];
 
     for tool in &builtin {
@@ -432,6 +433,35 @@ pub async fn execute_tool(name: String, args: Value, permission_mode: Option<Str
                 "filename": skill.filename,
                 "content": skill.content,
             }));
+        }
+        "skill_search" => {
+            let query = args.get("query").and_then(|v| v.as_str()).ok_or("缺少 query 参数")?.to_lowercase();
+            let files = workspace::list_files(&app_handle, workspace::WorkspaceDir::Skills)?;
+            let mut results = Vec::new();
+            for f in &files {
+                if f.filename.ends_with('/') { continue; }
+                let name_match = f.name.to_lowercase().contains(&query);
+                let content_match = f.content.to_lowercase().contains(&query);
+                if name_match || content_match {
+                    let snippet = if content_match {
+                        extract_snippet(&f.content, &query, 120)
+                    } else {
+                        String::new()
+                    };
+                    results.push(json!({
+                        "name": f.name,
+                        "description": f.description,
+                        "filename": f.filename,
+                        "match_type": if name_match && content_match { "both" } else if name_match { "name" } else { "content" },
+                        "snippet": snippet,
+                    }));
+                }
+            }
+            return Ok(json!({
+                "query": args.get("query").and_then(|v| v.as_str()).unwrap_or(""),
+                "results": results,
+                "count": results.len(),
+            }))
         }
         _ => {}
     }
@@ -591,6 +621,50 @@ pub fn execute_tool_internal(name: &str, args: &Value, app_handle: &tauri::AppHa
             workspace::delete_file(app_handle, workspace::WorkspaceDir::Skills, &skill.id)?;
             Ok(json!({"message": format!("技能「{}」已删除", name_val)}))
         }
+        "skill_search" => {
+            let query = args.get("query").and_then(|v| v.as_str()).ok_or("缺少 query 参数")?.to_lowercase();
+            let files = workspace::list_files(app_handle, workspace::WorkspaceDir::Skills)?;
+            let mut results = Vec::new();
+            for f in &files {
+                if f.filename.ends_with('/') { continue; }
+                let name_match = f.name.to_lowercase().contains(&query);
+                let content_match = f.content.to_lowercase().contains(&query);
+                if name_match || content_match {
+                    let snippet = if content_match {
+                        extract_snippet(&f.content, &query, 120)
+                    } else {
+                        String::new()
+                    };
+                    results.push(json!({
+                        "name": f.name,
+                        "description": f.description,
+                        "filename": f.filename,
+                        "match_type": if name_match && content_match { "both" } else if name_match { "name" } else { "content" },
+                        "snippet": snippet,
+                    }));
+                }
+            }
+            Ok(json!({
+                "query": args.get("query").and_then(|v| v.as_str()).unwrap_or(""),
+                "results": results,
+                "count": results.len(),
+            }))
+        }
         _ => Err(format!("未知工具: {}", name)),
+    }
+}
+
+/// 从文本中提取匹配关键词的上下文片段
+fn extract_snippet(text: &str, query: &str, max_len: usize) -> String {
+    let lower = text.to_lowercase();
+    if let Some(pos) = lower.find(query) {
+        let start = if pos > max_len / 2 { pos - max_len / 2 } else { 0 };
+        let end = std::cmp::min(start + max_len, text.len());
+        let mut snippet: String = text[start..end].to_string();
+        if start > 0 { snippet.insert_str(0, "..."); }
+        if end < text.len() { snippet.push_str("..."); }
+        snippet
+    } else {
+        text.chars().take(max_len).collect()
     }
 }

@@ -109,5 +109,15 @@ export function getDefaultSystemPrompt(): string {
 
 ## Output
 
-- Respond in the same language as the user. After executing tools, briefly summarize what was done.`;
+- Respond in the same language as the user. After executing tools, briefly summarize what was done.
+
+## Skills — 可调用能力模块
+
+Skills are user-defined knowledge modules stored in the workspace/skills directory. They contain specialized information (e.g., software download links, company policies, custom workflows). Each skill becomes a \`skill_xxx\` tool.
+
+13. When you need specialized user knowledge, use \`skill_search\` first to search across all skill file contents by keyword. This is faster than checking each skill one by one.
+    - Example: Search for "UU远程" → \`skill_search(query: "UU远程")\` finds all skill files mentioning it.
+14. If \`skill_search\` returns a match, use \`skill_read\` to get the full content of that skill.
+15. If \`skill_search\` finds nothing helpful (empty results), tell the user: "当前技能中未找到相关内容，是否要补充？"`;
+
 }

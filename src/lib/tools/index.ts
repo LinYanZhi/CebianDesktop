@@ -66,6 +66,7 @@ const BUILTIN_TOOL_LABELS: Record<string, string> = {
   skill_list: '技能列表',
   skill_create: '创建技能',
   skill_read: '读取技能',
+  skill_search: '搜索技能',
   skill_delete: '删除技能',
 };
 
