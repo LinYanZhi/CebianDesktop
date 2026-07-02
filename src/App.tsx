@@ -501,6 +501,15 @@ export default function App() {
     agent.resolveTools(toolResults);
   }, [aiConfig, setPendingInteractive, interactiveResolveRef, setPendingConfirmation, confirmResolveRef]);
 
+  /**
+   * 用 ref 始终指向最新的 executeToolCallsForAgent，
+   * 确保已运行的 Agent 在 onStateChange 中能读取到最新的权限设置。
+   */
+  const executeToolCallsRef = useRef(executeToolCallsForAgent);
+  useEffect(() => {
+    executeToolCallsRef.current = executeToolCallsForAgent;
+  }, [executeToolCallsForAgent]);
+
   // 发送消息（流式）— 使用 Agent 层管理 SSE + 工具调用循环
   const handleSend = useCallback(
     async (content: string, _attachments?: SendAttachment[]) => {
@@ -717,7 +726,7 @@ export default function App() {
 
             onStateChange: (state) => {
               if (state === "awaiting_tool" as any) {
-                executeToolCallsForAgent(agent, currentMessages, streamSessionId, currentRoundRef.current);
+                executeToolCallsRef.current(agent, currentMessages, streamSessionId, currentRoundRef.current);
               }
             },
           },
