@@ -303,6 +303,43 @@ fn bits_download(_url: &str, _destination: &str) -> Result<String, String> {
     Err("BITS 仅在 Windows 可用".to_string())
 }
 
+/// 检查下载的文件大小是否合理，返回警告信息（如有）
+fn check_download_size(destination: &str) -> Option<String> {
+    let path = std::path::Path::new(destination);
+    if let Ok(meta) = std::fs::metadata(path) {
+        let size = meta.len();
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        match ext.as_str() {
+            "exe" | "msi" => {
+                if size < 1_048_576 {
+                    return Some(format!(
+                        "⚠️ 文件只有 {:.0} KB，可能不是完整安装包。下载链接可能需要浏览器访问（需 Referer/Cookie）。",
+                        size as f64 / 1024.0
+                    ));
+                }
+            }
+            "zip" | "rar" | "7z" | "tar" | "gz" => {
+                if size < 1024 {
+                    return Some(format!(
+                        "⚠️ 压缩包只有 {:.0} KB，可能不是完整文件。下载链接可能需要浏览器访问。",
+                        size as f64 / 1024.0
+                    ));
+                }
+            }
+            "dmg" | "pkg" => {
+                if size < 1_048_576 {
+                    return Some(format!(
+                        "⚠️ 文件只有 {:.0} KB，可能不是完整安装包。",
+                        size as f64 / 1024.0
+                    ));
+                }
+            }
+            _ => {} // 其他类型不做大小校验
+        }
+    }
+    None
+}
+
 pub(crate) fn download_file(
     url: &str,
     destination: &str,
@@ -345,7 +382,11 @@ pub(crate) fn download_file(
             );
         }
     } else {
-        return Ok(format!("已下载到: {}", destination));
+        let mut msg = format!("已下载到: {}", destination);
+        if let Some(warn) = check_download_size(destination) {
+            msg.push_str(&format!("\n{}", warn));
+        }
+        return Ok(msg);
     }
 
     // 2. ureq + insecure（跳过证书验证）
@@ -365,7 +406,11 @@ pub(crate) fn download_file(
             );
         }
     } else {
-        return Ok(format!("已下载到: {} (跳过证书验证)", destination));
+        let mut msg = format!("已下载到: {} (跳过证书验证)", destination);
+        if let Some(warn) = check_download_size(destination) {
+            msg.push_str(&format!("\n{}", warn));
+        }
+        return Ok(msg);
     }
 
     // 3. curl 回退（Windows 10/11 自带，支持代理环境变量）
@@ -376,7 +421,14 @@ pub(crate) fn download_file(
         );
     }
     match curl_download(url, destination) {
-        Ok(msg) => return Ok(format!("{} (curl)", msg)),
+        Ok(msg) => {
+            let base = format!("{} (curl)", msg);
+            let mut result = base;
+            if let Some(warn) = check_download_size(destination) {
+                result.push_str(&format!("\n{}", warn));
+            }
+            return Ok(result);
+        }
         Err(e) => {
             errors.push(format!("curl: {}", e));
             if let Some(app) = app {
@@ -396,7 +448,14 @@ pub(crate) fn download_file(
         );
     }
     match powershell_download(url, destination) {
-        Ok(msg) => return Ok(format!("{} (PowerShell)", msg)),
+        Ok(msg) => {
+            let base = format!("{} (PowerShell)", msg);
+            let mut result = base;
+            if let Some(warn) = check_download_size(destination) {
+                result.push_str(&format!("\n{}", warn));
+            }
+            return Ok(result);
+        }
         Err(e) => {
             errors.push(format!("PowerShell: {}", e));
             if let Some(app) = app {
@@ -416,7 +475,14 @@ pub(crate) fn download_file(
         );
     }
     match bits_download(url, destination) {
-        Ok(msg) => return Ok(format!("{} (BITS)", msg)),
+        Ok(msg) => {
+            let base = format!("{} (BITS)", msg);
+            let mut result = base;
+            if let Some(warn) = check_download_size(destination) {
+                result.push_str(&format!("\n{}", warn));
+            }
+            return Ok(result);
+        }
         Err(e) => {
             errors.push(format!("BITS: {}", e));
             if let Some(app) = app {

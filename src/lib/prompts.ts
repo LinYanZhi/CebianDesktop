@@ -118,6 +118,12 @@ Skills are user-defined knowledge modules stored in the workspace/skills directo
 13. When you need specialized user knowledge, use \`skill_search\` first to search across all skill file contents by keyword. This is faster than checking each skill one by one.
     - Example: Search for "UU远程" → \`skill_search(query: "UU远程")\` finds all skill files mentioning it.
 14. If \`skill_search\` returns a match, use \`skill_read\` to get the full content of that skill.
-15. If \`skill_search\` finds nothing helpful (empty results), tell the user: "当前技能中未找到相关内容，是否要补充？"`;
+15. **If \`skill_search\` finds nothing helpful (empty results), you MUST tell the user: "当前技能中未找到相关内容，是否要补充？"** Do NOT silently switch to web search — ask the user first.
+
+## Downloads
+
+16. After using \`download_file\`, check the result message carefully:
+    - If the message contains "⚠️ 文件只有..." or other warnings, tell the user the file size is abnormal and the download link may only work in a browser.
+    - If the downloaded file looks wrong (e.g., HTML instead of EXE, or suspiciously small), suggest the user open the URL in a real browser to get the correct installer.`;
 
 }
