@@ -9,32 +9,64 @@ import { getTools } from "../commands";
 import { getMcpTools } from "../mcp";
 import { ToolDef, toOpenAITool } from "./types";
 
-// ─── 内置工具元数据（补充 Rust 后端返回的原始定义） ───
+// ─── 内置工具显示标签（对照 Rust 后端实际工具名，未匹配的 fallback 到原始名） ───
 
 const BUILTIN_TOOL_LABELS: Record<string, string> = {
-  ask_browser_ai: 'Ask Browser AI',
-  execute_code: 'Execute Code',
-  search_web: 'Search Web',
-  read_file: 'Read File',
-  write_file: 'Write File',
-  list_files: 'List Files',
-  run_command: 'Run Command',
-  create_file: 'Create File',
-  edit_file: 'Edit File',
-  delete_file: 'Delete File',
-  rename_file: 'Rename File',
-  mkdir: 'Create Directory',
-  save_url: 'Save URL',
-  ask_user: 'Ask User',
-  fs_create_file: 'Create File',
-  fs_edit_file: 'Edit File',
-  fs_delete: 'Delete File',
-  fs_rename: 'Rename File',
-  fs_mkdir: 'Create Directory',
-  fs_read_file: 'Read File',
-  fs_list: 'List Files',
-  fs_search: 'Search',
-  fs_save_url: 'Save URL',
+  // 文件操作
+  read_local_file: '读取文件',
+  read_local_files: '批量读取',
+  write_new_file: '写入文件',
+  edit_file: '编辑文件',
+  list_directory: '浏览目录',
+  create_directory: '创建目录',
+  rename_path: '重命名',
+  batch_rename: '批量重命名',
+  copy_path: '复制文件',
+  delete_path: '删除',
+  search_files: '搜索文件',
+  get_file_info: '文件信息',
+  open_path: '打开路径',
+  // 下载
+  download_file: '下载文件',
+  // 命令行
+  run_command: '执行命令',
+  // 系统
+  system_info: '系统信息',
+  system_notify: '发送通知',
+  system_get_languages: '语言列表',
+  system_add_language: '添加语言',
+  list_processes: '进程列表',
+  list_windows: '窗口列表',
+  capture_screen: '截取屏幕',
+  get_env: '环境变量',
+  // 剪贴板
+  clipboard_read: '读取剪贴板',
+  clipboard_write: '写入剪贴板',
+  // 网络
+  fetch_url: '网络请求',
+  // 用户交互
+  ask_user: '询问用户',
+  // Excel
+  read_excel: '读取 Excel',
+  read_excel_as_json: 'Excel 转 JSON',
+  excel_query: 'Excel 查询',
+  excel_summary: 'Excel 统计',
+  excel_transform: 'Excel 转换',
+  excel_dedup: 'Excel 去重',
+  excel_join: 'Excel 合并',
+  excel_union: 'Excel 纵向合并',
+  json_to_xlsx: 'JSON 转 Excel',
+  data_pipeline: '数据流水线',
+  // 压缩
+  extract_archive: '解压文件',
+  compress_files: '压缩文件',
+  // CSV
+  read_csv_as_json: 'CSV 转 JSON',
+  // 技能
+  skill_list: '技能列表',
+  skill_create: '创建技能',
+  skill_read: '读取技能',
+  skill_delete: '删除技能',
 };
 
 /**
