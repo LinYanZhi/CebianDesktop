@@ -108,7 +108,7 @@ function AskUserToolResult({ args, result }: { args: string; result: string }) {
 }
 
 /** 工具调用卡片：仿 Cebian ToolCard，每个工具独立可折叠，显示参数+结果 */
-export const ToolCallCards = memo(function ToolCallCards({ tool_calls, results, cancelled }: {
+const ToolCallCards = memo(function ToolCallCards_({ tool_calls, results, cancelled }: {
   tool_calls: ToolCall[];
   results?: Map<string, string>;
   cancelled?: boolean;
@@ -129,9 +129,10 @@ export const ToolCallCards = memo(function ToolCallCards({ tool_calls, results, 
     </div>
   );
 });
+export { ToolCallCards };
 
 /** 单个工具卡片（可折叠） */
-const ToolCardItem = memo(function ToolCardItem({ label, color, toolName, category, status, args, result }: {
+const ToolCardItem = memo(function ToolCardItem_({ label, color, toolName, category, status, args, result }: {
   label: string; color: string; toolName: string; category: ToolCategory; status: 'running' | 'done' | 'cancelled'; args: string; result?: string;
 }) {
   const [open, setOpen] = useState(false);

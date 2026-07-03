@@ -1,4 +1,4 @@
-import { useState, useEffect, memo, useMemo, useRef } from "react";
+import { useState, useEffect, memo, useMemo } from "react";
 import { Bot, ChevronRight, Lightbulb, RefreshCw, Undo2, FileText, FileSpreadsheet, Clock } from "lucide-react";
 import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
@@ -196,7 +196,7 @@ const MarkdownRenderer = memo(function MarkdownRenderer({ content }: { content: 
 //  AI 消息
 // ═══════════════════════════════════════════════════════════
 
-export const AgentMessageBlock = memo(function AgentMessageBlock({ msg, isStreaming, isLast, onRetry, toolResults }: {
+export const AgentMessageBlock = memo(function AgentMessageBlock_({ msg, isStreaming, isLast, onRetry, toolResults }: {
   msg: ChatMessage; isStreaming?: boolean; isLast?: boolean; onRetry?: () => void;
   toolResults?: ChatMessage[];
 }) {
