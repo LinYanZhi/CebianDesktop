@@ -272,12 +272,18 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
     return { elapsed, speed, eta };
   })();
 
+  // 当前步骤摘要（取最近一步的 content）
+  const currentStep = browserAiSteps.length > 0
+    ? browserAiSteps[browserAiSteps.length - 1]?.content?.slice(0, 40) || ""
+    : "";
+
   const statusText = (() => {
     if (status === 'cancelled') return "已取消";
     if (isBrowserAi && elapsed > 0) {
       const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
       const s = String(elapsed % 60).padStart(2, '0');
-      return status === 'running' ? `浏览器 AI 执行中... ${m}:${s}` : `用时 ${m}:${s}`;
+      const stepHint = currentStep ? ` · ${currentStep}${currentStep.length >= 40 ? "…" : ""}` : "";
+      return status === 'running' ? `浏览器 AI ${m}:${s}${stepHint}` : `用时 ${m}:${s}`;
     }
     if (status === 'running' && isBrowserAi) {
       return "浏览器 AI 执行中... 00:00";
