@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeHighlight from "rehype-highlight";
+import { open } from "@tauri-apps/plugin-shell";
 import type { ChatMessage, SendAttachment } from "../../lib/types";
 import { getMessageText, getMessageThinking } from "../../lib/types";
 import { CopyButton } from "./chat-types";
@@ -166,8 +167,20 @@ const MarkdownRenderer = memo(function MarkdownRenderer({ content }: { content: 
             );
           },
           a: ({ href, children }) => (
-            <a href={href} target="_blank" rel="noopener noreferrer"
-              className="text-primary underline underline-offset-2 hover:text-primary/80">
+            <a href={href} target={href?.startsWith("file://") ? undefined : "_blank"}
+              rel="noopener noreferrer"
+              className="text-primary underline underline-offset-2 hover:text-primary/80 cursor-pointer"
+              onClick={href?.startsWith("file://") ? (e) => {
+                e.preventDefault();
+                // 提取文件路径，用 Tauri shell 打开，避免浏览器安全策略阻止 file:// 链接
+                const filePath = decodeURIComponent(href.replace(/^file:\/\/\//, "").replace(/^file:\/\//, ""));
+                if (filePath) {
+                  open(filePath).catch(() => {
+                    // 降级：尝试用 window.open
+                    window.open(href, "_blank");
+                  });
+                }
+              } : undefined}>
               {children}
             </a>
           ),
