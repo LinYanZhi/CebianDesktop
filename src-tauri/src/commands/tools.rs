@@ -180,16 +180,6 @@ fn get_tool_confirmation_details(name: &str, args: &Value) -> Value {
                 "args_detail": serde_json::to_string_pretty(&json!({"command": cmd})).unwrap_or_default()
             })
         }
-        "skill_delete" => {
-            let name_val = args.get("name").and_then(|v| v.as_str()).unwrap_or("?");
-            json!({
-                "action": "删除技能",
-                "target": name_val,
-                "risk": "high",
-                "description": "永久删除一个技能文件，此操作不可撤销。被删除的技能将不再可用。",
-                "args_detail": serde_json::to_string_pretty(&json!({"skill": name_val})).unwrap_or_default()
-            })
-        }
         _ => {
             json!({
                 "action": name,
@@ -474,6 +464,14 @@ pub async fn execute_tool(name: String, args: Value, permission_mode: Option<Str
                 "count": results.len(),
             }))
         }
+        "skill_delete" => {
+            let name_val = args.get("name").and_then(|v| v.as_str()).ok_or("缺少 name 参数")?;
+            let files = workspace::list_files(&app_handle, workspace::WorkspaceDir::Skills)?;
+            let skill = files.iter().find(|f| f.name == name_val)
+                .ok_or_else(|| format!("未找到技能「{}」", name_val))?;
+            workspace::delete_file(&app_handle, workspace::WorkspaceDir::Skills, &skill.id)?;
+            return Ok(json!({"message": format!("技能「{}」已删除", name_val)}));
+        }
         _ => {}
     }
 
@@ -529,20 +527,6 @@ pub async fn confirm_tool_execution(token: String, _mcp: State<'_, McpClientMana
 
     let tool_name = pending.tool_name;
     let args = pending.args;
-
-    // 处理技能管理工具（skill_delete 已被确认，可以执行）
-    // 注意：skill_list/create/read 不需要确认，只有 skill_delete 会走这里
-    match tool_name.as_str() {
-        "skill_delete" => {
-            let name_val = args.get("name").and_then(|v| v.as_str()).ok_or("缺少 name 参数")?;
-            let files = workspace::list_files(&app_handle, workspace::WorkspaceDir::Skills)?;
-            let skill = files.iter().find(|f| f.name == name_val)
-                .ok_or_else(|| format!("未找到技能「{}」", name_val))?;
-            workspace::delete_file(&app_handle, workspace::WorkspaceDir::Skills, &skill.id)?;
-            return Ok(json!({"message": format!("技能「{}」已删除", name_val)}));
-        }
-        _ => {}
-    }
 
     // 内置工具（带路径沙箱）
     let name_clone = tool_name.clone();

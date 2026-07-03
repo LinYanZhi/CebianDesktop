@@ -137,7 +137,7 @@ pub(crate) fn check_command_hard_barrier(command: &str) -> Result<(), String> {
 pub(crate) fn get_tool_risk_level(name: &str) -> &'static str {
     match name {
         // 🔴 高风险
-        "delete_path" | "run_command" | "skill_delete" => "high",
+        "delete_path" | "run_command" => "high",
         // 🟠 中风险
         "write_new_file" | "edit_file" | "rename_path" | "batch_rename" | "copy_path" | "system_add_language" 
         | "capture_screen" | "download_file" | "clipboard_write" => "medium",
