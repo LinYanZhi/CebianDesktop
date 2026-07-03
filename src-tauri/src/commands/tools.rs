@@ -160,6 +160,16 @@ fn get_tool_confirmation_details(name: &str, args: &Value) -> Value {
                 })
             }
         }
+        "export_to_docx" => {
+            let dest = args.get("destination").and_then(|v| v.as_str()).unwrap_or("?");
+            json!({
+                "action": "导出 Word",
+                "target": dest,
+                "risk": "medium",
+                "description": format!("将内容导出为 Word 文档到 {}", dest),
+                "args_detail": serde_json::to_string_pretty(&args).unwrap_or_default()
+            })
+        }
         "run_command" => {
             let cmd = args.get("command").and_then(|v| v.as_str()).unwrap_or("?");
             json!({
@@ -248,6 +258,7 @@ pub fn get_tool_permission_list(mcp: State<'_, McpClientManager>, app_handle: ta
         ("delete_path", "文件/目录删除工具"),
         ("search_files", "文件搜索工具"),
         ("download_file", "网络文件下载工具"),
+        ("export_to_docx", "导出 Word 文档工具"),
         ("open_path", "文件/路径打开工具"),
         ("run_command", "终端命令执行工具"),
         ("system_notify", "系统通知工具"),
@@ -273,7 +284,7 @@ pub fn get_tool_permission_list(mcp: State<'_, McpClientManager>, app_handle: ta
     let categories: &[(&str, &[&str])] = &[
         ("文件操作", &["get_file_info", "read_local_file", "write_new_file", "edit_file"]),
         ("目录操作", &["list_directory", "create_directory", "rename_path", "delete_path", "search_files"]),
-        ("网络/文件传输", &["download_file", "open_path"]),
+        ("网络/文件传输", &["download_file", "export_to_docx", "open_path"]),
         ("命令执行", &["run_command"]),
         ("系统通知", &["system_notify"]),
         ("系统信息", &["system_info", "get_env", "system_get_languages", "system_add_language", "list_processes", "list_windows", "capture_screen"]),

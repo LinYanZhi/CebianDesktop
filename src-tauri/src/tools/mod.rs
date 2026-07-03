@@ -13,11 +13,13 @@ mod excel_tools;
 mod file_ops;
 mod system_ops;
 mod net_ops;
+mod docx_tools;
 
 use excel_tools::*;
 use file_ops::*;
 use system_ops::*;
 use net_ops::*;
+use docx_tools::*;
 
 /// 允许 AI 进行文件写/删操作的安全目录列表
 /// 由 init_allowed_dirs() 在应用启动时初始化
@@ -446,6 +448,18 @@ pub fn get_tool_definitions() -> Vec<Value> {
              \n\n注意：路径必须以 .png 结尾。如果保存目录不存在，会自动创建。\
              \n\n适合场景：让 AI 看到用户当前的屏幕内容、帮助用户分析界面布局、记录桌面状态等。",
             &[("save_path", "string", "截图保存的绝对路径，必须以 .png 结尾，例如 C:\\Users\\用户名\\Desktop\\screenshot.png")], ["save_path"]),
+
+        td!("export_to_docx",
+            "将文本内容导出为 Word 文档（.docx 格式）。\
+             \n自动识别 Markdown 标记（# 标题、**加粗**、*斜体*、- 列表），\
+             \n并支持中文字体。\
+             \n\n如果 destination 路径末尾没有 .docx 后缀，会自动补全。\
+             \n\n适合场景：将 AI 生成的报告、总结、文档内容导出为 Word 格式以供打印或编辑。",
+            &[
+                ("content", "string", "要导出为 Word 的文本内容，支持 Markdown 格式（# 标题、**加粗**、*斜体*、- 列表）"),
+                ("destination", "string", "保存路径（如 C:\\Users\\用户名\\Desktop\\报告.docx），无 .docx 后缀会自动补全"),
+                ("title", "string", "（可选）文档标题，显示在文档顶部"),
+            ], ["content", "destination"]),
 
         // ═══════════════════════════════════════════════════════════
         //  网络
@@ -1162,6 +1176,14 @@ pub fn execute_tool(name: &str, args: &Value, app: Option<&tauri::AppHandle>) ->
             let limit = args.get("limit").and_then(|v| v.as_str())
                 .and_then(|s| s.parse::<usize>().ok()).unwrap_or(50);
             data_pipeline(pipeline_json, limit)
+        }
+        "export_to_docx" => {
+            let content = arg_str(args, "content")?;
+            let destination = arg_str(args, "destination")?;
+            validate_path(destination, false)?;
+            let title = args.get("title").and_then(|v| v.as_str());
+            let msg = export_to_docx(content, destination, title)?;
+            Ok(json!({"message": msg}))
         }
         _ => Err(format!("未知工具: {}", name)),
     }

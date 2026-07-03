@@ -28,6 +28,7 @@ const BUILTIN_TOOL_LABELS: Record<string, string> = {
   open_path: '打开路径',
   // 下载
   download_file: '下载文件',
+  export_to_docx: '导出Word',
   // 命令行
   run_command: '执行命令',
   // 系统
