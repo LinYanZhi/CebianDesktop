@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, memo } from "react";
 import { ChevronRight } from "lucide-react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { ToolCall } from "../../lib/types";
@@ -108,7 +108,7 @@ function AskUserToolResult({ args, result }: { args: string; result: string }) {
 }
 
 /** 工具调用卡片：仿 Cebian ToolCard，每个工具独立可折叠，显示参数+结果 */
-export function ToolCallCards({ tool_calls, results, cancelled }: {
+export const ToolCallCards = memo(function ToolCallCards({ tool_calls, results, cancelled }: {
   tool_calls: ToolCall[];
   results?: Map<string, string>;
   cancelled?: boolean;
@@ -128,16 +128,18 @@ export function ToolCallCards({ tool_calls, results, cancelled }: {
       })}
     </div>
   );
-}
+});
 
 /** 单个工具卡片（可折叠） */
-function ToolCardItem({ label, color, toolName, category, status, args, result }: {
+const ToolCardItem = memo(function ToolCardItem({ label, color, toolName, category, status, args, result }: {
   label: string; color: string; toolName: string; category: ToolCategory; status: 'running' | 'done' | 'cancelled'; args: string; result?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [progress, setProgress] = useState<DownloadProgress | null>(null);
   const unlistenRef = useRef<UnlistenFn | null>(null);
   const startTimeRef = useRef<number>(0);
+  const progressThrottleRef = useRef<number>(0);
+  const downloadThrottleRef = useRef<number>(0);
   const desc = getToolDesc(toolName);
   const hasArgs = args !== "{}" && args !== "{\n}";
   const catMeta = TOOL_CATEGORY_META[category];
@@ -191,11 +193,14 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
       } catch { /* 首次拉取失败不影响后续实时监听 */ }
     })();
 
-    // 注册实时进度监听
+    // 注册实时进度监听（节流：最多每 300ms 更新一次状态，避免高频 re-render）
     (async () => {
       const { listen } = await import("@tauri-apps/api/event");
       const unlisten = await listen<any>("browser-ai-progress", (event) => {
         if (cancelled) return;
+        const now = Date.now();
+        if (now - progressThrottleRef.current < 300) return;
+        progressThrottleRef.current = now;
         const steps = event.payload?.steps;
         if (Array.isArray(steps) && steps.length > 0) {
           setBrowserAiSteps(steps);
@@ -215,7 +220,7 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
   const argUrl = parsedArgs.url;
   const argDest = parsedArgs.destination;
 
-  // 下载进度监听
+  // 下载进度监听（节流：最多每 300ms 更新一次状态）
   useEffect(() => {
     if (!isDownload || !argUrl || !argDest) return;
     if (status !== "running") return;
@@ -225,6 +230,12 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
         const p = event.payload;
         // 按 URL + destination 匹配
         if (p.url === argUrl && p.destination === argDest) {
+          // 节流：downloading 状态最多每 300ms 更新一次
+          if (p.status === "downloading") {
+            const now = Date.now();
+            if (now - downloadThrottleRef.current < 300) return;
+            downloadThrottleRef.current = now;
+          }
           // 首次收到 downloading 时记录开始时间
           if (p.status === "downloading" && startTimeRef.current === 0) {
             startTimeRef.current = Date.now();
@@ -444,7 +455,7 @@ function ToolCardItem({ label, color, toolName, category, status, args, result }
       )}
     </div>
   );
-}
+});
 
 /** 格式化字节数为可读字符串 */
 function fmtSize(bytes: number): string {
